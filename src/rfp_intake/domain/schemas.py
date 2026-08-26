@@ -36,13 +36,21 @@ class FieldRecord(BaseModel):
 
 
 class Contradiction(BaseModel):
+    """A candidate disagreement (RECONCILE) or an adjudicated one (ADJUDICATE).
+
+    verdict/explanation/severity are None for a candidate RECONCILE has found
+    but ADJUDICATE has not yet judged. ARCHITECTURE.md §4.7 lists these as
+    ADJUDICATE's output, not RECONCILE's — a None verdict is "not yet
+    adjudicated", not "not a conflict".
+    """
+
     field_id: str
     records: list[FieldRecord]
-    verdict: Literal["conflict", "reconcilable", "not_a_conflict"]
-    explanation: str
+    verdict: Literal["conflict", "reconcilable", "not_a_conflict"] | None = None
+    explanation: str | None = None
     resolved_value: Any | None = None
     winning_doc_id: str | None = None
-    severity: Literal["high", "medium", "low"]
+    severity: Literal["high", "medium", "low"] | None = None
 
 
 class ResolvedField(BaseModel):
@@ -52,8 +60,15 @@ class ResolvedField(BaseModel):
     confidence: float = Field(ge=0.0, le=1.0)
     sources: list[Provenance] = []
     quote: str | None = None
+    # "total" | "cohort:A" | "country:DE" — carried from FieldRecord.scope so a
+    # scoped field can have multiple ResolvedField entries that are not treated
+    # as conflicting with each other. See ARCHITECTURE.md §3 on FieldRecord.scope.
+    scope: str | None = None
     contradiction: Contradiction | None = None
     derived_from: list[str] = Field(default_factory=list)
+    # Free-text explanation for a derived field's score (ARCHITECTURE.md §4.8:
+    # "the report prints the contributing evidence"). Unused for extracted fields.
+    notes: str | None = None
 
 
 class OutlineEntry(BaseModel):

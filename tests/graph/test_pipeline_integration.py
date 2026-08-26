@@ -153,3 +153,56 @@ class TestPipelineIntegration:
         # But the test verifies the validation system works
         assert isinstance(records, list)
         assert isinstance(errors, list)
+
+    def test_full_pipeline_through_gate(self, fields_yaml_path) -> None:  # type: ignore[no-untyped-def]
+        """PLAN -> EXTRACT -> NORMALIZE -> RECONCILE -> DERIVE -> GATE end to end."""
+        os.environ["RFP_INTAKE_FIELDS_YAML_PATH"] = str(fields_yaml_path)
+        os.environ["RFP_INTAKE_LLM_BACKEND"] = "mock"
+
+        from rfp_intake.domain.registry import get_registry
+        get_registry.cache_clear()
+        registry = get_registry()
+
+        from rfp_intake.derive import derive_node
+        from rfp_intake.extract import extract_node
+        from rfp_intake.gate import gate_node
+        from rfp_intake.normalize import normalize_node
+        from rfp_intake.plan import plan_node
+        from rfp_intake.reconcile import reconcile_node
+
+        doc = _make_test_doc()
+        state = RunState(run_id="integration-test", documents=[doc])
+
+        tasks = plan_node(state)["tasks"]
+        extract_state = RunState(run_id="integration-test", documents=[doc], tasks=tasks)
+        records = extract_node(extract_state)["records"]
+        normalized = normalize_node(RunState(run_id="integration-test", records=records))["records"]
+
+        reconciled = reconcile_node(RunState(run_id="integration-test", records=normalized))
+        derived = derive_node(RunState(run_id="integration-test", resolved=reconciled["resolved"]))
+        gated = gate_node(RunState(
+            run_id="integration-test",
+            resolved=derived["resolved"],
+            contradictions=reconciled["contradictions"],
+        ))
+
+        resolved_fields = gated["resolved"]
+
+        # Every non-derived registry field gets a resolved row — either from
+        # extracted evidence, or not_found when nothing matched (P2 discipline:
+        # the report must not simply omit fields nobody found).
+        non_derived_ids = {f.id for f in registry.fields if not f.derived}
+        resolved_ids = {r.field_id for r in resolved_fields}
+        assert non_derived_ids <= resolved_ids
+
+        # The mock fixture provides a confident, single-source value for
+        # ops.sites_total — GATE should promote it to confirmed.
+        sites = next(r for r in resolved_fields if r.field_id == "ops.sites_total")
+        assert sites.value == 75
+        assert sites.status == "confirmed"
+
+        # visits.intensity_rating is derived and must always be needs_review
+        # or not_specified, never confirmed, regardless of confidence.
+        rating = next(r for r in resolved_fields if r.field_id == "visits.intensity_rating")
+        assert rating.status in ("needs_review", "not_specified")
+        assert rating.status != "confirmed"
