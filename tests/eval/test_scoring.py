@@ -1,10 +1,20 @@
 """Tests for eval scoring logic."""
 
+from typing import Literal
+
 import pytest
 
-from rfp_intake.domain.schemas import Provenance, ResolvedField
-from rfp_intake.eval.golden import GoldenField
-from rfp_intake.eval.scoring import DocumentScore, FieldScore, score_field
+from rfp_intake.domain.schemas import Contradiction, FieldRecord, Provenance, ResolvedField
+from rfp_intake.eval.golden import GoldenContradiction, GoldenField
+from rfp_intake.eval.scoring import (
+    ContradictionScore,
+    ContradictionSetScore,
+    DocumentScore,
+    FieldScore,
+    score_contradiction,
+    score_contradiction_set,
+    score_field,
+)
 
 
 def _make_resolved(value, status="confirmed", page=3):
@@ -122,3 +132,83 @@ def test_document_score_confusion_matrix():
     assert cm["found"]["found"] == 1
     assert cm["found"]["not_found"] == 1
     assert cm["not_specified"]["not_specified"] == 1
+
+
+Verdict = Literal["conflict", "reconcilable", "not_a_conflict"]
+Severity = Literal["high", "medium", "low"]
+
+
+def _adjudicated(field_id: str, verdict: Verdict, severity: Severity = "high") -> Contradiction:
+    record = FieldRecord(
+        field_id=field_id, group="timelines", raw_value="x", quote="x",
+        provenance=Provenance(doc_id="d1", doc_kind="rfp", page=1), confidence=0.9,
+    )
+    return Contradiction(field_id=field_id, records=[record], verdict=verdict, severity=severity)
+
+
+def test_score_contradiction_correct_verdict():
+    golden = GoldenContradiction(
+        field_id="timeline.total_duration", expected_verdict="reconcilable", severity="high",
+    )
+    actual = _adjudicated("timeline.total_duration", verdict="reconcilable", severity="high")
+    score = score_contradiction(golden, actual)
+    assert score.detected is True
+    assert score.verdict_correct is True
+    assert score.severity_correct is True
+
+
+def test_score_contradiction_wrong_verdict():
+    golden = GoldenContradiction(field_id="ops.sites_total", expected_verdict="conflict")
+    actual = _adjudicated("ops.sites_total", verdict="not_a_conflict")
+    score = score_contradiction(golden, actual)
+    assert score.detected is True
+    assert score.verdict_correct is False
+
+
+def test_score_contradiction_not_detected():
+    golden = GoldenContradiction(field_id="ops.sites_total", expected_verdict="conflict")
+    score = score_contradiction(golden, None)
+    assert score.detected is False
+    assert score.verdict_correct is False
+    assert score.actual_verdict is None
+
+
+def test_score_contradiction_severity_none_always_correct():
+    golden = GoldenContradiction(field_id="x", expected_verdict="conflict", severity=None)
+    actual = _adjudicated("x", verdict="conflict", severity="low")
+    score = score_contradiction(golden, actual)
+    assert score.severity_correct is True
+
+
+def test_contradiction_set_detection_recall():
+    goldens = [
+        GoldenContradiction(field_id="a", expected_verdict="conflict"),
+        GoldenContradiction(field_id="b", expected_verdict="reconcilable"),
+    ]
+    actual = [_adjudicated("a", verdict="conflict")]  # "b" never detected
+    result = score_contradiction_set(goldens, actual)
+    assert result.detection_recall == pytest.approx(0.5)
+
+
+def test_contradiction_set_verdict_accuracy_only_over_detected():
+    goldens = [
+        GoldenContradiction(field_id="a", expected_verdict="conflict"),
+        GoldenContradiction(field_id="b", expected_verdict="reconcilable"),
+    ]
+    actual = [_adjudicated("a", verdict="conflict")]  # "b" never detected, excluded from accuracy
+    result = score_contradiction_set(goldens, actual)
+    assert result.verdict_accuracy == pytest.approx(1.0)
+
+
+def test_contradiction_set_empty_goldens():
+    result = ContradictionSetScore(scores=[])
+    assert result.detection_recall == 1.0
+    assert result.verdict_accuracy == 0.0
+
+
+def test_contradiction_score_is_a_dataclass():
+    score = ContradictionScore(
+        field_id="x", detected=True, verdict_correct=True, severity_correct=True,
+        expected_verdict="conflict", actual_verdict="conflict",
+    )
+    assert score.field_id == "x"

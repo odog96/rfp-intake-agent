@@ -1,21 +1,25 @@
 """GATE — maps confidence + contradiction state to a reviewer-facing status.
 Pure Python, no LLM. See ARCHITECTURE.md §4.9.
 
-| Condition                                                     | Status         |
-|----------------------------------------------------------------|----------------|
-| single/corroborated source, conf >= CONFIDENCE_CONFIRMED       | confirmed      |
-| derived field                                                  | needs_review   |
-| any contradiction whose verdict isn't "not_a_conflict"         | needs_review   |
-| conf < CONFIDENCE_CONFIRMED                                    | needs_review   |
-| already not_specified / not_found                              | unchanged      |
+| Condition                                                          | Status         |
+|-----------------------------------------------------------------------|----------------|
+| single/corroborated source, conf >= CONFIDENCE_CONFIRMED              | confirmed      |
+| derived field                                                         | needs_review   |
+| any contradiction whose verdict isn't "not_a_conflict"                | needs_review   |
+| budget_driver field with ANY contradiction, even "not_a_conflict"     | needs_review   |
+| conf < CONFIDENCE_CONFIRMED                                           | needs_review   |
+| already not_specified / not_found                                     | unchanged      |
 
-The spec table (ARCHITECTURE.md §4.9) calls out "budget_driver with any
-disagreement" as its own row alongside "conflict verdict" and "reconcilable
-verdict". Those three collapse to one rule here — any live contradiction
-whose verdict isn't (yet, or ever) "not_a_conflict" forces needs_review,
-regardless of budget_driver — because the table has no row where a
-resolved value survives as "confirmed" next to an unresolved disagreement
-of any kind.
+The budget_driver row is deliberately stricter than ARCHITECTURE.md's own
+table, which only names "budget_driver with any disagreement" alongside
+conflict/reconcilable — read literally that leaves a misjudged
+not_a_conflict verdict on a budget-driving field free to auto-confirm.
+That is the single costliest place ADJUDICATE's verdict call (an LLM
+judgment, not a deterministic one — see adjudicate/__init__.py) could be
+wrong: a wrong "these don't really disagree" on a site count or subject
+count changes the number DSB submits. Forcing review here doesn't fix a
+wrong verdict, but it guarantees a human sees it before it becomes a
+number in the report, rather than the disagreement being silently cleared.
 
 Quote validation ("quote validated" in the table) is already enforced by
 EXTRACT's post-call validation (ARCHITECTURE.md §4.4) before a record ever
@@ -31,6 +35,7 @@ from typing import Any
 
 import structlog
 
+from rfp_intake.domain.registry import get_registry
 from rfp_intake.domain.schemas import Contradiction, ResolvedField, RunState
 
 logger = structlog.get_logger()
@@ -42,13 +47,19 @@ _TERMINAL_STATUSES = {"not_specified", "not_found"}
 
 def gate_node(state: RunState) -> dict[str, Any]:
     """GATE graph node. Reads state.resolved / contradictions, rewrites status."""
+    budget_drivers = {f.id for f in get_registry().fields if f.budget_driver}
+
     contradiction_by_key: dict[tuple[str, str | None], Contradiction] = {}
     for c in state.contradictions:
         scope = c.records[0].scope if c.records else None
         contradiction_by_key[(c.field_id, scope)] = c
 
     gated = [
-        _gate_field(rf, contradiction_by_key.get((rf.field_id, rf.scope)))
+        _gate_field(
+            rf,
+            contradiction_by_key.get((rf.field_id, rf.scope)),
+            is_budget_driver=rf.field_id in budget_drivers,
+        )
         for rf in state.resolved
     ]
 
@@ -57,14 +68,19 @@ def gate_node(state: RunState) -> dict[str, Any]:
     return {"resolved": gated}
 
 
-def _gate_field(rf: ResolvedField, contradiction: Contradiction | None) -> ResolvedField:
+def _gate_field(
+    rf: ResolvedField, contradiction: Contradiction | None, *, is_budget_driver: bool
+) -> ResolvedField:
     if rf.status in _TERMINAL_STATUSES:
         return rf
 
     if rf.derived_from:
         return rf.model_copy(update={"status": "needs_review"})
 
-    if contradiction is not None and contradiction.verdict != "not_a_conflict":
+    disagreement = contradiction is not None and (
+        contradiction.verdict != "not_a_conflict" or is_budget_driver
+    )
+    if disagreement:
         return rf.model_copy(update={"status": "needs_review", "contradiction": contradiction})
 
     if rf.confidence >= CONFIDENCE_CONFIRMED:

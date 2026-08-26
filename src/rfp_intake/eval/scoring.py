@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from rfp_intake.domain.schemas import ResolvedField
-from rfp_intake.eval.golden import GoldenDocument, GoldenField
+from rfp_intake.domain.schemas import Contradiction, ResolvedField
+from rfp_intake.eval.golden import GoldenContradiction, GoldenDocument, GoldenField
 
 
 @dataclass
@@ -135,6 +135,100 @@ def _map_resolved_status(status: str) -> str:
     if status in ("confirmed", "needs_review"):
         return "found"
     return status
+
+
+@dataclass
+class ContradictionScore:
+    """Score for one planted contradiction against ADJUDICATE's output."""
+
+    field_id: str
+    detected: bool  # RECONCILE flagged a candidate for this field at all
+    verdict_correct: bool  # only meaningful when detected
+    severity_correct: bool  # only meaningful when detected
+    expected_verdict: str
+    actual_verdict: str | None
+
+
+@dataclass
+class ContradictionSetScore:
+    """Aggregate scores across the planted-contradiction golden set.
+
+    Two metrics, not one precision/recall pair — the golden set has no
+    negative examples (every entry is a real planted disagreement), so
+    there's nothing to compute detection precision against. See
+    GoldenContradiction's docstring and ARCHITECTURE.md §9.
+    """
+
+    scores: list[ContradictionScore] = field(default_factory=list)
+
+    @property
+    def detection_recall(self) -> float:
+        """Of planted contradictions, how many did RECONCILE flag as a candidate."""
+        if not self.scores:
+            return 1.0
+        return sum(1 for s in self.scores if s.detected) / len(self.scores)
+
+    @property
+    def verdict_accuracy(self) -> float:
+        """Of DETECTED candidates, how many did ADJUDICATE classify correctly.
+
+        This is the number that answers "is a misjudged not_a_conflict
+        actually happening" — see GATE's budget_driver hardening, which
+        assumes this number is not yet trustworthy enough to skip human
+        review on its own.
+        """
+        detected = [s for s in self.scores if s.detected]
+        if not detected:
+            return 0.0
+        return sum(1 for s in detected if s.verdict_correct) / len(detected)
+
+    @property
+    def severity_accuracy(self) -> float:
+        """Of DETECTED candidates, how many got the expected severity."""
+        detected = [s for s in self.scores if s.detected]
+        if not detected:
+            return 0.0
+        return sum(1 for s in detected if s.severity_correct) / len(detected)
+
+
+def score_contradiction(
+    golden: GoldenContradiction, actual: Contradiction | None
+) -> ContradictionScore:
+    """Score one golden contradiction against the matching adjudicated Contradiction, if any."""
+    if actual is None:
+        return ContradictionScore(
+            field_id=golden.field_id,
+            detected=False,
+            verdict_correct=False,
+            severity_correct=False,
+            expected_verdict=golden.expected_verdict,
+            actual_verdict=None,
+        )
+
+    verdict_correct = actual.verdict == golden.expected_verdict
+    severity_correct = golden.severity is None or actual.severity == golden.severity
+
+    return ContradictionScore(
+        field_id=golden.field_id,
+        detected=True,
+        verdict_correct=verdict_correct,
+        severity_correct=severity_correct,
+        expected_verdict=golden.expected_verdict,
+        actual_verdict=actual.verdict,
+    )
+
+
+def score_contradiction_set(
+    goldens: list[GoldenContradiction], actual: list[Contradiction]
+) -> ContradictionSetScore:
+    """Score every golden contradiction against a run's adjudicated Contradictions.
+
+    Matches by field_id — see GoldenContradiction's docstring on why a golden
+    set with two entries for the same field_id isn't supported.
+    """
+    actual_by_field = {c.field_id: c for c in actual}
+    scores = [score_contradiction(g, actual_by_field.get(g.field_id)) for g in goldens]
+    return ContradictionSetScore(scores=scores)
 
 
 def _values_match(expected: object, actual: object) -> bool:

@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
+import yaml
 from pydantic import BaseModel, Field
 
 
@@ -43,3 +44,33 @@ def load_golden_set(golden_dir: Path) -> dict[str, GoldenDocument]:
         result[doc.document_id] = doc
 
     return result
+
+
+class GoldenContradiction(BaseModel):
+    """Expected ADJUDICATE outcome for one planted, known-genuine contradiction.
+
+    Not a negative-examples set — every entry here IS a real planted
+    disagreement, so this set can score verdict-classification accuracy and
+    candidate-detection recall, but not detection precision/false-positive
+    rate (that needs a labeled "these do NOT conflict" set, which this file
+    doesn't have — see ARCHITECTURE.md §9).
+    """
+
+    field_id: str
+    description: str = ""
+    documents: list[str] = Field(default_factory=list)
+    expected_verdict: Literal["conflict", "reconcilable", "not_a_conflict"]
+    severity: Literal["high", "medium", "low"] | None = None
+
+
+def load_golden_contradictions(path: Path) -> list[GoldenContradiction]:
+    """Load planted-contradiction golden labels from a YAML file.
+
+    A golden set with two entries for the same field_id is not supported —
+    scoring matches by field_id and the current corpus never repeats one.
+    """
+    if not path.exists():
+        return []
+
+    data: dict[str, Any] = yaml.safe_load(path.read_text())
+    return [GoldenContradiction.model_validate(c) for c in data.get("contradictions", [])]
