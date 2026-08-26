@@ -10,6 +10,7 @@ budget drivers first).
 from __future__ import annotations
 
 import io
+import json
 from typing import Any
 
 from openpyxl import Workbook
@@ -42,6 +43,29 @@ def _row_fill(rf: ResolvedField) -> PatternFill:
     return _FILL_NOT_FOUND  # not_found, not_specified
 
 
+def _excel_safe(value: Any) -> Any:
+    """Coerce a resolved value into something openpyxl can write.
+
+    Normalised values are not always scalars — a quantity arrives as
+    {"n": 28, "unit": "days"} and a list-valued field as a list. openpyxl raises
+    on those, which previously failed the whole job at RENDER after every LLM
+    call had already been paid for. Scalars pass through untouched so numbers
+    stay numbers and remain sortable in the sheet.
+    """
+    if value is None:
+        return ""
+    if isinstance(value, (str, int, float, bool)):
+        return value
+    if isinstance(value, dict):
+        # The common shape is a magnitude plus a unit; render it readably.
+        if "n" in value and "unit" in value:
+            return f"{value['n']} {value['unit']}"
+        return json.dumps(value, default=str)
+    if isinstance(value, (list, tuple)):
+        return "; ".join(str(_excel_safe(v)) for v in value)
+    return str(value)
+
+
 def _row_values(rf: ResolvedField, field_def: FieldDef | None) -> list[Any]:
     label = field_def.label if field_def else rf.field_id
     group = field_def.group if field_def else ""
@@ -55,7 +79,7 @@ def _row_values(rf: ResolvedField, field_def: FieldDef | None) -> list[Any]:
     return [
         group,
         f"{label} [{rf.scope}]" if rf.scope else label,
-        rf.value if rf.value is not None else "",
+        _excel_safe(rf.value),
         rf.status,
         round(rf.confidence, 2),
         source.doc_id if source else "",
