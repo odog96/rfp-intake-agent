@@ -8,8 +8,9 @@ from typing import Any
 import structlog
 
 from rfp_intake.config.settings import get_settings
+from rfp_intake.domain.schemas import RunState
 from rfp_intake.graph import build_graph
-from rfp_intake.job.output import write_extraction_json
+from rfp_intake.job.output import write_reports
 from rfp_intake.job.status import StatusWriter
 
 logger = structlog.get_logger()
@@ -39,7 +40,8 @@ def main(run_id: str) -> None:
             final_state.update(event[node_name])
             logger.info("node_completed", run_id=run_id, node=node_name)
 
-        write_extraction_json(run_path, final_state)
+        run_state = RunState(run_id=run_id, **final_state)
+        write_reports(run_path, run_state)
         writer.write("completed", node="DONE")
         logger.info("job_completed", run_id=run_id)
 

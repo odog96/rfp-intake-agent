@@ -38,13 +38,24 @@ class TestJobMain:
         assert status["node"] == "DONE"
         assert status["run_id"] == job_run
 
-        # extraction.json exists with records
+        # extraction.json exists with resolved fields
         extraction_file = run_path / "extraction.json"
         assert extraction_file.exists()
         extraction = json.loads(extraction_file.read_text())
         assert extraction["run_id"] == job_run
-        assert isinstance(extraction["records"], list)
+        assert isinstance(extraction["resolved_fields"], list)
+        assert isinstance(extraction["contradictions"], list)
         assert isinstance(extraction["errors"], list)
+        assert extraction["registry_version"]
+
+        # report.pdf and report.xlsx exist and are non-trivial
+        pdf_file = run_path / "report.pdf"
+        assert pdf_file.exists()
+        assert pdf_file.read_bytes().startswith(b"%PDF")
+
+        xlsx_file = run_path / "report.xlsx"
+        assert xlsx_file.exists()
+        assert xlsx_file.stat().st_size > 0
 
     def test_no_inputs_dir_exits(self, run_dir: Path) -> None:
         with pytest.raises(SystemExit, match="No inputs directory"):
@@ -64,7 +75,8 @@ class TestJobMain:
 
         extraction = json.loads((run_dir / job_run / "extraction.json").read_text())
         assert "run_id" in extraction
-        assert "records" in extraction
+        assert "resolved_fields" in extraction
+        assert "contradictions" in extraction
         assert "errors" in extraction
-        assert isinstance(extraction["records"], list)
+        assert isinstance(extraction["resolved_fields"], list)
         assert isinstance(extraction["errors"], list)

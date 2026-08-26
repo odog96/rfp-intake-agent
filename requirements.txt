@@ -10,3 +10,5 @@ pdfplumber>=0.11
 docling>=2.0
 pytesseract>=0.3.13
 streamlit>=1.30
+reportlab>=4.2
+openpyxl>=3.1
