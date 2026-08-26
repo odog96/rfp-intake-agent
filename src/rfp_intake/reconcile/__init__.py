@@ -13,12 +13,11 @@ once the confidence threshold is met. not_found/not_specified are already
 terminal and GATE leaves them untouched.
 
 A field with a genuine value disagreement gets a Contradiction candidate
-(verdict=None) appended to state.contradictions, but — because ADJUDICATE
-is not yet built — no ResolvedField is emitted for it at all. It simply
-does not appear in the report until ADJUDICATE lands and resolves it. This
-is a deliberate, temporary gap: emitting a value GATE would mark
-needs_review anyway, next to a contradiction nobody has judged, would look
-more finished than it is.
+(verdict=None) appended to state.contradictions, and no ResolvedField for
+it here — ADJUDICATE (the next node) is what turns each candidate into one
+or more ResolvedFields, once it has judged whether the disagreement is
+real. Emitting a value here, next to a contradiction nobody has judged
+yet, would look more resolved than it is.
 """
 
 from __future__ import annotations

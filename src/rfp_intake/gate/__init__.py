@@ -15,10 +15,7 @@ verdict". Those three collapse to one rule here — any live contradiction
 whose verdict isn't (yet, or ever) "not_a_conflict" forces needs_review,
 regardless of budget_driver — because the table has no row where a
 resolved value survives as "confirmed" next to an unresolved disagreement
-of any kind. This path is presently untested against real data: RECONCILE
-never emits a ResolvedField for a field with a live disagreement (see its
-docstring), so a ResolvedField and a matching Contradiction never coexist
-yet. It's wired correctly for when ADJUDICATE starts producing both.
+of any kind.
 
 Quote validation ("quote validated" in the table) is already enforced by
 EXTRACT's post-call validation (ARCHITECTURE.md §4.4) before a record ever

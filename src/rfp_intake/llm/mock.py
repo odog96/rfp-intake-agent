@@ -94,7 +94,7 @@ class MockChatModel(BaseChatModel):
             return {
                 "verdict": "not_a_conflict",
                 "explanation": "Values refer to different scopes (total vs. per-country)",
-                "resolved_value": None,
+                "winning_doc_id": None,
                 "severity": "low",
             }
         return {}

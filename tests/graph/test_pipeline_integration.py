@@ -163,6 +163,7 @@ class TestPipelineIntegration:
         get_registry.cache_clear()
         registry = get_registry()
 
+        from rfp_intake.adjudicate import adjudicate_node
         from rfp_intake.derive import derive_node
         from rfp_intake.extract import extract_node
         from rfp_intake.gate import gate_node
@@ -179,11 +180,16 @@ class TestPipelineIntegration:
         normalized = normalize_node(RunState(run_id="integration-test", records=records))["records"]
 
         reconciled = reconcile_node(RunState(run_id="integration-test", records=normalized))
-        derived = derive_node(RunState(run_id="integration-test", resolved=reconciled["resolved"]))
+        adjudicated = adjudicate_node(RunState(
+            run_id="integration-test",
+            resolved=reconciled["resolved"],
+            contradictions=reconciled["contradictions"],
+        ))
+        derived = derive_node(RunState(run_id="integration-test", resolved=adjudicated["resolved"]))
         gated = gate_node(RunState(
             run_id="integration-test",
             resolved=derived["resolved"],
-            contradictions=reconciled["contradictions"],
+            contradictions=adjudicated["contradictions"],
         ))
 
         resolved_fields = gated["resolved"]

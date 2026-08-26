@@ -24,6 +24,7 @@ class Settings(BaseSettings):
     run_dir: Path = Path("runs")
 
     fields_yaml_path: Path = Path("config/fields.yaml")
+    precedence_yaml_path: Path = Path("config/precedence.yaml")
 
     job_name: str = "RFP Pipeline Executor"
 

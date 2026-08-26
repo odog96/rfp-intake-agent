@@ -23,6 +23,12 @@ def fields_yaml_path() -> Path:
 
 
 @pytest.fixture
+def precedence_yaml_path() -> Path:
+    """Path to the real precedence.yaml for precedence-policy tests."""
+    return Path(__file__).parent.parent / "config" / "precedence.yaml"
+
+
+@pytest.fixture
 def samples_dir() -> Path:
     """Path to the samples directory with test PDFs."""
     return Path(__file__).parent.parent / "samples"

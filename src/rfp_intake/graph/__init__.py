@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from langgraph.graph import StateGraph
 
+from rfp_intake.adjudicate import adjudicate_node
 from rfp_intake.derive import derive_node
 from rfp_intake.domain.schemas import RunState
 from rfp_intake.extract import extract_node
@@ -19,13 +20,9 @@ def build_graph() -> StateGraph:  # type: ignore[type-arg]
     """Build the extraction pipeline graph.
 
     Topology: INGEST -> CLASSIFY -> PLAN -> EXTRACT -> NORMALIZE -> RECONCILE
-              -> DERIVE -> GATE
+              -> ADJUDICATE -> DERIVE -> GATE
 
-    ADJUDICATE (ARCHITECTURE.md §4.7) is not yet built, so it is not in this
-    graph — RECONCILE's genuine-disagreement candidates sit in
-    state.contradictions unresolved for now (see reconcile/__init__.py).
-    ADJUDICATE belongs between "reconcile" and "derive" once it exists.
-    RENDER (§4.10) is also not yet built; GATE is the last node today.
+    RENDER (§4.10) is not yet built; GATE is the last node today.
 
     PLAN generates ExtractionTasks; EXTRACT processes them all sequentially
     (fan-out via Send deferred to when RECONCILE needs it for real volume).
@@ -39,6 +36,7 @@ def build_graph() -> StateGraph:  # type: ignore[type-arg]
     graph.add_node("extract", extract_node)
     graph.add_node("normalize", normalize_node)
     graph.add_node("reconcile", reconcile_node)
+    graph.add_node("adjudicate", adjudicate_node)
     graph.add_node("derive", derive_node)
     graph.add_node("gate", gate_node)
 
@@ -48,7 +46,8 @@ def build_graph() -> StateGraph:  # type: ignore[type-arg]
     graph.add_edge("plan", "extract")
     graph.add_edge("extract", "normalize")
     graph.add_edge("normalize", "reconcile")
-    graph.add_edge("reconcile", "derive")
+    graph.add_edge("reconcile", "adjudicate")
+    graph.add_edge("adjudicate", "derive")
     graph.add_edge("derive", "gate")
 
     return graph
