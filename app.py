@@ -5,12 +5,12 @@ from __future__ import annotations
 import json
 import os
 import time
-from datetime import datetime, UTC
-from pathlib import Path
+from datetime import UTC, datetime
 
 import streamlit as st
 
 from rfp_intake.config.settings import get_settings
+from rfp_intake.llm.discovery import describe_active_routing
 
 settings = get_settings()
 
@@ -83,6 +83,35 @@ if "job_triggered" not in st.session_state:
     st.session_state.job_triggered = False
 if "job_run_id" not in st.session_state:
     st.session_state.job_run_id = None
+
+
+# --- Sidebar: model routing (read-only) ---
+# Scaffold for the admin surface. Editing privacy_mode and per-role bindings from
+# here needs a write-back path and an authorisation check on who counts as an
+# admin, so for now this makes the active routing visible — which is the
+# prerequisite for changing it safely, and enough to catch a demo accidentally
+# pointed at an external provider.
+with st.sidebar:
+    st.subheader("Model routing")
+    try:
+        routing_info = describe_active_routing()
+    except Exception as exc:  # noqa: BLE001 - never block the UI on config display
+        st.error(f"Routing unavailable: {exc}")
+    else:
+        mode = routing_info["privacy_mode"]
+        external = routing_info["external_services"]
+        if mode == "private":
+            st.success("Private mode — inference stays in-environment")
+        else:
+            st.warning(f"{mode} mode — document text may leave the environment")
+        if external:
+            st.error(f"External services in use: {', '.join(external)}")
+            st.caption("Non-sensitive/synthetic documents only. Never production data.")
+
+        for role, binding in routing_info["roles"].items():
+            st.caption(f"**{role}** → `{binding['provider']}` / `{binding['model']}`")
+
+        st.caption("Edit `config/models.yaml` to change bindings.")
 
 
 # --- Section 1: Upload ---

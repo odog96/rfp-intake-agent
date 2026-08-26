@@ -37,6 +37,27 @@ through `6e9b479`) all happened last session; nothing has been pushed anywhere.
   evidence names (`overnight_stay`, `complex_procedures` are new; "visit window < 3 days" became
   `long_visit_windows`). See the comment in `derive/rubric.py` before recalibrating.
 
+### Model routing and privacy mode (added 2026-08-26)
+`config/models.yaml` binds each LLM role (classify/extract/adjudicate) to a provider and model, and
+carries `privacy_mode`. Loader and invariant: `domain/model_routing.py`. Construction:
+`llm/provider.py`. Discovery + audit summary: `llm/discovery.py`.
+
+- **`private` (default, production)** allows only `egress: none` providers — CAII and mock. **`mixed`**
+  allows external providers per-role, but only where the role also sets `allow_external: true`.
+  **`open`** allows anything. Enforced in code and re-checked at provider construction, so an
+  in-memory routing that skipped the loader still can't reach an external service in private mode.
+- `litellm` is classed `egress: unverifiable` and therefore treated as external — a dev proxy routes
+  wherever the developer's credentials point, which cannot be checked from inside the process.
+- **Every LLM role here receives verbatim document excerpts.** There is no metadata-only role, so
+  `mixed` narrows *which* documents leak, never *whether* they do. It is for synthetic/eval corpora.
+- `RFP_INTAKE_LLM_BACKEND=mock` still short-circuits routing entirely — the offline test escape hatch.
+- Bedrock sits behind the optional `aws` extra (`langchain-aws`), so private-mode deployments never
+  install an off-box vendor SDK. `scripts/smoke_caii.py` validates any OpenAI-compatible endpoint
+  across four rungs before it is wired to the graph.
+- **Still scaffold, not product:** the admin UI is read-only (sidebar panel in `app.py`); editing
+  bindings needs a write-back path and an authorisation check on who counts as an admin. Bedrock
+  discovery is unimplemented (`ListFoundationModels` is a different call shape). No model setup job.
+
 ### What's genuinely untested
 Everything above has run against real PDFs (`Synthetic_RFP_NEOD001.pdf` + `Example protocol 2.pdf` —
 **these two are a matched pair**, the only two documents the user has that go together; the other
@@ -86,8 +107,15 @@ reachable or authorized last session. That demo run's outputs are saved at
 
 5. **Vendor SDKs live only in `llm/`.** The platform is Cloudera end to end: Cloudera AI Inference
    (CAII) is the inference layer for POC, demo and production; a LiteLLM proxy is used in local dev.
-   Both are OpenAI-compatible, so the backend is a base URL in config. Do not introduce AWS Bedrock,
-   Textract, or any other off-box managed service.
+   Both are OpenAI-compatible, so the backend is a base URL in config.
+
+   **AWS Bedrock is permitted for testing on non-sensitive data only — never in production.**
+   Production runs on CAII. Bedrock exists so development and demos are not blocked on endpoint
+   capacity, and it may only ever see synthetic or otherwise non-sensitive documents. This is not
+   left to discipline: `config/models.yaml`'s `privacy_mode` enforces it in code
+   (`domain/model_routing.py`), and `private` — the default and the production posture — refuses to
+   construct any off-box provider at all. Do not introduce Textract or other off-box managed
+   services for parsing; the boundary rule in #9 still governs document content.
 
 6. **The test suite runs offline.** `LLM_BACKEND=mock` by default in tests. Deterministic fixtures.
    No network in CI.
@@ -98,9 +126,12 @@ reachable or authorized last session. That demo run's outputs are saved at
 8. **Contradiction detection is code first.** Candidate detection is set logic over normalized values.
    The LLM only adjudicates a specific pair you already found. Never prompt "find contradictions".
 
-9. **Nothing leaves the customer boundary.** All parsing is in-process (PyMuPDF/pdfplumber, Docling,
-   local OCR). Any component that would transmit document content off-box sits behind
-   `parser.allow_external`, off by default, and its use is recorded in the run's `audit.json`.
+9. **Nothing leaves the customer boundary without an explicit, recorded decision.** All parsing is
+   in-process (PyMuPDF/pdfplumber, Docling, local OCR). Any component that would transmit document
+   content off-box sits behind a default-off switch — `parser.allow_external` for parsing,
+   `privacy_mode` for inference — and its use is recorded in the run's `audit.json`. An empty
+   `external_services` array is the evidence that nothing left. Sensitive customer documents are
+   processed in `private` mode, always.
 
 10. **The app never runs the graph.** The Cloudera AI Application triggers a CML Job and polls the run
     directory. One scheduled janitor job reaps stale runs — never one watcher per run.

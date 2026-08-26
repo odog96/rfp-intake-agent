@@ -20,6 +20,11 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+# Only needed to route a role to Bedrock. Deliberately optional so a
+# private-mode deployment never installs an off-box vendor SDK at all.
+aws = [
+    "langchain-aws>=0.2",
+]
 dev = [
     "pytest>=8.3",
     "ruff>=0.8",
