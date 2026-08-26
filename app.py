@@ -127,6 +127,16 @@ if st.session_state.run_id and st.session_state.job_triggered:
     status_path = settings.run_dir / st.session_state.run_id / "status.json"
     progress_container = st.empty()
 
+    # Two sources, per ARCHITECTURE.md §6.3: the CML Jobs API is authoritative
+    # for process liveness, status.json is authoritative for work progress.
+    # A run is only "succeeded"/"failed" when both agree — status.json alone
+    # can go stale if the job process dies without writing a terminal state
+    # (crash before the try/except, OOM kill, container restart, ...).
+    cml_status = check_job_run_status()
+    cml_terminal_failure = bool(cml_status) and cml_status.lower() in (
+        "failed", "timedout", "killed",
+    )
+
     if status_path.exists():
         status = json.loads(status_path.read_text())
 
@@ -154,12 +164,21 @@ if st.session_state.run_id and st.session_state.job_triggered:
             st.success("Pipeline complete.")
         elif status["state"] == "failed":
             st.error(f"Pipeline failed: {status.get('error', 'unknown error')}")
+        elif cml_terminal_failure:
+            # status.json still says starting/running, but the CML job run
+            # has already reached a terminal failure state — the process
+            # died without getting a chance to write "failed" itself.
+            st.error(
+                f"Job process ended unexpectedly (CML status: {cml_status}) "
+                f"while status.json still reported '{status['state']}' at "
+                f"node {status['node']}. Check the Job Runs tab in the CML "
+                "UI for logs."
+            )
         else:
             time.sleep(2)
             st.rerun()
     else:
-        cml_status = check_job_run_status()
-        if cml_status and cml_status.lower() in ("failed", "timedout", "killed"):
+        if cml_terminal_failure:
             st.error(
                 f"Job run failed (CML status: {cml_status}). "
                 "Check the Job Runs tab in the CML UI for logs."

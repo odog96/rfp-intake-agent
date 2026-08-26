@@ -28,10 +28,10 @@ def main(run_id: str) -> None:
     writer.write("starting", node="INGEST")
     logger.info("job_started", run_id=run_id, inputs=str(inputs_dir))
 
-    graph = build_graph()
-    compiled = graph.compile()
-
     try:
+        graph = build_graph()
+        compiled = graph.compile()
+
         final_state: dict[str, Any] = {}
         for event in compiled.stream({"run_id": run_id}):
             node_name = next(iter(event))
