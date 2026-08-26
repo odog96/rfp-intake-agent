@@ -1,0 +1,12 @@
+pydantic>=2.10
+pydantic-settings>=2.7
+pyyaml>=6.0
+structlog>=24.4
+langgraph>=0.2.40
+langchain-core>=0.3.20
+langchain-openai>=0.2.0
+pymupdf>=1.24
+pdfplumber>=0.11
+docling>=2.0
+pytesseract>=0.3.13
+streamlit>=1.30

@@ -1,0 +1,41 @@
+{
+  "document_id": "Example_protocol_2",
+  "document_kind": "protocol",
+  "fields": {
+    "study.phase": {
+      "expected_value": "phase_1",
+      "expected_status": "found",
+      "expected_page": 1,
+      "notes": "Phase from title page"
+    },
+    "study.indication": {
+      "expected_status": "found",
+      "notes": "Indication stated in background/objectives"
+    },
+    "design.overview": {
+      "expected_status": "found",
+      "notes": "Design overview in synopsis section"
+    },
+    "design.first_in_human": {
+      "expected_value": "yes",
+      "expected_status": "found",
+      "notes": "FIH stated in protocol"
+    },
+    "design.healthy_volunteers": {
+      "expected_value": "yes",
+      "expected_status": "found",
+      "notes": "Healthy volunteers in Part A"
+    },
+    "visits.frequency_by_period": {
+      "expected_status": "found",
+      "notes": "Visit schedule from SoA table"
+    },
+    "interim.planned": {
+      "expected_value": "yes",
+      "expected_status": "found"
+    },
+    "blinding.design": {
+      "expected_status": "found"
+    }
+  }
+}

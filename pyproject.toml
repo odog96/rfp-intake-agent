@@ -1,0 +1,70 @@
+[project]
+name = "rfp-intake"
+version = "0.1.0"
+description = "Deterministic RFP and protocol extraction pipeline for clinical DSB"
+requires-python = ">=3.11"
+dependencies = [
+    "pydantic>=2.10",
+    "pydantic-settings>=2.7",
+    "pyyaml>=6.0",
+    "structlog>=24.4",
+    "langgraph>=0.2.40",
+    "langchain-core>=0.3.20",
+    "langchain-openai>=0.2.0",
+    "pymupdf>=1.24",
+    "pdfplumber>=0.11",
+    "docling>=2.0",
+    "pytesseract>=0.3.13",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.3",
+    "ruff>=0.8",
+    "mypy>=1.13",
+    "types-pyyaml>=6.0",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3",
+    "ruff>=0.8",
+    "mypy>=1.13",
+    "types-pyyaml>=6.0",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "integration: marks tests requiring live LLM endpoints",
+    "slow: marks tests that parse real PDFs or use OCR",
+    "golden: marks eval golden-set tests",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "UP", "B", "SIM", "PTH"]
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+warn_return_any = true
+disallow_untyped_defs = true
+
+[[tool.mypy.overrides]]
+module = ["fitz", "fitz.*", "pytesseract", "pdfplumber", "pdfplumber.*", "docling", "docling.*"]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = ["langgraph", "langgraph.*"]
+ignore_missing_imports = true
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/rfp_intake"]

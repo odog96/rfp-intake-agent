@@ -1,0 +1,44 @@
+{
+  "document_id": "Synthetic_RFP_NEOD001",
+  "document_kind": "rfp",
+  "fields": {
+    "study.phase": {
+      "expected_value": "phase_1",
+      "expected_status": "found",
+      "expected_page": 1,
+      "notes": "Phase 1 stated in title/synopsis"
+    },
+    "ops.sites_total": {
+      "expected_value": 75,
+      "expected_status": "found",
+      "notes": "Total number of investigative sites"
+    },
+    "ops.subjects_total": {
+      "expected_value": 120,
+      "expected_status": "found",
+      "notes": "Total planned enrolment"
+    },
+    "timeline.total_duration": {
+      "expected_value": "40 months",
+      "expected_status": "found",
+      "notes": "Overall study duration"
+    },
+    "design.is_multipart": {
+      "expected_value": true,
+      "expected_status": "found",
+      "notes": "Multi-part study design"
+    },
+    "blinding.design": {
+      "expected_value": "double_blind",
+      "expected_status": "found"
+    },
+    "monitoring.frequency_requested": {
+      "expected_value": "yes",
+      "expected_status": "found"
+    },
+    "ops.crf_pages": {
+      "expected_status": "not_specified",
+      "notes": "CRF pages not stated in RFP"
+    }
+  }
+}

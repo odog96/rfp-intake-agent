@@ -1,0 +1,28 @@
+# Planted contradictions between the synthetic RFP and example protocols.
+# These are used to validate contradiction detection in Phase 3.
+
+contradictions:
+  - field_id: timeline.total_duration
+    description: >
+      RFP states 40 months overall study duration.
+      Protocol implies ~42 months (24-month recruitment + 18-month treatment + follow-up).
+    documents: [Synthetic_RFP_NEOD001, Example_protocol_2]
+    expected_verdict: reconcilable
+    severity: high
+
+  - field_id: ops.sites_total
+    description: >
+      RFP states 75 sites total and mentions 80 site qualification visits.
+      80 SSVs for 75 planned sites is an internal inconsistency within the RFP.
+    documents: [Synthetic_RFP_NEOD001]
+    expected_verdict: reconcilable
+    severity: medium
+
+  - field_id: timeline.periods
+    description: >
+      RFP states ~24 month enrollment period.
+      Combined with 40-month total duration and stated treatment/follow-up periods,
+      the arithmetic is incompatible.
+    documents: [Synthetic_RFP_NEOD001]
+    expected_verdict: conflict
+    severity: high

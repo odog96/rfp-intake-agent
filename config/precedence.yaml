@@ -1,0 +1,41 @@
+# Precedence policy — applied by RECONCILE after ADJUDICATE returns a "conflict" verdict.
+# See docs/ARCHITECTURE.md §4.6. Rules are evaluated in order; first decisive rule wins.
+
+rules:
+  - id: recency
+    order: 1
+    description: >
+      A later document version supersedes an earlier one. An amendment beats the protocol it
+      amends. Uses Provenance.doc_date and doc_version. Applies before all other rules.
+    applies_to: all_fields
+
+  - id: domain_authority
+    order: 2
+    description: >
+      The document kind that owns the fact wins. Driven by each field's `source_priority` in
+      fields.yaml. `source_priority: any` means this rule does not fire — fall through to
+      specificity, and if still undecided, force needs_review rather than picking.
+    mapping:
+      protocol: "scientific and design facts — phase, design, cohorts, dosing, blinding, visit schedule"
+      rfp: "commercial and operational scope — site counts, enrolment targets, CRF pages, monitoring the sponsor is asking the CRO to perform"
+      any: "may legitimately be stated in either; no automatic winner"
+
+  - id: specificity
+    order: 3
+    description: >
+      An explicit stated value beats a value implied by prose. A value with a scope beats an
+      unscoped value when the question is scoped.
+    applies_to: all_fields
+
+  - id: no_silent_resolution
+    order: 4
+    description: >
+      If no rule above is decisive, do NOT pick a value. Set status=needs_review, surface both
+      values with both quotes, and let the analyst decide. Guessing on a budget_driver field is
+      worse than asking.
+    applies_to: all_fields
+
+severity:
+  high: "field has budget_driver: true — changes the number DSB submits"
+  medium: "field shapes the delivery approach but not the headline cost"
+  low: "descriptive or contextual"

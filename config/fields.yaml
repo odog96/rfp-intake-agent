@@ -1,0 +1,539 @@
+# =============================================================================
+# RFP Intake Agent — Field Registry
+# =============================================================================
+# SINGLE SOURCE OF TRUTH for what the tool extracts.
+# Derived from Angus Gray's "RFP Review Tool - Key Variables" (9 groups).
+#
+# This file drives: extraction prompts, output schemas, page targeting,
+# precedence, validation, and the report layout. Adding a variable is a YAML
+# edit, not a code change. Every key below is load-bearing — see docs/ARCHITECTURE.md §4.
+#
+# FIELD KEYS
+#   id             dotted, stable, never renamed once shipped (report columns key off it)
+#   group          fan-out unit; one LLM call per (document × group)
+#   label          human label used in the report and in the prompt
+#   type           bool | enum | int | number | text | list[<type>] | object[]
+#   values         allowed values when type=enum (validated in code, post-call)
+#   aliases        alternative names as they appear in real documents.
+#                  Angus explicitly asked for these — they feed both the prompt and page targeting.
+#   hint           one line of instruction injected into the extraction prompt for this field
+#   scoped         true  => value may legitimately differ by cohort/arm/part/country.
+#                  Extractor MUST emit one record per scope. Reconciler will NOT
+#                  treat differing scopes as a contradiction.
+#   source_priority which document kind wins when they disagree (ARCHITECTURE.md §4.6 rule 2)
+#   budget_driver  true => directly moves the budget. Any disagreement is severity=high
+#                  and forces needs_review. These are the fields the tool exists for.
+#   derived        true => computed in DERIVE from other fields, never extracted directly
+# =============================================================================
+
+version: 1
+
+groups:
+  - id: study_design
+    label: Study Design and Structure
+    search_hints:
+      headings: ["Study Design", "Overall Design", "Trial Design", "Synopsis", "Study Schema",
+                 "Overview of Study Design", "Description of Study", "Study Parts", "Study Overview"]
+      keywords: ["single-part", "multi-part", "Part A", "Part B", "cohort", "dose escalation",
+                 "arm", "treatment group", "dose level", "first-in-human", "FIH",
+                 "healthy volunteer", "healthy subject", "randomised", "randomized", "crossover",
+                 "parallel group", "open-label", "double-blind", "sentinel dosing"]
+
+  - id: phase_population
+    label: Study Phase and Population
+    search_hints:
+      headings: ["Synopsis", "Study Phase", "Objectives", "Population", "Study Population",
+                 "Inclusion Criteria", "Indication", "Background", "Rationale", "Title Page"]
+      keywords: ["Phase I", "Phase 1", "Phase II", "Phase III", "Phase IV", "Phase 1/2",
+                 "indication", "target population", "patients with", "subjects with",
+                 "adult", "paediatric", "pediatric", "adolescent", "elderly"]
+
+  - id: interim_analyses
+    label: Interim Analyses and Decision Points
+    search_hints:
+      headings: ["Interim Analysis", "Statistical Considerations", "Statistical Methods",
+                 "Data Monitoring Committee", "DMC", "DSMB", "Study Governance",
+                 "Sample Size Re-estimation", "Adaptive Design"]
+      keywords: ["interim analysis", "interim analyses", "IA", "futility", "efficacy boundary",
+                 "sample size re-estimation", "DSMB", "IDMC", "SRC", "safety review committee",
+                 "data review meeting", "dose escalation committee", "go/no-go", "stopping rule"]
+
+  - id: treatment_dosing
+    label: Treatment and Dosing
+    search_hints:
+      headings: ["Investigational Product", "Study Drug", "Treatment", "Dosage and Administration",
+                 "Study Treatments", "IMP", "Dosing Regimen", "Trial Medication", "Pharmacy Manual"]
+      keywords: ["oral", "tablet", "capsule", "injection", "infusion", "subcutaneous", "SC",
+                 "intravenous", "IV", "topical", "intramuscular", "IM", "QD", "BID", "TID",
+                 "Q2W", "Q3W", "Q4W", "once daily", "twice daily", "every 3 weeks", "per cycle",
+                 "loading dose", "maintenance dose", "titration"]
+
+  - id: visits
+    label: Subject Visit Schedule and Intensity
+    search_hints:
+      headings: ["Schedule of Assessments", "Schedule of Activities", "SoA", "Study Procedures",
+                 "Visit Schedule", "Study Flow Chart", "Table of Assessments", "Study Calendar",
+                 "Assessments", "Trial Procedures"]
+      keywords: ["screening visit", "baseline", "Day 1", "Week 4", "follow-up visit",
+                 "end of treatment", "EOT", "end of study", "long-term follow-up", "LTFU",
+                 "visit window", "±3 days", "PK sampling", "pharmacokinetic", "biomarker",
+                 "ECG", "imaging", "MRI", "CT scan", "safety labs", "questionnaire", "PRO",
+                 "observation period", "unscheduled visit"]
+      # SoA tables carry most of this group. INGEST must preserve them as structured rows.
+      requires_tables: true
+
+  - id: timelines
+    label: Study Timelines
+    search_hints:
+      headings: ["Study Duration", "Study Timelines", "Timeline", "Study Period", "Milestones",
+                 "Recruitment", "Enrolment", "Enrollment", "Project Schedule", "Deliverables"]
+      keywords: ["study duration", "first patient in", "FPI", "FPFV", "last patient out", "LPO",
+                 "LPLV", "database lock", "DBL", "start-up", "startup period", "recruitment period",
+                 "enrolment period", "screening period", "treatment period", "follow-up period",
+                 "months", "weeks", "final analysis", "CSR"]
+
+  - id: blinding_monitoring
+    label: Blinding and Unblinded Monitoring
+    search_hints:
+      headings: ["Blinding", "Randomisation and Blinding", "Unblinding", "Treatment Allocation",
+                 "IP Accountability", "Pharmacy Manual", "Drug Accountability", "Monitoring Plan"]
+      keywords: ["open-label", "single-blind", "double-blind", "triple-blind", "blinded",
+                 "unblinded", "unblinded monitor", "unblinded pharmacist", "unblinded site staff",
+                 "emergency unblinding", "IWRS", "IXRS", "randomisation code", "drug preparation",
+                 "treatment allocation", "IP accountability"]
+
+  - id: operational_metrics
+    label: Operational Metrics and Volumes
+    search_hints:
+      headings: ["Number of Sites", "Number of Subjects", "Sample Size", "Countries",
+                 "Scope of Work", "Assumptions", "Budget Assumptions", "Study Scope",
+                 "CRF", "Data Management", "Site Distribution"]
+      keywords: ["number of sites", "investigative sites", "number of subjects", "number of patients",
+                 "planned enrolment", "sample size", "screen failure rate", "CRF pages", "eCRF pages",
+                 "unique CRF", "SSV", "site selection visit", "SIV", "site initiation visit",
+                 "IMV", "interim monitoring visit", "COV", "close-out visit", "pharmacy visit",
+                 "booster visit", "remote monitoring", "centralised monitoring", "co-monitoring"]
+      requires_tables: true
+
+  - id: clinical_monitoring
+    label: Clinical Monitoring Requirements
+    search_hints:
+      headings: ["Monitoring", "Clinical Monitoring", "Monitoring Plan", "Site Monitoring",
+                 "Source Data Verification", "Risk Based Monitoring", "Quality Management",
+                 "Scope of Work", "Sponsor Requirements", "Sponsor Oversight"]
+      keywords: ["monitoring frequency", "every 6 weeks", "every 8 weeks", "risk-based monitoring",
+                 "RBM", "SDV", "source data verification", "SDR", "source data review",
+                 "100% SDV", "targeted SDV", "on-site monitoring", "remote monitoring",
+                 "monitoring visit frequency", "triggered visits", "centralised monitoring"]
+
+# =============================================================================
+fields:
+
+# --- Group 1: Study Design and Structure ------------------------------------
+  - id: design.overview
+    group: study_design
+    label: General study design / structure
+    type: text
+    aliases: ["study design", "overall design", "trial design", "study schema", "design summary"]
+    hint: >
+      Brief factual overview of the overall design. State the design type (e.g. randomised,
+      double-blind, placebo-controlled, dose-escalation, crossover), and whether the study is
+      single-part or multi-part. 2-4 sentences maximum, drawn only from the document.
+    source_priority: protocol
+
+  - id: design.is_multipart
+    group: study_design
+    label: Multi-part study
+    type: bool
+    aliases: ["single-part", "multi-part", "study parts", "Part A / Part B", "stages"]
+    hint: True if the study is explicitly divided into parts, stages, or phases of conduct.
+    source_priority: protocol
+    budget_driver: true
+
+  - id: design.parts
+    group: study_design
+    label: Cohorts / arms / dose levels / parts
+    type: object[]
+    schema:
+      name: text            # "Part A", "Cohort 3", "Arm 1: 200mg"
+      kind: enum[part, cohort, arm, dose_level, treatment_group]
+      description: text
+      start_trigger: text   # "after DLT review of Cohort 2" — capture when it starts if stated
+      n_subjects: int
+    aliases: ["cohort", "arm", "dose level", "treatment group", "study part", "stage", "expansion cohort"]
+    hint: >
+      One entry per distinct cohort, arm, dose level, treatment group or study part.
+      Capture the stated start condition/timing for each, if given. Do not invent structure that
+      the document does not state.
+    source_priority: protocol
+    budget_driver: true
+
+  - id: design.first_in_human
+    group: study_design
+    label: First-in-human
+    type: enum
+    values: [yes, no, not_specified]
+    aliases: ["first-in-human", "FIH", "FIM", "first-in-man", "first administration to humans"]
+    hint: Only "yes" if the document explicitly describes the study or compound as first-in-human.
+    source_priority: protocol
+
+  - id: design.healthy_volunteers
+    group: study_design
+    label: Healthy volunteers included
+    type: enum
+    values: [yes, no, not_specified]
+    aliases: ["healthy volunteer", "healthy subject", "HV", "normal healthy volunteer", "NHV"]
+    source_priority: protocol
+
+  - id: design.healthy_volunteer_scope
+    group: study_design
+    label: Which cohort/part includes healthy volunteers
+    type: text
+    hint: Only populate if design.healthy_volunteers is yes and the document names the cohort or part.
+    source_priority: protocol
+
+# --- Group 2: Study Phase and Population ------------------------------------
+  - id: study.phase
+    group: phase_population
+    label: Study phase
+    type: enum
+    values: [phase_1, phase_1_2, phase_2, phase_2_3, phase_3, phase_3_4, phase_4, not_specified, other]
+    aliases: ["Phase I", "Phase 1", "Ph I", "Phase Ib", "Phase I/II", "Phase 1/2", "Phase IIa", "Phase IIb"]
+    hint: >
+      Map to the closest enum value. "Phase Ib" -> phase_1. "Phase IIa"/"Phase IIb" -> phase_2.
+      Combined phases map to the combined enum. Record the verbatim phase text in raw_value.
+    source_priority: protocol
+    budget_driver: true
+
+  - id: study.population
+    group: phase_population
+    label: Patient / subject population
+    type: text
+    aliases: ["study population", "target population", "subject population", "patient population",
+              "eligible subjects"]
+    hint: >
+      The target population in one or two sentences (e.g. "adults 18-75 with moderate to severe
+      ulcerative colitis who have failed conventional therapy"). Do NOT enumerate the full
+      inclusion/exclusion criteria list — Angus has flagged that as out of scope.
+    source_priority: protocol
+
+  - id: study.indication
+    group: phase_population
+    label: Disease type / indication
+    type: text
+    aliases: ["indication", "disease", "therapeutic area", "condition", "disease under study"]
+    source_priority: protocol
+
+# --- Group 3: Interim Analyses ----------------------------------------------
+  - id: interim.planned
+    group: interim_analyses
+    label: Interim analyses planned
+    type: enum
+    values: [yes, no, not_specified]
+    aliases: ["interim analysis", "interim analyses", "IA", "planned interim"]
+    hint: >
+      Formal planned interim analyses only. A DSMB/IDMC safety review is NOT automatically an
+      interim analysis — capture it only if the document frames it as one, and note the distinction
+      in `notes`.
+    # Angus: this can appear in EITHER document. No blanket protocol precedence.
+    source_priority: any
+    budget_driver: true
+
+  - id: interim.count
+    group: interim_analyses
+    label: Number of interim analyses
+    type: int
+    hint: Only if explicitly stated or unambiguously enumerable from the document.
+    source_priority: any
+    budget_driver: true
+
+  - id: interim.timing
+    group: interim_analyses
+    label: Timing of each interim analysis
+    type: list[text]
+    aliases: ["after N events", "when X% enrolled", "after N subjects complete"]
+    hint: One entry per interim analysis, describing when it is expected to occur.
+    source_priority: any
+
+# --- Group 4: Treatment and Dosing ------------------------------------------
+  - id: ip.form
+    group: treatment_dosing
+    label: Investigational product / drug form
+    type: list[enum]
+    values: [oral_tablet, oral_capsule, oral_solution, injection_sc, injection_im, infusion_iv,
+             topical, inhaled, intrathecal, ophthalmic, other, not_specified]
+    aliases: ["IP", "IMP", "study drug", "investigational product", "test article", "study medication"]
+    hint: >
+      Multiple forms allowed (e.g. IV loading dose then SC maintenance). Route of administration
+      determines the form for injectables. Use `other` with a note for anything unlisted.
+    source_priority: protocol
+    budget_driver: true
+
+  - id: dosing.frequency
+    group: treatment_dosing
+    label: Dosing frequency / schedule
+    type: text
+    scoped: true
+    aliases: ["QD", "BID", "TID", "QW", "Q2W", "Q3W", "Q4W", "once daily", "twice daily",
+              "every 2 weeks", "every 3 weeks", "per cycle", "dosing regimen", "dosing schedule"]
+    hint: >
+      Capture the schedule as stated. If dosing differs by cohort, arm, dose level or part,
+      emit ONE RECORD PER SCOPE with scope set (e.g. scope="cohort:Part B"). Never average
+      or merge differing regimens into one answer.
+    source_priority: protocol
+    budget_driver: true
+
+  - id: dosing.varies_by_cohort
+    group: treatment_dosing
+    label: Dosing differs by cohort/arm/part
+    type: enum
+    values: [yes, no, not_specified]
+    source_priority: protocol
+
+# --- Group 5: Visit Schedule and Intensity ----------------------------------
+  - id: visits.frequency_by_period
+    group: visits
+    label: Visit frequency by study period
+    type: object[]
+    schema:
+      period: enum[screening, baseline, treatment, follow_up, long_term_follow_up, other]
+      frequency: text        # "weekly for 4 weeks, then every 4 weeks"
+      n_visits: int          # if countable from the SoA
+    scoped: true
+    aliases: ["schedule of assessments", "SoA", "schedule of activities", "visit schedule",
+              "study flow chart", "study calendar"]
+    hint: >
+      Read the Schedule of Assessments table where present — it is the authoritative source.
+      Count visits per period where the table permits. If frequency differs by cohort/arm/part,
+      emit one record per scope.
+    source_priority: protocol
+    budget_driver: true
+
+  - id: visits.total_count
+    group: visits
+    label: Total number of subject visits
+    type: int
+    scoped: true
+    hint: Only if stated or directly countable from the Schedule of Assessments. Do not estimate.
+    source_priority: protocol
+    budget_driver: true
+
+  - id: visits.intensity_evidence
+    group: visits
+    label: Evidence of visit intensity
+    type: list[enum]
+    values: [multiple_assessments_per_visit, long_visit_windows, complex_procedures,
+             pk_pd_sampling, biomarker_sampling, imaging, ecgs, safety_labs, questionnaires,
+             infusion_observation_period, frequent_early_visits, overnight_stay, none_found]
+    hint: >
+      Flag each factor the document provides concrete evidence for. This feeds the derived
+      intensity rating — each flag must have its own quote.
+    source_priority: protocol
+
+  - id: visits.intensity_rating
+    group: visits
+    label: Subject visit intensity
+    type: enum
+    values: [low, moderate, high, not_specified]
+    derived: true
+    derived_from: [visits.intensity_evidence, visits.frequency_by_period, visits.total_count]
+    hint: >
+      DERIVED — computed by the rubric in ARCHITECTURE.md §4.8, never extracted by the model.
+      The report must show the contributing evidence alongside the rating so a reviewer can
+      disagree with it.
+    budget_driver: true
+
+# --- Group 6: Study Timelines -----------------------------------------------
+  - id: timeline.total_duration
+    group: timelines
+    label: Overall study duration
+    type: text
+    aliases: ["study duration", "total duration", "overall duration", "study period",
+              "duration of participation"]
+    hint: >
+      Distinguish OVERALL STUDY duration (first patient in to database lock) from PER-SUBJECT
+      duration (an individual's time on study). If both are present, emit both with
+      scope="study" and scope="subject" respectively. Conflating them is a known failure mode.
+    source_priority: any
+    budget_driver: true
+
+  - id: timeline.periods
+    group: timelines
+    label: Timeline components
+    type: object[]
+    schema:
+      component: enum[start_up, recruitment, screening, treatment, follow_up,
+                      long_term_follow_up, database_lock, final_analysis]
+      duration: text
+      start: text
+      end: text
+    aliases: ["start-up", "recruitment period", "enrolment period", "screening period",
+              "treatment period", "follow-up", "LTFU", "database lock", "DBL", "final analysis"]
+    hint: One entry per component the document states. Omit components not mentioned.
+    source_priority: any
+    budget_driver: true
+
+# --- Group 7: Blinding and Unblinded Monitoring -----------------------------
+  - id: blinding.design
+    group: blinding_monitoring
+    label: Blinding design
+    type: enum
+    values: [open_label, single_blind, double_blind, triple_blind, partially_blinded, not_specified]
+    aliases: ["open-label", "single-blind", "double-blind", "double-masked", "triple-blind",
+              "blinded", "unblinded study"]
+    source_priority: protocol
+    budget_driver: true
+
+  - id: monitoring.unblinded_required
+    group: blinding_monitoring
+    label: Unblinded monitoring likely required
+    type: enum
+    values: [yes, likely, no, not_specified]
+    aliases: ["unblinded monitor", "unblinded CRA", "unblinded site staff", "unblinded pharmacist"]
+    hint: >
+      "yes" when the document states it directly. "likely" when the document does not say so but
+      states a trigger that implies it (blinded design with site-level drug preparation, separate
+      blinded/unblinded staff, IP accountability by unblinded personnel, pharmacy manual
+      requirements). When answering "likely", the quote must be the trigger text, and the
+      inference must be stated in `notes`. This field carries real budget weight — do not guess.
+    source_priority: any
+    budget_driver: true
+
+  - id: monitoring.unblinded_factors
+    group: blinding_monitoring
+    label: Factors driving unblinded monitoring
+    type: list[enum]
+    values: [blinded_vs_open_design, ip_accountability, randomisation_blinding_procedures,
+             pharmacy_manual_requirements, separate_blinded_unblinded_staff,
+             drug_preparation_requirements, treatment_allocation_visibility,
+             sponsor_specific_requirements, protocol_or_rfp_instruction]
+    source_priority: any
+
+  - id: monitoring.unblinded_rationale
+    group: blinding_monitoring
+    label: Reason / trigger for unblinded monitoring
+    type: text
+    source_priority: any
+
+# --- Group 8: Operational Metrics and Volumes -------------------------------
+  - id: ops.sites_total
+    group: operational_metrics
+    label: Total number of sites
+    type: int
+    scoped: true
+    aliases: ["number of sites", "investigative sites", "study sites", "centres", "centers",
+              "number of centres", "site count"]
+    hint: >
+      Total planned sites. Emit country/region breakdowns as SEPARATE records with
+      scope="country:DE" etc. A country subtotal is not a contradiction of the total —
+      set scope correctly and the reconciler will handle it.
+    source_priority: rfp
+    budget_driver: true
+
+  - id: ops.subjects_total
+    group: operational_metrics
+    label: Total number of patients / subjects
+    type: int
+    scoped: true
+    aliases: ["number of subjects", "number of patients", "sample size", "planned enrolment",
+              "planned enrollment", "N=", "total enrolment", "randomised subjects"]
+    hint: >
+      Distinguish SCREENED / ENROLLED / RANDOMISED / COMPLETED — these are different numbers and
+      the document may state several. Record which one it is in `notes`. Emit per-cohort and
+      per-country figures as separate scoped records.
+    source_priority: rfp
+    budget_driver: true
+
+  - id: ops.crf_pages
+    group: operational_metrics
+    label: Number of CRF pages
+    type: int
+    aliases: ["CRF pages", "eCRF pages", "unique CRF pages", "case report form pages"]
+    hint: Distinguish unique CRF pages from total pages across all subjects. Note which in `notes`.
+    source_priority: rfp
+    budget_driver: true
+
+  - id: ops.monitoring_visits
+    group: operational_metrics
+    label: Number of monitoring visits by type
+    type: object[]
+    schema:
+      visit_type: enum[ssv, siv, imv, cov, pharmacy, booster, remote, centralised,
+                       co_monitoring, other]
+      count: int
+      per: enum[per_site, per_study, per_country, not_specified]
+      notes: text
+    aliases: ["SSV", "site selection visit", "SIV", "site initiation visit", "IMV",
+              "interim monitoring visit", "COV", "close-out visit", "pharmacy visit",
+              "booster visit", "remote monitoring visit", "centralised monitoring",
+              "co-monitoring visit", "pre-study visit", "PSV"]
+    hint: >
+      `per` is critical: "4 IMVs" per site versus per study differ by two orders of magnitude
+      in the budget. If the document does not say, set per=not_specified rather than assuming.
+    source_priority: rfp
+    budget_driver: true
+
+# --- Group 9: Clinical Monitoring Requirements ------------------------------
+  - id: monitoring.frequency_requested
+    group: clinical_monitoring
+    label: Specific monitoring frequency requested
+    type: enum
+    values: [yes, no, not_specified]
+    source_priority: rfp
+    budget_driver: true
+
+  - id: monitoring.frequency_spec
+    group: clinical_monitoring
+    label: Requested monitoring frequency
+    type: text
+    scoped: true
+    aliases: ["monitoring frequency", "every X weeks", "every X patients", "visit interval",
+              "monitoring interval"]
+    hint: >
+      Capture as stated (e.g. "every 8 weeks", "after every 3rd subject enrolled",
+      "risk-based, triggered"). If frequency varies by country, site tier, phase or cohort,
+      emit one record per scope.
+    source_priority: rfp
+    budget_driver: true
+
+  - id: monitoring.frequency_basis
+    group: clinical_monitoring
+    label: Basis of monitoring frequency
+    type: list[enum]
+    values: [time_based, enrolment_based, visit_based, risk_based, country_specific,
+             site_specific, phase_specific, cohort_specific, not_specified]
+    source_priority: rfp
+
+  - id: monitoring.onsite_remote_mix
+    group: clinical_monitoring
+    label: On-site vs remote monitoring mix
+    type: text
+    aliases: ["remote monitoring", "on-site monitoring", "hybrid monitoring", "centralised monitoring"]
+    source_priority: rfp
+    budget_driver: true
+
+  - id: monitoring.sdv_expectation
+    group: clinical_monitoring
+    label: Source data verification expectations
+    type: text
+    aliases: ["SDV", "source data verification", "100% SDV", "targeted SDV", "partial SDV"]
+    source_priority: rfp
+    budget_driver: true
+
+  - id: monitoring.sdr_expectation
+    group: clinical_monitoring
+    label: Source data review expectations
+    type: text
+    aliases: ["SDR", "source data review"]
+    source_priority: rfp
+
+  - id: monitoring.strategy_guidance
+    group: clinical_monitoring
+    label: Monitoring strategy guidance / sponsor mandates
+    type: text
+    aliases: ["monitoring plan", "monitoring strategy", "sponsor requirements", "RBM",
+              "risk-based monitoring", "quality tolerance limits"]
+    hint: >
+      Any sponsor-mandated monitoring model, restriction, or required visit type not captured
+      by the more specific fields above.
+    source_priority: rfp
