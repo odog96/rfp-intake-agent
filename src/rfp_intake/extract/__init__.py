@@ -22,7 +22,7 @@ from rfp_intake.domain.schemas import (
 from rfp_intake.extract.prompt import build_excerpt, build_extract_prompt, build_repair_prompt
 from rfp_intake.extract.validate import validate_record
 from rfp_intake.llm.provider import get_llm
-from rfp_intake.llm.structured import get_structured_output
+from rfp_intake.llm.structured import get_structured_output_for_role
 
 logger = structlog.get_logger()
 
@@ -42,7 +42,7 @@ def extract_group(
         registry = get_registry()
 
     llm = get_llm("extract")
-    structured = get_structured_output(llm)
+    structured = get_structured_output_for_role(llm, "extract")
 
     schema = build_extraction_model(task.group, registry)
     messages = build_extract_prompt(task, doc, registry)

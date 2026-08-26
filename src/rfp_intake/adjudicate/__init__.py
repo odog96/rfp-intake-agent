@@ -27,7 +27,7 @@ from rfp_intake.domain.precedence import PrecedencePolicy, get_precedence_policy
 from rfp_intake.domain.registry import FieldDef, get_registry
 from rfp_intake.domain.schemas import Contradiction, FieldRecord, ResolvedField, RunError, RunState
 from rfp_intake.llm.provider import get_llm
-from rfp_intake.llm.structured import StructuredOutput, get_structured_output
+from rfp_intake.llm.structured import StructuredOutput, get_structured_output_for_role
 from rfp_intake.reconcile.precedence import apply_precedence
 
 logger = structlog.get_logger()
@@ -45,7 +45,7 @@ def adjudicate_node(state: RunState) -> dict[str, Any]:
     registry = get_registry()
     policy = get_precedence_policy()
     llm = get_llm("adjudicate")
-    structured = get_structured_output(llm)
+    structured = get_structured_output_for_role(llm, "adjudicate")
 
     updated_contradictions: list[Contradiction] = []
     new_resolved: list[ResolvedField] = []

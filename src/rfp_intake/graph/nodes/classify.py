@@ -10,7 +10,7 @@ from pydantic import BaseModel, Field
 
 from rfp_intake.domain.schemas import Document, RunError, RunState
 from rfp_intake.llm.provider import get_llm
-from rfp_intake.llm.structured import get_structured_output
+from rfp_intake.llm.structured import get_structured_output_for_role
 
 logger = structlog.get_logger()
 
@@ -47,7 +47,7 @@ class ClassificationResult(BaseModel):
 def classify_node(state: RunState) -> dict[str, Any]:
     """Classify all documents in the run. Returns state update dict."""
     llm = get_llm("classify")
-    structured = get_structured_output(llm)
+    structured = get_structured_output_for_role(llm, "classify")
     errors: list[RunError] = []
 
     updated_docs: list[Document] = []
