@@ -1,5 +1,12 @@
 # RFP Intake Agent — Architectural Scaffolding
 
+> **How to read this document.** It is the build contract, and it describes the target design —
+> not every part is built. Sections marked *Not built yet* are design intent. Where the running
+> code deviates deliberately from the design, the deviation is recorded inline in the relevant
+> section rather than left for the reader to discover; those notes carry the date they were made.
+> `CLAUDE.md` carries current build status. `config/fields.yaml` remains the single source of
+> truth for what gets extracted.
+
 **System:** AI-powered RFP + Protocol review for Clinical Delivery Strategy & Budgeting (DSB)
 **Framework:** LangGraph (deterministic StateGraph) on Cloudera — Cloudera AI Inference (CAII) for inference,
 Cloudera AI Application for the UI, CML Jobs for execution.
@@ -85,7 +92,7 @@ Never ask a model to "look for contradictions"; ask it to adjudicate a specific 
            │EXTRACT (one bounded structured-output call each)│
            └──┬──┘  └──┬──┘ └──┬──┘ └──┬──┘  └──┬──┘
               └────────┴───────┼───────┴────────┘
-                               │  FieldRecord[]   (reducer: operator.add)
+                               │  FieldRecord[]   (reducer: append_or_replace, §3)
                         ┌──────▼───────┐
                         │  NORMALIZE   │  units, enums, dates, counts → canonical form  (pure Python)
                         └──────┬───────┘
@@ -106,9 +113,12 @@ Never ask a model to "look for contradictions"; ask it to adjudicate a specific 
                           REVIEW          interrupt() — PHASE TWO, DEFERRED. Default off.
                         └ ─ ─ ─┬─ ─ ─ ─┘  Not in MVP. See §11.
                                │
-                        ┌──────▼───────┐
+                        └ ─ ─ ─┬─ ─ ─ ─┘
+                          ═══════▼═══════   graph ends here; compiled.stream() returns
+                        ┌──────────────┐
                         │   RENDER     │  canonical JSON + PDF report (primary) · XLSX (renderer)
-                        └──────────────┘
+                        └──────────────┘  NOT a graph node — pure functions called by
+                                          job/__init__.py after the graph finishes. See §4.10.
 ```
 
 **Every edge is a static Python edge or a `Send`.** There are no LLM-chosen routes and no agent delegation.
@@ -117,7 +127,9 @@ That is the whole of the non-determinism budget. The `GATE → REVIEW` edge is d
 unimplemented — see §11.
 
 ### Why the map-reduce shape matters
-`PLAN` emits `N_docs × 9` tasks. On a typical 3-document RFP package that is ~27 small calls, each with
+`PLAN` emits **at least** `N_docs × 9` tasks — a group whose candidate pages exceed the token budget is
+split into several windows, so a 137-page protocol produces more than one task per group (2 documents
+× 9 groups gave 37 tasks in practice, not 18). On a typical 3-document RFP package that is ~27+ small calls, each with
 3–15k tokens of targeted context instead of one call with 300k. Parallel, so wall-clock is bounded by the
 slowest single call, not the sum. This is the direct fix for the "5 minutes to run" complaint from the
 Warsaw feedback — the Phase 1 runtime was sequential agent turns.
@@ -156,13 +168,16 @@ class FieldRecord(BaseModel):
     notes: str | None = None
 
 class Contradiction(BaseModel):
+    """A candidate disagreement (RECONCILE) or an adjudicated one (ADJUDICATE)."""
     field_id: str
     records: list[FieldRecord]
-    verdict: Literal["conflict", "reconcilable", "not_a_conflict"]
-    explanation: str
+    # None until ADJUDICATE judges it. RECONCILE produces the candidate; these
+    # three are §4.7's output, so None means "not yet judged", NOT "no conflict".
+    verdict: Literal["conflict", "reconcilable", "not_a_conflict"] | None = None
+    explanation: str | None = None
     resolved_value: object | None = None
     winning_doc_id: str | None = None
-    severity: Literal["high", "medium", "low"]   # high = changes the budget
+    severity: Literal["high", "medium", "low"] | None = None   # high = changes the budget
 
 class ResolvedField(BaseModel):
     field_id: str
@@ -171,19 +186,38 @@ class ResolvedField(BaseModel):
     confidence: float
     sources: list[Provenance]
     quote: str | None
+    scope: str | None = None              # carried from FieldRecord.scope, so a
+                                          # scoped field can resolve to several
+                                          # entries that do not conflict
     contradiction: Contradiction | None = None
     derived_from: list[str] = []          # non-empty ⇒ computed, not extracted
+    notes: str | None = None              # DERIVE's and ADJUDICATE's explanation,
+                                          # printed in the report
+
+class Replace(list):
+    """Marker: this update overwrites the collection instead of appending."""
+
+def append_or_replace(current: list, update: list) -> list:
+    return list(update) if isinstance(update, Replace) else current + update
 
 class RunState(BaseModel):
     run_id: str
     documents: list[Document] = []
     tasks: list[ExtractionTask] = []
-    records: Annotated[list[FieldRecord], operator.add] = []   # fan-in reducer
+    records: Annotated[list[FieldRecord], append_or_replace] = []
     contradictions: list[Contradiction] = []
     resolved: list[ResolvedField] = []
     report_paths: dict[str, str] = {}
     errors: Annotated[list[RunError], operator.add] = []
 ```
+
+**`records` is both fanned into and rewritten, so a plain append reducer is wrong.**
+EXTRACT runs one branch per (document, group) and each returns only its own share —
+those must accumulate. NORMALIZE rewrites every record it was handed and returns the
+whole list; under a plain `operator.add` that list was appended to the one already in
+state and **every value appeared twice** (a 45-field registry reported 64 resolved
+fields). A node that rewrites returns `Replace(...)` and says so at the return site;
+a fan-in branch returns a plain list. Fixed 2026-08-27.
 
 **The `scope` field is not optional decoration.** "40 sites" (total) and "12 sites" (Germany) are not a
 contradiction. Without scope, the reconciler generates false positives on every multi-cohort study — and
@@ -288,6 +322,12 @@ Pure Python, zero LLM, fully unit-tested. `"every 3 weeks"`, `"Q3W"`, `"21 days"
 `"forty (40) sites"` → `40`. `"Phase 1/2"`, `"Ph I/II"` → `PHASE_1_2`. This layer is why contradiction
 detection can be deterministic. Every normalizer is a pure function with a table-driven test.
 
+**Pure means non-mutating, including `normalize_record`.** It returns a copy with `value` (and
+`unit`) set and leaves its argument alone. It used to edit the record in place and return the same
+object, which is what let the doubling described in §3 hide — the node was handing back the very
+records it had been given. The node returns `Replace(...)` because it rewrites the whole
+collection.
+
 ### 4.6 RECONCILE
 Group records by `(field_id, scope)`. Then:
 - **1 record** → resolved, confidence carried through.
@@ -352,8 +392,22 @@ Maps confidence and contradiction state to a reviewer-facing status:
 
 Calibrate the thresholds against the golden set — do not ship the numbers above as gospel, ship the mechanism.
 
-### 4.10 RENDER
+**The implementation is deliberately stricter than the table's last row.** A `budget_driver`
+field forces `needs_review` on *any* adjudicated verdict, including `not_a_conflict` — not just
+on `conflict`/`reconcilable`. A misjudged "these don't really disagree" on a site count is the
+costliest place ADJUDICATE's single LLM call can be wrong, and that call is the only
+non-deterministic step upstream of the number a budget is built from. See `gate/__init__.py`.
+
+### 4.10 RENDER — pure functions, not a graph node
 Canonical JSON is the source of truth; renderers are pure functions over it.
+
+**RENDER is not `graph.add_node("render", ...)`, and the topology diagram in §2 shows it
+outside the graph for that reason.** `RunState` carries `run_id` and no filesystem path, so a
+render node would have to reconstruct the output location from run_id anyway — and `job/output.py`
+already wrote files outside the graph before RENDER existed. The renderers live in `render/`
+(json/pdf/xlsx) with a thin I/O wrapper in `job/output.py`, called from `job/__init__.py` once
+`compiled.stream()` finishes. Keeping it out of the graph also keeps the graph free of I/O, which
+is what makes the whole pipeline testable without a filesystem.
 
 - **`extraction.json` (primary)** — the machine-readable contract. This is what a downstream budget service
   consumes. Full fidelity: every `ResolvedField` with value, status, confidence, all `sources`, quotes,
@@ -393,31 +447,63 @@ Roles map to models via config, so the cheap job and the hard job are not forced
 | extract | mid-tier workhorse | volume × precision; the bulk of all calls |
 | adjudicate | largest served model | low call count, high reasoning demand |
 
-Backends, all OpenAI-compatible, selected by `LLM_BACKEND`:
+**Routing lives in `config/models.yaml`, not in code.** `domain/model_routing.py` loads and validates
+it; `llm/provider.py` builds the model. Each role names a provider, a model id, and — see below — the
+structured-output strategy that endpoint actually honours.
 
-| Backend | Base URL | Used for |
+| Provider | Egress | Used for |
 |---|---|---|
-| `caii` | CAII endpoint | **POC, demo, and production.** The strategic target and the default. |
-| `litellm` | local LiteLLM proxy | Local development only. Routes to whatever the developer has access to. |
-| `mock` | none | Deterministic fixtures. CI runs here, with no network. |
+| `caii` | `none` | **POC, demo, and production.** The strategic target and the default. |
+| `mock` | `none` | Deterministic fixtures. CI runs here, with no network. |
+| `litellm` | `unverifiable` | Local dev proxy. Routes wherever the developer's credentials point, which cannot be checked from inside this process — so it is **treated as external**. |
+| `bedrock` | `external` | Off-box managed service. Testing on non-sensitive data only, never production. Behind the optional `aws` extra so private deployments never install a vendor SDK. |
 
-Because both real backends are OpenAI-compatible, switching is a base URL and a model name. **No code
-outside `llm/` may import a vendor SDK.** The test suite must run with zero network access.
+**`privacy_mode` is an enforced invariant, not a UI preference.** `private` (the default and the
+production posture) permits only `egress: none` providers and refuses to construct anything else.
+`mixed` permits an external provider only for a role that *also* sets `allow_external: true` — the
+recorded consent for document egress. `open` permits anything. It is checked at load **and again at
+provider construction**, deliberately duplicated so a routing built or mutated in memory cannot reach
+an external service by skipping the loader. It fails closed: an unknown provider, an unknown mode, or
+a role that has not opted in is an error, never a silent downgrade.
 
-> A LiteLLM-routed dev backend may itself sit in front of any provider the developer has credentials for.
-> That is a local convenience only and has no bearing on the deployed architecture.
+**Every LLM role here receives verbatim document excerpts.** There is no metadata-only role, so
+`mixed` narrows *which* documents leave, never *whether* they do.
 
-**Structured output strategy — the risk to design for.** The whole extraction approach depends on reliable
-schema-constrained output. Implement `llm/structured.py` with two strategies behind one interface:
+`RFP_INTAKE_LLM_BACKEND=mock` short-circuits routing entirely — the offline test escape hatch.
 
-1. **Native tool-calling** (`with_structured_output`) — used when the endpoint advertises reliable function
-   calling.
-2. **Schema-guided decoding** — CAII endpoints are typically vLLM-backed, which supports constrained
-   decoding against a JSON schema. This is the fallback, and on many open-weight models it is *more*
-   reliable than that model's tool-calling.
+**Structured output strategy — the risk to design for.** The whole extraction approach depends on
+reliable schema-constrained output. `llm/structured.py` implements two strategies behind one interface:
 
-Select by endpoint capability, detected once at startup and recorded in the run's audit record. Both
-strategies return the same validated records, and the §4.4 validation layer runs identically either way.
+1. **Native tool-calling** (`with_structured_output`) — a JSON schema is sent as a tool definition, the
+   server constrains generation to match it, and the result comes back parsed and separate from any prose.
+   Note that **no tool is ever executed**; this is a transport for structured output, and using it does
+   not violate rule 1 — the LLM still chooses no control flow.
+2. **Schema-in-prompt** — the schema goes in the system message and the JSON is parsed out of the reply.
+
+**Do not auto-detect the strategy, and do not trust a passing smoke test.** Two failures found on
+2026-08-27, both of which had produced false confidence:
+
+- **Endpoints lie by omission.** A vLLM-backed CAII endpoint deployed without
+  `--enable-auto-tool-choice` and `--tool-call-parser` accepts a tool-calling request, returns HTTP 200,
+  and simply emits no tool call — prose instead, on every extraction group. Only a *streaming* request
+  surfaces the real error. Constrained-decoding flags fail the same silent way: both `guided_json` and
+  `nvext.guided_json` were accepted and ignored, and `response_format: json_schema`, which that endpoint
+  does honour, degenerated into unbounded whitespace on the nested per-group schemas.
+- **A fallback masks the thing you are testing.** `StructuredOutput` falls back native→guided once, so a
+  smoke test that reports "native works" may be reporting the fallback. **Verify with
+  `allow_fallback=False`** before pinning a strategy.
+
+So the strategy is pinned per role in `models.yaml`, with the observation that justified it written
+beside it. Both strategies return the same validated records, and the §4.4 validation layer runs
+identically either way.
+
+**Bound every call.** `llm_timeout_s` and `llm_max_tokens` are not tuning knobs, they are safety rails.
+Constructed without them, one runaway generation held a CML job open for 21 minutes with no janitor to
+reap it. A response stopped at the token ceiling is truncated JSON, which the parser would otherwise
+report as malformed — sending the reader to look at the model when the answer was correct and our cap
+cut it off. `_hit_token_ceiling` checks the finish reason first and says so, across both spellings
+(`finish_reason: length`, `stopReason: max_tokens`).
+
 Never hand-roll free-text JSON parsing, and never hand-roll the message wire format — prior syncs burned
 time on `assistant`/`user` role mismatches and prefill incompatibilities, which are symptoms of exactly that.
 
@@ -526,6 +612,10 @@ Resolution rule: the Jobs API decides whether the process is running. `status.js
 A run is `succeeded` only when both agree.
 
 ### 6.4 The audit record — `audit.json`
+
+> **Not built yet (as of 2026-08-27).** Designed here, not implemented. The routing half of it
+> exists — `llm/discovery.py:describe_active_routing()` returns the privacy mode, each role's
+> provider/model/egress, and the `external_services` list ready to drop into this shape.
 
 Distinct from per-field provenance, and required because this feeds clinical pricing. Per-field provenance
 answers "where did this number come from in the document?" The audit record answers "what exactly was run,
