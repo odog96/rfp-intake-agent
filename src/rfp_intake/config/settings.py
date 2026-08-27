@@ -11,10 +11,17 @@ from pydantic_settings import BaseSettings
 class Settings(BaseSettings):
     model_config = {"env_prefix": "RFP_INTAKE_"}
 
-    # "mock" short-circuits everything (offline tests). Any other value defers to
-    # config/models.yaml for per-role provider and model selection; the specific
-    # name is kept only for backward compatibility with pre-routing deployments.
-    llm_backend: Literal["caii", "litellm", "bedrock", "routed", "mock"] = "mock"
+    # "mock" short-circuits everything and returns canned fixtures instead of
+    # calling a model. Any other value defers to config/models.yaml for per-role
+    # provider and model selection; the specific name is kept only for backward
+    # compatibility with pre-routing deployments.
+    #
+    # The default is "routed", not "mock", so a deployment that forgets to set
+    # this produces an error it can see rather than a full set of plausible
+    # fixture values that look like a successful run. tests/conftest.py sets
+    # "mock" explicitly for the offline suite (CLAUDE.md rule 6), so the test
+    # suite does not depend on this default.
+    llm_backend: Literal["caii", "litellm", "bedrock", "routed", "mock"] = "routed"
 
     caii_base_url: str = "http://localhost:8000/v1"
     caii_api_key: str | None = None

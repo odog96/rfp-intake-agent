@@ -144,7 +144,18 @@ def load_model_routing(path: Path | None = None) -> ModelRouting:
         path = Path(get_settings().models_yaml_path)
 
     if not path.exists():
-        return _routing_from_settings()
+        # Fail closed. The previous behaviour synthesised a routing with
+        # privacy_mode="open" — the setting that lets document text leave the
+        # environment for every role — which is precisely the silent downgrade
+        # this module claims not to do. A missing config file is an operator
+        # error, and the only safe response is to stop and say which file.
+        if get_settings().llm_backend == "mock":
+            return _routing_from_settings()
+        raise FileNotFoundError(
+            f"Model routing config not found at {path.resolve()}. The pipeline "
+            f"will not guess a privacy mode. Either create the file, or set "
+            f"RFP_INTAKE_LLM_BACKEND=mock to run offline with fixtures."
+        )
 
     data: dict[str, Any] = yaml.safe_load(path.read_text()) or {}
 

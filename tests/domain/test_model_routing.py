@@ -12,6 +12,7 @@ from pathlib import Path
 import pytest
 import yaml
 
+from rfp_intake.config.settings import reset_settings
 from rfp_intake.domain.model_routing import (
     ModelRouting,
     PrivacyViolationError,
@@ -150,3 +151,39 @@ class TestLoadModelRouting:
         routing = load_model_routing(tmp_path / "absent.yaml")
         assert set(routing.roles) == {"classify", "extract", "adjudicate"}
         assert routing.roles["extract"].provider == "mock"
+
+
+class TestMissingConfigFailsClosed:
+    """A missing config file must stop the run, not pick a permissive default."""
+
+    def test_missing_config_raises_and_names_the_path(self, tmp_path, monkeypatch) -> None:
+        from rfp_intake.domain.model_routing import load_model_routing
+
+        monkeypatch.setenv("RFP_INTAKE_LLM_BACKEND", "bedrock")
+        reset_settings()
+        missing = tmp_path / "nope" / "models.yaml"
+        with pytest.raises(FileNotFoundError) as exc:
+            load_model_routing(missing)
+        assert "models.yaml" in str(exc.value)
+        reset_settings()
+
+    def test_missing_config_never_yields_open_mode(self, tmp_path, monkeypatch) -> None:
+        # The bug this guards: the old fallback returned privacy_mode="open",
+        # which permits document text to leave the environment for every role.
+        from rfp_intake.domain.model_routing import load_model_routing
+
+        monkeypatch.setenv("RFP_INTAKE_LLM_BACKEND", "caii")
+        reset_settings()
+        with pytest.raises(FileNotFoundError):
+            load_model_routing(tmp_path / "absent.yaml")
+        reset_settings()
+
+    def test_mock_backend_still_runs_offline_without_the_file(self, tmp_path, monkeypatch) -> None:
+        # The offline suite must not need config/models.yaml (CLAUDE.md rule 6).
+        from rfp_intake.domain.model_routing import load_model_routing
+
+        monkeypatch.setenv("RFP_INTAKE_LLM_BACKEND", "mock")
+        reset_settings()
+        routing = load_model_routing(tmp_path / "absent.yaml")
+        assert routing.external_services == []
+        reset_settings()
