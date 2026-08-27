@@ -217,9 +217,8 @@ class TestRoleStrategyPin:
         from rfp_intake.llm.mock import MockChatModel
         from rfp_intake.llm.structured import get_structured_output_for_role
 
-        assert get_structured_output_for_role(MockChatModel(role="extract"), "extract").strategy == (
-            "guided"
-        )
+        structured = get_structured_output_for_role(MockChatModel(role="extract"), "extract")
+        assert structured.strategy == "guided"
 
 
 class TestFindJsonObject:
