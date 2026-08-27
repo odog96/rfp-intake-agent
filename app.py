@@ -27,6 +27,7 @@ except NameError:  # pragma: no cover - depends on the CML runtime
 os.chdir(_PROJECT_ROOT)
 
 from rfp_intake.config.settings import get_settings  # noqa: E402
+from rfp_intake.job.args import RUN_ID_ENV_VAR  # noqa: E402
 from rfp_intake.job.cml_status import classify_cml_status  # noqa: E402
 from rfp_intake.llm.discovery import describe_active_routing  # noqa: E402
 
@@ -62,10 +63,16 @@ def trigger_job(run_id: str) -> str:
     project_id = os.environ["CDSW_PROJECT_ID"]
     job_id = find_job_id(client, project_id)
 
+    # The run id travels as an environment variable, not just as an argument.
+    # CML runs run_job.py through an IPython kernel that puts its own
+    # "-f <connection-file>" into sys.argv, so sys.argv[1] is "-f" and the job
+    # failed with "No inputs directory: runs/-f/inputs". `arguments` is kept so a
+    # run triggered from the CML UI still works.
     run_request = cmlapi.CreateJobRunRequest(
         project_id=project_id,
         job_id=job_id,
         arguments=run_id,
+        environment={RUN_ID_ENV_VAR: run_id},
     )
     job_run = client.create_job_run(
         body=run_request,
