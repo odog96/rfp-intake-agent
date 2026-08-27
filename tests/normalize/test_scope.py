@@ -70,3 +70,54 @@ class TestScopesMatch:
 
     def test_two_countries_stay_apart(self) -> None:
         assert not scopes_match("country:DE", "country:FR")
+
+
+class TestRealLabelsFromRun20260827205037:
+    """Every scope label the model actually produced on the two-document pair.
+
+    Built from the 50 distinct labels in runs/r-20260827-205037/extraction.json
+    rather than invented, so the rules stay tied to what the documents do.
+    """
+
+    @pytest.mark.parametrize(
+        "group",
+        [
+            # One treatment arm, written five ways across two documents.
+            ["NEOD001 arm", "cohort:NEOD001 arm", "cohort:NEOD001+SoC", "arm:NEOD001"],
+            ["Placebo arm", "arm:Placebo", "cohort:Placebo arm", "cohort:Placebo+SoC"],
+            # Hyphen and underscore are spelling, not meaning.
+            ["per-subject", "per_subject"],
+            # A trailing generic noun does not change which span is meant.
+            ["screening", "Screening", "screening period"],
+            ["Interim Monitoring Visits", "Interim Monitoring Visits total", "interim monitoring"],
+            # "study" and "total" both mean the whole study.
+            ["total", "study", "Overall"],
+        ],
+    )
+    def test_labels_in_a_group_all_agree(self, group: list[str]) -> None:
+        canonical = {normalize_scope(label) for label in group}
+        assert len(canonical) == 1, f"{group} did not merge: {canonical}"
+
+    @pytest.mark.parametrize(
+        ("left", "right"),
+        [
+            # Different arms.
+            ("cohort:NEOD001", "cohort:Placebo"),
+            # An arm is not the whole study.
+            ("NEOD001 arm", "total"),
+            # Different spans of the study.
+            ("treatment", "treatment/follow-up period"),
+            ("screening", "enrollment"),
+            # A per-subject count is not a study total.
+            ("per-subject", "total"),
+            # Different countries.
+            ("country:DE", "country:FR"),
+        ],
+    )
+    def test_genuinely_different_scopes_stay_apart(self, left: str, right: str) -> None:
+        assert not scopes_match(left, right)
+
+    def test_a_bare_noise_word_survives_as_a_label(self) -> None:
+        # "total" must not be stripped down to nothing by the trailing-noun rule.
+        assert normalize_scope("total") == "total"
+        assert normalize_scope("visits") is not None

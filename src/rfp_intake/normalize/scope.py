@@ -67,6 +67,40 @@ _BACKGROUND_THERAPY = re.compile(
 )
 
 
+# Generic nouns that trail a scope label without changing which part of the study
+# it names. Stripped repeatedly from the end, so "Interim Monitoring Visits total"
+# and "interim monitoring" reach the same label. Taken from the labels actually
+# produced in run r-20260827-205037, not invented.
+_TRAILING_NOISE = ("total", "arm", "arms", "period", "periods", "visits", "visit")
+
+
+def _strip_trailing_noise(label: str) -> tuple[str, bool]:
+    """Drop trailing generic nouns. Returns (label, said_it_was_an_arm).
+
+    Never reduces a label to nothing: "screening period" and "screening" are the
+    same span of the study, but "total" on its own is a label in its own right
+    and must survive.
+
+    The second value reports whether "arm" was among the words dropped, because a
+    bare "NEOD001 arm" is naming the same thing as "cohort:NEOD001" and only that
+    trailing word says so. The other noise words are not used this way — treating
+    a trailing "visits" as a prefix would split "Interim Monitoring Visits" from
+    "interim monitoring", which are one thing in run r-20260827-205037.
+    """
+    said_arm = False
+    changed = True
+    while changed:
+        changed = False
+        for word in _TRAILING_NOISE:
+            suffix = " " + word
+            if label.endswith(suffix) and label[: -len(suffix)].strip():
+                label = label[: -len(suffix)].strip()
+                changed = True
+                if word in ("arm", "arms"):
+                    said_arm = True
+    return label, said_arm
+
+
 def normalize_scope(scope: str | None) -> str | None:
     """Return a canonical form of `scope`, or None when it is absent.
 
@@ -79,7 +113,12 @@ def normalize_scope(scope: str | None) -> str | None:
         return None
 
     text = scope.strip().lower()
-    text = re.sub(r"\s+", " ", text)
+    # Hyphen and underscore are spelling, not meaning: "per-subject" and
+    # "per_subject" were two answers for one thing in run r-20260827-205037.
+    # A hyphen between digits is meaning, not spelling — "Months 1-3" is a range
+    # and must not become "months 1 3".
+    text = re.sub(r"(?<!\d)[_\u2010-\u2015-]+(?!\d)", " ", text)
+    text = re.sub(r"\s+", " ", text).strip()
     if not text:
         return None
 
@@ -91,6 +130,15 @@ def normalize_scope(scope: str | None) -> str | None:
 
     label = _BACKGROUND_THERAPY.sub("", label).strip()
     label = label.strip(" .,;-_()[]")
+    # Checked before the trailing-noun rules run: "all arms" names the whole
+    # study, and stripping its "arms" would otherwise turn it into a cohort
+    # called "all".
+    if label in _WHOLE_STUDY and not prefix:
+        return "total"
+
+    label, said_arm = _strip_trailing_noise(label)
+    if said_arm and not prefix:
+        prefix = "cohort"
 
     if not label:
         return _canonical_prefix(prefix) or None
