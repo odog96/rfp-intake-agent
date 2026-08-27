@@ -35,6 +35,7 @@ from rfp_intake.domain.schemas import (
     RunError,
     RunState,
 )
+from rfp_intake.normalize.scope import normalize_scope
 
 logger = structlog.get_logger()
 
@@ -107,14 +108,24 @@ def _reconcile_field(
             )], []
         return [_not_found(field_def.id)], []
 
+    # Group on the canonical scope, not the literal label. The documents name the
+    # same arm differently on purpose and recognising that is this node's job —
+    # grouping on raw text resolved the placebo arm three times in run
+    # r-sonnet46-pair-114917 (cohort:Placebo, cohort:placebo, cohort:Placebo+SoC).
     by_scope: dict[str | None, list[FieldRecord]] = defaultdict(list)
+    display_scope: dict[str | None, str | None] = {}
     for r in found:
-        by_scope[r.scope].append(r)
+        key = normalize_scope(r.scope)
+        by_scope[key].append(r)
+        # Keep the first label seen for the reader; the canonical form is an
+        # internal grouping key and is not what belongs in a report.
+        display_scope.setdefault(key, r.scope)
 
     resolved: list[ResolvedField] = []
     contradictions: list[Contradiction] = []
 
-    for scope, scope_records in by_scope.items():
+    for key, scope_records in by_scope.items():
+        scope = display_scope[key]
         value_groups = _group_by_canonical_value(scope_records)
 
         if len(value_groups) == 1:

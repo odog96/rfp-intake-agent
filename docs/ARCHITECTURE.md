@@ -1,73 +1,150 @@
-# RFP Intake Agent — Architectural Scaffolding
+# RFP Intake Agent — Architecture
 
-> **How to read this document.** It is the build contract, and it describes the target design —
-> not every part is built. Sections marked *Not built yet* are design intent. Where the running
-> code deviates deliberately from the design, the deviation is recorded inline in the relevant
-> section rather than left for the reader to discover; those notes carry the date they were made.
-> `CLAUDE.md` carries current build status. `config/fields.yaml` remains the single source of
-> truth for what gets extracted.
+**What it is:** an automated first pass over clinical study RFPs and protocols. It reads the
+documents, pulls out the variables the Delivery Strategy & Budgeting (DSB) team needs in order to
+price a study, shows where each value came from, and flags the places where two documents disagree.
 
-**System:** AI-powered RFP + Protocol review for Clinical Delivery Strategy & Budgeting (DSB)
-**Framework:** LangGraph (deterministic StateGraph) on Cloudera — Cloudera AI Inference (CAII) for inference,
-Cloudera AI Application for the UI, CML Jobs for execution.
-**Status:** Phase 2 design. Supersedes the Phase 1 CrewAI / Agent Studio prototype.
-**Audience:** Engineers building this repo. This document is the build contract.
+**What it produces:** a report — PDF, spreadsheet and JSON — in which every value carries the
+sentence it was read from, the document it came from, and the page number.
 
----
+**Who reads that report:** a DSB analyst who is accountable for the budget that comes out the other
+end, and who needs to be able to check any number in it against the source in a few seconds.
 
-## 0. Why we are rebuilding
+**Built on:** LangGraph (a fixed, non-autonomous pipeline) running on Cloudera — Cloudera AI
+Inference for the models, Cloudera AI Application for the web interface, CML Jobs for execution.
 
-Phase 1 (Agent Studio / CrewAI) proved the concept: classify → extract → synthesize → detect contradictions,
-producing a PDF report. It has three defects that block production:
+**Audience for this document:** engineers building this repo. It is the build contract.
 
-| Defect | Phase 1 cause | Phase 2 fix |
-|---|---|---|
-| **Non-determinism** — same document, different report | LLM-driven agent delegation decides control flow | Control flow is Python. The LLM only fills bounded, schema-constrained slots. |
-| **Fragile ingestion** — file-path and format failures | Framework-owned file tooling, single parser | Parser is an interface behind the graph, with a fidelity ladder and a page-preserving contract |
-| **No auditability** — values with no provenance | Free-text agent output | Every value carries a verbatim quote, doc id and page. No provenance, no value. |
-
-Plus a hard requirement that recurs in every design sync: **documents must not leave the customer boundary.**
-This is not a constraint the architecture works around — it is the point of the project. The platform is
-Cloudera end to end, and Cloudera AI Inference is the inference layer for POC, demo, and production alike.
-The `get_llm` seam exists so that local development and deployed execution differ by a base URL, not by a
-code path.
-
-**The thesis:** an RFP intake agent is not an autonomous agent problem. It is a *deterministic extraction
-pipeline with LLM-shaped leaves*. Every place we let the model decide *what to do next* is a place the
-report changes between runs. Every place we let it decide *what this sentence says* is a place it adds value.
-The architecture is the discipline of keeping those two separate.
+> **How to read this document.** It describes the target design — not every part is built.
+> Sections marked *Not built yet* are design intent. Where the running code deviates deliberately
+> from the design, the deviation is recorded inline in the relevant section, with the date it was
+> made, rather than left for you to discover. `CLAUDE.md` carries current build status.
+> `config/fields.yaml` is the single source of truth for what gets extracted.
+>
+> **New to LangGraph?** Read `docs/LANGGRAPH_PRIMER.md` first. It is one page and explains the
+> handful of concepts this document assumes.
 
 ---
 
-## 1. The five load-bearing principles
+## 0. What this system is, and what it must never do
 
-### P1 — Evidence or nothing
-No extracted value exists without a `quote`, a `doc_id`, and a `page`. A field the model cannot ground in
-verbatim text is emitted as `not_found`, never inferred, never silently dropped. This is what makes the tool
-trustworthy to a DSB reviewer who is accountable for the budget that comes out the other end.
+### It is a pipeline, not an autonomous agent
 
-### P2 — `not_specified` is an answer
-RFPs are incomplete by nature. "Number of CRF pages: not stated in source documents" is a *correct and useful*
-output — it tells the analyst to go ask the sponsor. Conflating "absent" with "zero" or with "unknown" is the
-single most expensive failure mode in a budgeting tool. Three distinct terminal states per field:
-`found` / `not_specified` (source explicitly says none/N/A) / `not_found` (searched, absent).
+The steps are always the same, no matter what the documents say:
 
-### P3 — Extraction is many small jobs, not one big one
-One prompt asking for 35 variables across a 200-page protocol will hallucinate and will not repeat.
-Instead: fan out to one bounded task per `(document × field group)`, each with a narrow schema, a targeted
-page window, and a single job. Nine groups × N docs, run in parallel via LangGraph's `Send`. Small context,
-small schema, small failure blast radius.
+> parse the documents → identify what kind of document each one is → decide which pages to read
+> for which variables → read them → convert the answers to a standard form → find places where
+> two documents disagree → judge whether each disagreement is real → compute the derived
+> variables → decide what needs human review
 
-### P4 — The field registry is the product
-Field definitions live in `config/fields.yaml`, not in code and not in prompts. Adding a variable is a YAML
-edit reviewed by Angus, not a code change reviewed by an engineer. Angus explicitly said the current list is
-"a decent starting point... there are definitely other details." Design for that sentence.
+Because that list never varies, it is written in Python. A language model is called at three
+points inside it to answer narrow questions — *what does this sentence say?*, *do these two
+values really disagree?* — and at no point to decide what happens next.
 
-### P5 — Contradiction detection is deterministic first, LLM second
-Finding *candidate* disagreements is set logic over normalized values — code, fast, exhaustive, repeatable.
-Judging whether a candidate is a real conflict needs domain reasoning — that, and only that, is an LLM call.
-Never ask a model to "look for contradictions"; ask it to adjudicate a specific pair you already found.
+That separation is the central design decision of this project. **Letting a model decide what to
+do next is a place the report changes between runs. Letting it decide what a sentence means is a
+place it adds value.** Keeping those apart is what the rest of this document describes.
 
+### Documents must not leave the customer boundary
+
+This is a hard requirement, not a preference to design around. It is close to the point of the
+project. Study protocols and sponsor RFPs are commercially sensitive and often
+patient-adjacent, and a customer who cannot be shown where the text went cannot use the tool at
+all.
+
+Concretely:
+
+- All parsing happens in-process — no third-party document-understanding service.
+- Inference runs on Cloudera AI Inference, inside the customer's environment.
+- Any component that would send document content off-box sits behind a switch that is **off by
+  default**, and its use is recorded in the run's audit record (§6.4). An empty
+  `external_services` list is the evidence that nothing left.
+- This is enforced in code, not by discipline: `privacy_mode` in `config/models.yaml` refuses to
+  construct an off-box model provider at all in its default setting. See §5.1.
+
+AWS Bedrock appears in the configuration as a **testing-only** escape hatch, so that development
+and demos are not blocked when endpoint capacity is short. It may only ever see synthetic or
+otherwise non-sensitive documents, and production runs on Cloudera AI Inference.
+
+---
+
+## 1. The five principles
+
+These five statements decide most of the design arguments in this document. Where a later section
+seems over-engineered, it is usually one of these being paid for.
+
+### P1 — A value with no quote is not a value
+
+Every variable the system reports carries the **verbatim sentence it was read from**, plus the
+document it came from and the page number. If the model cannot ground a value in text it can
+quote, the system reports the variable as *not found* rather than guessing.
+
+This is checked in code, not trusted: after every extraction call, the quote is verified to be a
+genuine substring of the source text. A finding that fails the check is discarded and logged,
+never repaired.
+
+*Why:* the analyst reading the report is accountable for the resulting budget. A number they
+cannot trace to a sentence is worse than no number, because it costs them time to disprove.
+
+### P2 — "The document doesn't say" is a real answer
+
+RFPs are incomplete by nature. *"Number of CRF pages: not stated in the source documents"* is a
+**correct and useful output** — it tells the analyst to go and ask the sponsor. It is not a
+failure of extraction.
+
+The system therefore keeps three outcomes strictly distinct, everywhere — in the schema, the
+normalizer, the report and the evaluation metrics:
+
+| Outcome | Meaning |
+|---|---|
+| `found` | A value was read from the documents. |
+| `not_specified` | The documents explicitly say none, N/A, or not applicable. |
+| `not_found` | We looked and the documents do not address it. |
+
+*Why:* collapsing these into each other — treating "absent" as zero, or "explicitly none" as
+"we didn't look" — is the most expensive mistake a budgeting tool can make. Zero patients and
+unknown patients produce very different budgets.
+
+### P3 — Many small extraction jobs, never one big one
+
+A single prompt asking for 45 variables across a 200-page protocol will invent answers, and will
+not give the same ones twice.
+
+Instead the work is split into small, targeted jobs: one per **document × field group**, each
+with a narrow schema, a handful of candidate pages, and a single thing to look for. Nine groups
+across three documents is roughly 27 small calls of 3–15k tokens each, rather than one call of
+300k. They run in parallel, so elapsed time is bounded by the slowest call rather than their sum.
+
+*Why:* small context, small schema, and a contained failure. When one call goes wrong it costs
+one field group on one document, not the whole report.
+
+### P4 — The list of variables lives in a config file, not in code
+
+Which variables get extracted is defined in `config/fields.yaml`. The prompts, the JSON schemas,
+the validation rules and the report columns are all generated from that file.
+
+Adding a variable is therefore a YAML edit that the domain expert can review, not a code change
+requiring an engineer. **If adding a variable ever requires editing Python, the design has
+drifted and should be corrected rather than worked around.**
+
+*Why:* the variable list is expected to keep changing. Angus (IQVIA DSB, the domain expert)
+described the current list as "a decent starting point… there are definitely other details."
+The architecture should make that sentence cheap to act on.
+
+### P5 — Find disagreements with code; ask the model only to judge them
+
+When two documents give different values for the same variable, finding that pair is **set logic
+over normalized values** — code, which is fast, exhaustive and gives the same answer every time.
+
+Only then is a model asked a single question about one specific pair: *is this a real conflict, a
+difference that reconciles, or not a disagreement at all?*
+
+**Never ask a model to "look for contradictions."** It will find some, miss others, and do both
+differently next time. And even when it rules something a conflict, it does not choose the
+winning value — that is a deterministic precedence rule (§4.6).
+
+*Why:* recall on contradictions is the feature DSB values most, and recall is exactly what a
+free-form model search cannot guarantee.
 ---
 
 ## 2. Graph topology
@@ -131,8 +208,9 @@ unimplemented — see §11.
 split into several windows, so a 137-page protocol produces more than one task per group (2 documents
 × 9 groups gave 37 tasks in practice, not 18). On a typical 3-document RFP package that is ~27+ small calls, each with
 3–15k tokens of targeted context instead of one call with 300k. Parallel, so wall-clock is bounded by the
-slowest single call, not the sum. This is the direct fix for the "5 minutes to run" complaint from the
-Warsaw feedback — the Phase 1 runtime was sequential agent turns.
+slowest single call, not the sum. Elapsed time is the constraint users complain about first: "5 minutes to
+run" was the loudest piece of feedback from the Warsaw session, and running these calls in parallel is the
+direct answer to it.
 
 ---
 
@@ -268,10 +346,14 @@ run in-process on Cloudera infrastructure and are the only rungs the MVP uses.
 One cheap structured call per document. Returns `kind`, `confidence`, `version_label`, `document_date`,
 `sponsor`, `protocol_id`. Classify from the **first 3 pages + outline headings only** — not the whole doc.
 
-Phase 1's routing bug (RFPs sent to the protocol extractor) came from classification being entangled with
-extraction. Here classification only *labels*; it never gates which fields are attempted. Every field group
-is attempted against every document. Precedence sorts it out later. Misclassification therefore degrades
-ranking, not recall — a much safer failure mode.
+**Classification labels a document; it never decides which fields are attempted.** Every field group is
+attempted against every document regardless of what CLASSIFY decided, and precedence (§4.6) sorts out which
+answer wins later.
+
+This is deliberate and worth protecting. If classification gated extraction, a single mislabelled document
+would silently lose every field it held — a failure with no symptom in the output, because a field that was
+never attempted looks exactly like a field that was absent. Keeping the two separate means misclassification
+degrades *ranking* rather than *recall*, which is a far safer way to be wrong.
 
 ### 4.3 PLAN
 Pure Python. For each `(doc, group)`:
@@ -685,7 +767,7 @@ writing the same run directory.
   batching behaviour, measure it, and treat it as a deployment parameter rather than a constant. Back off on
   429/503 from the endpoint the same way you would a vendor limit.
 - **Cost/latency budget**: target < 90s wall clock for a 3-document package, excluding OCR. Instrument
-  per-node timing from day one; the Phase 1 five-minute runtime was the loudest user complaint. OCR-heavy
+  per-node timing from day one — a five-minute run was the loudest user complaint on record. OCR-heavy
   documents will exceed this — which is why per-document parser rung is surfaced in `status.json`.
 - **Observability**: structured logs keyed by `run_id`/`task_id`, written to `runs/{run_id}/logs/`; every LLM
   call logs role, model, endpoint, token counts, latency, and a hash (not the content) of the prompt.
@@ -719,7 +801,7 @@ confidentiality is absolute, and the output feeds a commercial bid. Posture:
 
 ---
 
-## 9. Evaluation — build this in Phase 1, not later
+## 9. Evaluation — build this early (§10 Phase 1), not later
 
 Without a golden set you cannot tell a prompt improvement from a prompt regression, and every future model
 swap becomes a guess.
@@ -761,14 +843,15 @@ and until Phase 5 exists, the graph runs perfectly well from a CLI, which is eno
 
 ---
 
-## 11. Deferred to Phase Two
+## 11. Deferred — deliberately not in the MVP
 
 Designed for, deliberately not built in MVP.
 
 - **The REVIEW node and `interrupt()`.** In-app adjudication — an analyst resolving a contradiction inside
   the tool and the graph resuming — is out of MVP scope. The node is absent from the compiled graph and the
-  config flag defaults off. The consequence is deliberate and load-bearing: **clearly framed contradictions
-  in the report are sufficient for v1**, which is why §4.7 sets a high bar on the explanation. Build the
+  config flag defaults off. That leaves the report as the only place a contradiction gets resolved, which
+  is an accepted trade for v1 — **a clearly framed contradiction in the report is enough** — and is why §4.7
+  demands so much of the explanation text. Build the
   state model so the interrupt boundary is reachable later — the checkpointer already gives us that — but do
   not build the UI, the resume-from-review flow, or the edit-and-re-render path.
 - **Object-store input resolution** (`abfss://`). Interface defined in §5.2, implementation deferred.

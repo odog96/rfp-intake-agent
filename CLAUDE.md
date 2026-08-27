@@ -133,20 +133,20 @@ under mock only because mock produced no records.
 6. **The test suite runs offline.** `LLM_BACKEND=mock` by default in tests. Deterministic fixtures.
    No network in CI.
 
-7. **Normalizers are pure functions with table-driven tests.** `graph/normalize` and `domain/units`
+8. **Normalizers are pure functions with table-driven tests.** `graph/normalize` and `domain/units`
    contain zero LLM calls and zero I/O.
 
-8. **Contradiction detection is code first.** Candidate detection is set logic over normalized values.
+9. **Contradiction detection is code first.** Candidate detection is set logic over normalized values.
    The LLM only adjudicates a specific pair you already found. Never prompt "find contradictions".
 
-9. **Nothing leaves the customer boundary without an explicit, recorded decision.** All parsing is
+10. **Nothing leaves the customer boundary without an explicit, recorded decision.** All parsing is
    in-process (PyMuPDF/pdfplumber, Docling, local OCR). Any component that would transmit document
    content off-box sits behind a default-off switch — `parser.allow_external` for parsing,
    `privacy_mode` for inference — and its use is recorded in the run's `audit.json`. An empty
    `external_services` array is the evidence that nothing left. Sensitive customer documents are
    processed in `private` mode, always.
 
-10. **The app never runs the graph.** The Cloudera AI Application triggers a CML Job and polls the run
+11. **The app never runs the graph.** The Cloudera AI Application triggers a CML Job and polls the run
     directory. One scheduled janitor job reaps stale runs — never one watcher per run.
 
 ## Scale reality check
@@ -201,29 +201,36 @@ Source: `/home/cdsw/how_to_resond.txt`, adapted for this project.
    same sentence — every conversation, no carry-over assumed. This includes: tool
    calling, structured output, token ceiling, egress, privacy mode, service control
    policy, reducer, fan-out.
-6. **Disambiguate overloaded words every time.** "The field schema" (`config/fields.yaml`)
+6. **Never use a pronoun for a system component. Name it.** Not "its environment
+   variables are empty" but "the CML Job named 'RFP Pipeline Executor' has no
+   environment variables set". Not "it failed" but "the extract step failed". This
+   is the single most common way these replies become unreadable: `it`, `its`,
+   `this`, `that`, and `the above` all have several possible referents in a system
+   with an application, a job, a container, a graph, a node and a model in it.
+   Repeating the full name is never too long.
+7. **Disambiguate overloaded words every time.** "The field schema" (`config/fields.yaml`)
    or "the graph state schema" (`RunState`), never just "schema". "The Cloudera AI
    Application" or "the CML Job", never just "the app". **Parse** means reading text off
    a page; **extract** means pulling a field value out of that text. Say which.
-7. **Every sentence carries information.** Cut hedges. State uncertainty concretely:
+8. **Every sentence carries information.** Cut hedges. State uncertainty concretely:
    "I am not sure because I only ran this on the synthetic RFP, not the protocol."
-8. **Name the source every time.** Any claim about a file gets a name and a location:
+9. **Name the source every time.** Any claim about a file gets a name and a location:
    "`config/models.yaml` line 60 pins the strategy". Never "the config says". If the
    claim comes from a test run, name the run id. If you cannot locate it, say so.
-9. **Quote before you disagree.** Quote the actual line before arguing with it.
-10. **One ask per response.** Close with exactly one question or one proposed next
+10. **Quote before you disagree.** Quote the actual line before arguing with it.
+11. **One ask per response.** Close with exactly one question or one proposed next
     action. Not a menu.
-11. **Concise means fewer points, not compressed points.** Cut whole sections; never cut
+12. **Concise means fewer points, not compressed points.** Cut whole sections; never cut
     the words that make a sentence understandable.
-12. **Ask before writing anything long**, or before producing a document.
-13. **No tables, headers, or bullets in short answers.** Use them only for comparing
+13. **Ask before writing anything long**, or before producing a document.
+14. **No tables, headers, or bullets in short answers.** Use them only for comparing
     several things at once.
-14. **Back-references stand alone.** Restate the earlier decision in full rather than
+15. **Back-references stand alone.** Restate the earlier decision in full rather than
     pointing at it.
-15. **Deferred items are recorded completely** — what it is, why deferred, when it returns.
-16. **Name what you read** before producing analysis from project files.
-17. **Complete, or say what is missing.** If a breakdown has five items, all five appear.
-18. **When told "unclear" or "too dense", rewrite with the missing pieces filled in.**
+16. **Deferred items are recorded completely** — what it is, why deferred, when it returns.
+17. **Name what you read** before producing analysis from project files.
+18. **Complete, or say what is missing.** If a breakdown has five items, all five appear.
+19. **When told "unclear" or "too dense", rewrite with the missing pieces filled in.**
     Do not defend the original or apologise at length.
 
 ## When you are unsure
