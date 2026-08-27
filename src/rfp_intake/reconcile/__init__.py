@@ -126,6 +126,15 @@ def _reconcile_field(
 
     for key, scope_records in by_scope.items():
         scope = display_scope[key]
+
+        # A field the registry declares as a collection cannot have its members
+        # disagree with each other: two records naming different pieces of
+        # evidence are both right, and are one answer with several parts. Only
+        # single-valued fields can contradict.
+        if _is_collection(field_def):
+            resolved.append(_merge_collection(field_def, scope_records, scope))
+            continue
+
         value_groups = _group_by_canonical_value(scope_records)
 
         if len(value_groups) == 1:
@@ -154,6 +163,55 @@ def _reconcile_field(
             ))
 
     return resolved, contradictions
+
+
+# Types in config/fields.yaml whose value is a collection rather than one answer.
+# `list[enum]` and `list[text]` hold members; `object[]` holds entries such as one
+# row per study period. Any other type — int, text, enum, bool — is a single
+# answer, and two different values for it are a genuine disagreement.
+_COLLECTION_TYPES = ("list[enum]", "list[text]", "object[]")
+
+
+def _is_collection(field_def: FieldDef) -> bool:
+    return field_def.type in _COLLECTION_TYPES
+
+
+def _merge_collection(
+    field_def: FieldDef, records: list[FieldRecord], scope: str | None
+) -> ResolvedField:
+    """Fold every record for one collection field and scope into a single answer.
+
+    Before this, RECONCILE compared collection members as if they competed:
+    `visits.intensity_evidence` produced 38 of the 158 rows in run
+    r-20260827-205037 on its own, one row per piece of evidence found, and
+    ADJUDICATE was asked to judge disagreements that were never disagreements.
+
+    Members are deduplicated while preserving the order they were found in, which
+    keeps the report reading in document order rather than an arbitrary one.
+    """
+    members: list[Any] = []
+    for record in records:
+        value = record.value if record.value is not None else record.raw_value
+        for member in value if isinstance(value, list) else [value]:
+            if member is None:
+                continue
+            if member not in members:
+                members.append(member)
+
+    best = max(records, key=lambda r: r.confidence)
+    confidence = best.confidence
+    if len(records) > 1:
+        confidence = min(1.0, confidence + CORROBORATION_BOOST_PER_SOURCE * (len(records) - 1))
+
+    return ResolvedField(
+        field_id=field_def.id,
+        value=members,
+        status="needs_review",  # GATE decides confirmed vs needs_review
+        confidence=confidence,
+        sources=[r.provenance for r in records],
+        quote=best.quote,
+        scope=scope,
+    )
 
 
 def _group_by_canonical_value(records: list[FieldRecord]) -> list[list[FieldRecord]]:

@@ -106,6 +106,63 @@ def check_job_run_status() -> tuple[str | None, str | None]:
         return None, f"{type(exc).__name__}: {exc}"
 
 
+# Order matters: report.pdf is what the analyst reads and is offered first.
+# extraction.json is the machine-readable one a downstream budget service
+# consumes (ARCHITECTURE.md §4.10), so it is offered but listed last.
+_DOWNLOADS = (
+    ("report.pdf", "Report (PDF)", "application/pdf"),
+    ("report.xlsx", "Report (Excel)",
+     "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"),
+    ("extraction.json", "Extracted data (JSON)", "application/json"),
+)
+
+
+def _results_section(run_path) -> None:  # type: ignore[no-untyped-def]
+    """Offer the finished outputs for download, and say what is in them."""
+    st.header("4. Results")
+
+    extraction_path = run_path / "extraction.json"
+    if extraction_path.exists():
+        try:
+            data = json.loads(extraction_path.read_text())
+            fields = data.get("resolved_fields") or []
+            contradictions = data.get("contradictions") or []
+            needs_decision = [
+                c for c in contradictions
+                if c.get("verdict") in ("conflict", "reconcilable")
+            ]
+            counts: dict[str, int] = {}
+            for f in fields:
+                counts[f.get("status", "unknown")] = counts.get(f.get("status", "unknown"), 0) + 1
+
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                st.metric("Confirmed", counts.get("confirmed", 0))
+            with col2:
+                st.metric("Needs review", counts.get("needs_review", 0))
+            with col3:
+                st.metric("Disagreements to decide", len(needs_decision))
+            if data.get("errors"):
+                st.warning(f"{len(data['errors'])} field(s) failed during the run — see the JSON.")
+        except (OSError, ValueError) as exc:  # noqa: BLE001 - summary is a nicety
+            st.info(f"Could not summarise the results: {exc}")
+
+    cols = st.columns(len(_DOWNLOADS))
+    for col, (filename, label, mime) in zip(cols, _DOWNLOADS, strict=True):
+        path = run_path / filename
+        with col:
+            if not path.exists():
+                st.caption(f"{label} — not produced")
+                continue
+            st.download_button(
+                label=label,
+                data=path.read_bytes(),
+                file_name=f"{st.session_state.run_id}-{filename}",
+                mime=mime,
+                use_container_width=True,
+            )
+
+
 # --- Session state init ---
 if "run_id" not in st.session_state:
     st.session_state.run_id = None
@@ -231,6 +288,7 @@ if st.session_state.run_id and st.session_state.job_triggered:
         if status["state"] == "completed":
             st.balloons()
             st.success("Pipeline complete.")
+            _results_section(settings.run_dir / st.session_state.run_id)
         elif status["state"] == "failed":
             st.error(f"Pipeline failed: {status.get('error', 'unknown error')}")
         elif cml_terminal_failure:

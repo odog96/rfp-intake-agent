@@ -83,6 +83,17 @@ def _gate_field(
     if disagreement:
         return rf.model_copy(update={"status": "needs_review", "contradiction": contradiction})
 
+    # A budget driver holding several values never confirms on its own. RECONCILE
+    # folds a collection field's records into one answer with several members —
+    # correctly, since they are parts of one list rather than rival answers — but
+    # that also removes the disagreement that used to force a human to look.
+    # ops.monitoring_visits came back as ["75", "750", "300"] in run
+    # r-listfix-175318: three different kinds of monitoring visit, and which
+    # number belongs in a budget is exactly the judgement this pipeline must not
+    # make silently.
+    if is_budget_driver and isinstance(rf.value, list) and len(rf.value) > 1:
+        return rf.model_copy(update={"status": "needs_review"})
+
     if rf.confidence >= CONFIDENCE_CONFIRMED:
         return rf.model_copy(update={"status": "confirmed"})
 
