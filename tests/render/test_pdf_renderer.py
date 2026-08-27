@@ -118,3 +118,70 @@ class TestBuildReportPdf:
         pdf = build_report_pdf(state, _registry(), generated_at="2026-01-01")
         assert pdf.startswith(b"%PDF")
         assert len(pdf) > 1000  # non-trivial — every field in the registry got a line
+
+
+class TestContradictionsSectionLength:
+    """A dismissed disagreement is recorded, not written up at length."""
+
+    @staticmethod
+    def _contradiction(field_id: str, verdict: str, n_records: int = 2):
+        from rfp_intake.domain.schemas import Contradiction, FieldRecord, Provenance
+
+        records = [
+            FieldRecord(
+                field_id=field_id,
+                group="operational_metrics",
+                raw_value=f"value-{i}",
+                quote=f"quote number {i} " + ("padding " * 20),
+                provenance=Provenance(doc_id="doc-1", doc_kind="rfp", page=i + 1),
+                confidence=0.9,
+            )
+            for i in range(n_records)
+        ]
+        return Contradiction(
+            field_id=field_id,
+            records=records,
+            verdict=verdict,  # type: ignore[arg-type]
+            explanation="A long explanation. " * 40,
+            severity="high",
+        )
+
+    def test_dismissed_entries_are_far_shorter_than_real_ones(self) -> None:
+        from rfp_intake.domain.registry import get_registry
+        from rfp_intake.render.pdf_renderer import _contradictions_section, _styles
+
+        styles = _styles()
+        registry = get_registry()
+        real = _contradictions_section(
+            [self._contradiction("ops.sites_total", "conflict")], registry, styles
+        )
+        dismissed = _contradictions_section(
+            [self._contradiction("ops.sites_total", "not_a_conflict")], registry, styles
+        )
+        assert len(dismissed) < len(real)
+
+    def test_dismissed_entries_still_appear(self) -> None:
+        # They must remain visible: "we checked and it was fine" is information.
+        from rfp_intake.domain.registry import get_registry
+        from rfp_intake.render.pdf_renderer import _contradictions_section, _styles
+
+        story = _contradictions_section(
+            [self._contradiction("ops.sites_total", "not_a_conflict")],
+            get_registry(),
+            _styles(),
+        )
+        assert any("dismissed" in str(getattr(p, "text", "")) for p in story)
+
+    def test_quotes_are_capped(self) -> None:
+        # One entry in run r-20260827-180418 carried 27 source quotes.
+        from rfp_intake.domain.registry import get_registry
+        from rfp_intake.render.pdf_renderer import _MAX_QUOTES, _contradictions_section, _styles
+
+        story = _contradictions_section(
+            [self._contradiction("ops.sites_total", "conflict", n_records=27)],
+            get_registry(),
+            _styles(),
+        )
+        quoted = [p for p in story if 'doc-1 (rfp' in str(getattr(p, "text", ""))]
+        assert len(quoted) == _MAX_QUOTES
+        assert any("further sources" in str(getattr(p, "text", "")) for p in story)

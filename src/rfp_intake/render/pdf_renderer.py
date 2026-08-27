@@ -134,32 +134,85 @@ def _executive_summary(state: RunState, styles: dict) -> list:  # type: ignore[t
     return story
 
 
+# A dismissed disagreement still prints, because "we checked and it was fine" is
+# information an analyst needs. It prints as one line, because the full write-up
+# ARCHITECTURE.md §4.7 asks for is about disagreements that need a human decision.
+# Observed in run r-20260827-180418: 20 of 29 entries were dismissed, and their
+# explanations filled most of twelve pages, pushing the extracted variables to
+# page fourteen.
+_NEEDS_A_DECISION = ("conflict", "reconcilable")
+
+# Quotes shown per contradiction in the full write-up. One entry in that same run
+# carried 27 records; past a handful they stop being evidence and become a wall.
+_MAX_QUOTES = 4
+
+
 def _contradictions_section(
     adjudicated: list[Contradiction], registry: Registry, styles: dict  # type: ignore[type-arg]
 ) -> list:  # type: ignore[type-arg]
     field_by_id = {f.id: f for f in registry.fields}
     story: list[object] = [Paragraph("Contradictions", styles["section"])]
 
-    for c in adjudicated:
-        field_def = field_by_id.get(c.field_id)
-        label = field_def.label if field_def else c.field_id
-        verdict_color = _CONFLICT_COLOR if c.verdict == "conflict" else colors.HexColor("#e65100")
+    needs_decision = [c for c in adjudicated if c.verdict in _NEEDS_A_DECISION]
+    dismissed = [c for c in adjudicated if c.verdict not in _NEEDS_A_DECISION]
 
+    def label_for(c: Contradiction) -> str:
+        field_def = field_by_id.get(c.field_id)
+        return field_def.label if field_def else c.field_id
+
+    if needs_decision:
         story.append(Paragraph(
-            f'{escape(label)} — <font color="{verdict_color.hexval()}">'
+            f"{len(needs_decision)} needing a decision",
+            styles["field_label"],
+        ))
+    for c in needs_decision:
+        verdict_color = _CONFLICT_COLOR if c.verdict == "conflict" else colors.HexColor("#e65100")
+        story.append(Paragraph(
+            f'{escape(label_for(c))} — <font color="{verdict_color.hexval()}">'
             f'{escape((c.verdict or "").replace("_", " "))}</font>'
             f' ({escape(c.severity or "unspecified")} severity)',
             styles["field_label"],
         ))
         if c.explanation:
             story.append(Paragraph(escape(c.explanation), styles["body"]))
-        for r in c.records:
+        for r in c.records[:_MAX_QUOTES]:
             story.append(Paragraph(
                 f'{escape(r.provenance.doc_id)} ({escape(r.provenance.doc_kind)}, '
                 f'p.{r.provenance.page}): "{escape(r.quote)}"',
                 styles["quote"],
             ))
+        if len(c.records) > _MAX_QUOTES:
+            story.append(Paragraph(
+                f"...and {len(c.records) - _MAX_QUOTES} further sources, "
+                f"in extraction.json",
+                styles["quote"],
+            ))
         story.append(Spacer(1, 0.1 * inch))
+
+    if dismissed:
+        story.append(Spacer(1, 0.15 * inch))
+        story.append(Paragraph(
+            f"{len(dismissed)} checked and dismissed",
+            styles["field_label"],
+        ))
+        for c in dismissed:
+            values = ", ".join(
+                dict.fromkeys(r.raw_value for r in c.records[:_MAX_QUOTES] if r.raw_value)
+            )
+            more = (
+                f" (+{len(c.records) - _MAX_QUOTES} more)"
+                if len(c.records) > _MAX_QUOTES
+                else ""
+            )
+            story.append(Paragraph(
+                f"{escape(label_for(c))}: not a conflict — "
+                f"{escape(values) or 'no values recorded'}{escape(more)}",
+                styles["quote"],
+            ))
+        story.append(Paragraph(
+            "Full reasoning for the dismissed entries is in extraction.json.",
+            styles["body"],
+        ))
 
     return story
 
