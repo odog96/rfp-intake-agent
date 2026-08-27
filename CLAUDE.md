@@ -132,8 +132,14 @@ The throughput ceiling is our own CAII endpoint capacity, not a vendor rate limi
 fan-out queues against ourselves and degrades latency for every other concurrent user.
 
 ## Commands
+**Use the container's Python. Do not create a virtual environment.** The CML Job named
+"RFP Pipeline Executor" and the Cloudera AI Application both run the container's Python, so a
+virtual environment tests a different interpreter than the one that runs in production — and it
+cost 5.4 GB, which was 99% of this project's disk use. Everything the project needs is already
+installed in the container. Just `python`, never `.venv/bin/python`.
+
 ```bash
-pip install -r requirements.txt   # install dependencies
+pip install -r requirements.txt   # only if a dependency is genuinely missing
 pip install -e .                  # install package in editable mode
 pytest                            # offline test suite (mock LLM)
 pytest -m integration             # requires live LLM endpoint
@@ -151,7 +157,7 @@ python -m rfp_intake.job <run_id>
 ```
 
 ## Style
-- Python 3.11+, `uv`, ruff, mypy strict on `domain/` and `graph/`.
+- Python 3.11+, ruff, mypy strict on `domain/` and `graph/`.
 - Pydantic v2 everywhere data crosses a boundary.
 - Structured logging keyed by `run_id` / `task_id`. No print statements.
 - Type-annotate every function. `Any` requires a comment justifying it.

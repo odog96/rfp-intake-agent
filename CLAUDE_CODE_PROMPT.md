@@ -63,7 +63,8 @@ I'd rather correct the shape early than review 4,000 lines at once.
 
 ### Phase 0 — foundation (start here)
 
-1. Scaffold with `uv`. Python 3.11+. Package `rfp_intake`. Layout per ARCHITECTURE.md §10, plus `tests/`
+1. Scaffold with the container's Python (3.11+) — no virtual environment, see CLAUDE.md. Package
+   `rfp_intake`. Layout per ARCHITECTURE.md §10, plus `tests/`
    and `eval/`.
 2. `domain/registry.py` — load and validate `fields.yaml` into typed Pydantic models. Validate on load:
    unique ids, group references resolve, enum fields declare `values`, `derived` fields declare

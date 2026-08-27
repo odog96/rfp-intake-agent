@@ -115,7 +115,7 @@ def _build_bedrock(binding: RoleBinding, settings: Settings) -> BaseChatModel:
     except ImportError as exc:  # pragma: no cover - depends on optional extra
         raise ProviderUnavailableError(
             "Provider 'bedrock' requires the aws extra: "
-            "uv pip install 'rfp-intake[aws]'"
+            "pip install 'rfp-intake[aws]'"
         ) from exc
 
     # Credentials come from the standard AWS chain (env, profile, instance role).
