@@ -51,29 +51,47 @@ recorded inline in its own section rather than only here. The load-bearing ones:
   `fields.yaml`'s current enum. See `derive/rubric.py` before recalibrating.
 
 ### Known problems, in the order they hurt
-1. **List-shaped fields produce one row per list item.** `visits.intensity_evidence` alone produced
-   48 of 167 rows in run `r-sonnet46-scope-124051`; `timeline.periods`, `visits.frequency_by_period`
-   and `monitoring.unblinded_factors` behave the same way. RECONCILE treats each item in a list as a
-   competing answer rather than one entry in a set. This is the main source of noise in the output.
-2. **Two headline values came out wrong** in run `r-sonnet46-pair-114917`: `study.phase` resolved to
-   both `phase_3` and `phase_1_2`, and `timeline.total_duration` was confirmed as "approximately 24
-   months", which is the enrolment window rather than the study duration.
+1. **`study.phase` reads the phase of a different study.** In run `r-listfix-175318` it confirmed
+   `phase_1_2` with the scope "Study NEOD001-001 (referenced study)" — the phase of an earlier study
+   the protocol mentions. The correct `phase_3` is present but marked `needs_review`. Nothing in the
+   pipeline knows that a value about another study should be discarded; this needs a prompt change,
+   or a rule that a scope naming a different study disqualifies the record.
+2. **`timeline.total_duration` splits by enrolment timing.** Same run: "approximately 3.5-4 years"
+   for early enrollers and "1.5-2 years" for late ones, both confirmed, with the study-level 42
+   months absent. Correct per-subject, wrong as the study duration a budget needs.
 3. **`audit.json` (§6.4) and the janitor job (§6.5) are not built.** Without the janitor, a run whose
    job process dies leaves `status.json` saying "running" forever.
 4. **`python -m rfp_intake.eval` does not exist.** Only the library functions in `eval/` are built.
 
 ### The list of things to do
-1. **Make `report.pdf` downloadable from the Cloudera AI Application.** Asked for 2026-08-27.
-2. **Fix the list-shaped fields problem** described in known problems item 1.
-3. **Test with Nemotron on CAII once that endpoint is reachable again**, so the model used in
-   production is the model that was tested. Blocked on CAII access; the JWT is short-lived and the
-   endpoint lacks the two tool-calling flags named above.
-4. **Bring in more test documents.** Expected to expose gaps in EXTRACT that the current two-document
-   pair does not. Asked for 2026-08-27.
-5. **Improve the front end.** No specifics yet beyond the download button; a screenshot,
-   `8-27-app-screenshot.jpg`, was mentioned as the starting point. Asked for 2026-08-27.
-6. **Return `privacy_mode` to `private` and the models to CAII before any customer document.**
-7. Build `audit.json`, the janitor job, and the `rfp_intake.eval` command line.
+1. **Bring in more test documents.** Expected to expose gaps in EXTRACT that the current
+   two-document pair does not. Asked for 2026-08-27.
+2. **Test with Nemotron on CAII once that endpoint is reachable again**, so the model used in
+   production is the model that was tested. Blocked on CAII access; the token is short-lived and the
+   endpoint is served without the two tool-calling flags named above.
+3. **Improve the front end.** A screenshot, `8-27-app-screenshot.jpg`, was mentioned as the starting
+   point. Asked for 2026-08-27. The Results section with downloads is done; nothing else is specified.
+4. **Fix the two extraction problems above** — the phase of a referenced study, and the study
+   duration splitting per subject.
+5. **Return `privacy_mode` to `private` and the models to CAII before any customer document.**
+   `config/models.yaml` is on `mixed` with Claude Sonnet 4.6 on Bedrock for testing.
+6. Build `audit.json`, the janitor job, and the `rfp_intake.eval` command line.
+
+### Done 2026-08-27, with the run that proved it
+- Duplicate records: NORMALIZE was returning every record into a list that appended rather than
+  replaced, so each value landed twice. `append_or_replace` in `domain/schemas.py`.
+- Scope labels that named one thing did not merge. `normalize/scope.py`, driven by the 50 real
+  labels in run `r-20260827-205037`.
+- Collection fields had their members compared as rivals. Run `r-listfix-175318`: 101 rows rather
+  than 158, 12 contradictions rather than 23, the two real conflicts untouched.
+- A budget driver holding several values could confirm itself. `gate/__init__.py`.
+- The report wrote a full essay about disagreements it had dismissed: 18 pages rather than 27.
+- The Cloudera AI Application waited forever on a failed job (it matched `"failed"` when the CML
+  Jobs API returns `ENGINE_FAILED`), and the CML Job never received its run id (the IPython kernel
+  that CML wraps `run_job.py` in puts its own `-f` into `sys.argv`).
+- The application resolved every relative path against the wrong directory, so it read the wrong
+  config file and wrote run folders where the CML Job would never look.
+- The 5.4 GB virtual environment is gone, along with everything that would recreate one.
 
 ## Non-negotiable rules
 
