@@ -27,6 +27,7 @@ except NameError:  # pragma: no cover - depends on the CML runtime
 os.chdir(_PROJECT_ROOT)
 
 from rfp_intake.config.settings import get_settings  # noqa: E402
+from rfp_intake.job.cml_status import classify_cml_status  # noqa: E402
 from rfp_intake.llm.discovery import describe_active_routing  # noqa: E402
 
 settings = get_settings()
@@ -74,23 +75,28 @@ def trigger_job(run_id: str) -> str:
     return job_run.id
 
 
-def check_job_run_status() -> str | None:
-    """Check the CML job run status via API. Returns state string or None."""
+def check_job_run_status() -> tuple[str | None, str | None]:
+    """Return (raw CML status, error message). Exactly one is set.
+
+    Swallowing the error here and returning None was half of why a failed job run
+    left this page saying "Waiting for pipeline to start..." forever: an
+    unreachable API and a healthy queued job produced the same answer.
+    """
+    job_run_id = st.session_state.get("job_run_id")
+    if not job_run_id:
+        return None, None
     try:
         client = get_cml_client()
         project_id = os.environ["CDSW_PROJECT_ID"]
         job_id = find_job_id(client, project_id)
-        job_run_id = st.session_state.get("job_run_id")
-        if not job_run_id:
-            return None
         run = client.get_job_run(
             project_id=project_id,
             job_id=job_id,
             run_id=job_run_id,
         )
-        return run.status
-    except Exception:
-        return None
+        return run.status, None
+    except Exception as exc:  # noqa: BLE001 - surfaced to the operator, not raised
+        return None, f"{type(exc).__name__}: {exc}"
 
 
 # --- Session state init ---
@@ -178,10 +184,20 @@ if st.session_state.run_id and st.session_state.job_triggered:
     # A run is only "succeeded"/"failed" when both agree — status.json alone
     # can go stale if the job process dies without writing a terminal state
     # (crash before the try/except, OOM kill, container restart, ...).
-    cml_status = check_job_run_status()
-    cml_terminal_failure = bool(cml_status) and cml_status.lower() in (
-        "failed", "timedout", "killed",
-    )
+    cml_status, cml_error = check_job_run_status()
+    cml_state = classify_cml_status(cml_status)
+    cml_terminal_failure = cml_state == "failed"
+
+    if cml_error:
+        st.warning(
+            f"Cannot reach the CML Jobs API to check the job run: {cml_error}. "
+            "Progress below comes from status.json alone and may be stale."
+        )
+    elif cml_state == "unknown" and cml_status:
+        st.warning(
+            f"Unrecognised job run status from CML: {cml_status!r}. Treating it as "
+            "still running — check the Job Runs tab in the CML UI."
+        )
 
     if status_path.exists():
         status = json.loads(status_path.read_text())
@@ -224,12 +240,25 @@ if st.session_state.run_id and st.session_state.job_triggered:
             time.sleep(2)
             st.rerun()
     else:
+        # No status.json yet. The job may not have started writing, or it may
+        # have died before it could — the CML Jobs API is the only witness.
+        run_ref = (
+            f"run id `{st.session_state.run_id}`, "
+            f"job run `{st.session_state.get('job_run_id')}`"
+        )
         if cml_terminal_failure:
             st.error(
-                f"Job run failed (CML status: {cml_status}). "
-                "Check the Job Runs tab in the CML UI for logs."
+                f"The job run failed before the pipeline wrote any status "
+                f"(CML status: {cml_status}). Nothing ran. Open the Job Runs tab "
+                f"in the CML UI for the log — {run_ref}."
+            )
+        elif cml_state == "succeeded":
+            st.error(
+                f"The job run finished but the pipeline never wrote a status file "
+                f"at {status_path}. Treat this as a failure, not a success — "
+                f"{run_ref}."
             )
         else:
-            st.info("Waiting for pipeline to start...")
+            st.info(f"Waiting for the pipeline to start… (CML status: {cml_status or 'unknown'})")
             time.sleep(2)
             st.rerun()
