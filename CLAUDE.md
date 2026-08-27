@@ -7,99 +7,73 @@ produces a provenance-backed variable set for the Delivery Strategy & Budgeting 
 **Read `docs/ARCHITECTURE.md` before writing code. It is the build contract, not background reading.**
 `config/fields.yaml` is the single source of truth for what gets extracted.
 
-## Current status (as of 2026-08-26)
+## Current status (as of 2026-08-27)
 
 Phases 0–4 of ARCHITECTURE.md §10 are done. Graph topology today:
 `INGEST → CLASSIFY → PLAN → EXTRACT → NORMALIZE → RECONCILE → ADJUDICATE → DERIVE → GATE`,
-then RENDER runs at the job level (see below, not a graph node). 343 tests passing, 1 skipped.
-This repo had no git history before 2026-08-25 — `git init` and the first 6 commits (`202fec4`
-through `6e9b479`) all happened last session; nothing has been pushed anywhere.
+then RENDER runs after the graph finishes (see the deviations below). 467 tests passing, 1 skipped.
+Nothing has been pushed to a remote yet; `origin` points at
+https://github.com/odog96/rfp-intake-agent.git and the push needs credentials this environment
+does not have.
+
+**The whole path works end to end through the Cloudera AI Application.** A user loads documents,
+the application creates a run of the CML Job named "RFP Pipeline Executor", the job runs the
+pipeline and writes `extraction.json`, `report.pdf` and `report.xlsx`, and the application polls
+and reports the outcome. Verified 2026-08-27 with job run `pde6ypjc38gypgy2`.
+
+### Current model
+Claude Sonnet 4.6 on AWS Bedrock (`us.anthropic.claude-sonnet-4-6`), `privacy_mode: mixed`.
+**Testing only** — Bedrock is outside the customer boundary, so synthetic and publicly-registered
+documents only, per rule 5 below. Production is CAII and `privacy_mode: private`.
+
+On the two-document test pair it produced 108 confirmed fields, 27 contradictions and no errors in
+about twelve minutes, and caught the planted `timeline.total_duration` disagreement. It is the only
+model tried that extracts the budget drivers reliably. Claude models needed the Anthropic use-case
+form submitted in the Bedrock console for account 240534893097; everything else in that account
+except `us.meta.llama3-1-70b-instruct-v1:0` is blocked by an AWS service control policy (a
+company-wide rule an AWS administrator controls), `p-dlt9r6fc`.
+
+Two other models were tried and are worse. CAII Nemotron 3 Super 120B is served without vLLM's
+`--enable-auto-tool-choice` and `--tool-call-parser`, so it cannot return structured output through
+tool calling at all and 5 of 9 field groups failed. Bedrock's Llama 3.1 70B has tool calling
+available but does not use it on long extraction prompts, and failed 1 of 9 groups.
 
 ### Deviations from the ARCHITECTURE.md text — read before assuming the doc is exact
-- **RENDER is not a LangGraph node.** `RunState` carries no filesystem path, only `run_id`, and
-  `job/output.py` already wrote files outside the graph before RENDER existed. RENDER lives as pure
-  functions in `render/` (json/pdf/xlsx renderers) plus a thin I/O wrapper in `job/output.py`, called
-  from `job/__init__.py` after `compiled.stream()` finishes — not `graph.add_node("render", ...)`.
-- **Schema additions beyond §3**: `ResolvedField.scope` (a scoped field can have multiple
-  non-conflicting resolved entries) and `ResolvedField.notes` (DERIVE's and ADJUDICATE's explanations
-  need somewhere to live for the report). `Contradiction.verdict/explanation/severity` are now
-  `Optional` — `None` means "RECONCILE found it, ADJUDICATE hasn't judged it yet," not "not a conflict."
-- **GATE is stricter than the literal §4.9 table**: a `budget_driver` field forces `needs_review` even
-  on a `not_a_conflict` verdict, not just `conflict`/`reconcilable` — see `gate/__init__.py`'s docstring
-  for why (a misjudged "these don't really disagree" on a site count is the costliest place ADJUDICATE's
-  LLM call could be wrong).
-- **ADJUDICATE never picks the winning value for a `conflict` verdict.** `config/precedence.yaml` states
-  that tie-break is "applied by RECONCILE after ADJUDICATE returns a conflict verdict" — it's a
-  deterministic function (`reconcile/precedence.py`: recency → domain_authority → specificity →
-  no_silent_resolution), not a model's black box.
+`docs/ARCHITECTURE.md` was corrected on 2026-08-27 to match the code, and each deviation is now
+recorded inline in its own section rather than only here. The load-bearing ones:
+- **RENDER is not a LangGraph node.** Pure functions in `render/`, called from `job/__init__.py`
+  after `compiled.stream()` finishes.
+- **GATE is stricter than the §4.9 table**: a `budget_driver` field forces `needs_review` on any
+  adjudicated verdict, including `not_a_conflict`.
+- **ADJUDICATE never picks the winning value for a `conflict`.** Tie-break is deterministic, in
+  `reconcile/precedence.py`.
 - **DERIVE's visit-intensity rubric weights are a best-effort remap** of §4.8's table onto
-  `fields.yaml`'s current `visits.intensity_evidence` enum, which has evolved past the doc's original
-  evidence names (`overnight_stay`, `complex_procedures` are new; "visit window < 3 days" became
-  `long_visit_windows`). See the comment in `derive/rubric.py` before recalibrating.
+  `fields.yaml`'s current enum. See `derive/rubric.py` before recalibrating.
 
-### Model routing and privacy mode (added 2026-08-26)
-`config/models.yaml` binds each LLM role (classify/extract/adjudicate) to a provider and model, and
-carries `privacy_mode`. Loader and invariant: `domain/model_routing.py`. Construction:
-`llm/provider.py`. Discovery + audit summary: `llm/discovery.py`.
+### Known problems, in the order they hurt
+1. **List-shaped fields produce one row per list item.** `visits.intensity_evidence` alone produced
+   48 of 167 rows in run `r-sonnet46-scope-124051`; `timeline.periods`, `visits.frequency_by_period`
+   and `monitoring.unblinded_factors` behave the same way. RECONCILE treats each item in a list as a
+   competing answer rather than one entry in a set. This is the main source of noise in the output.
+2. **Two headline values came out wrong** in run `r-sonnet46-pair-114917`: `study.phase` resolved to
+   both `phase_3` and `phase_1_2`, and `timeline.total_duration` was confirmed as "approximately 24
+   months", which is the enrolment window rather than the study duration.
+3. **`audit.json` (§6.4) and the janitor job (§6.5) are not built.** Without the janitor, a run whose
+   job process dies leaves `status.json` saying "running" forever.
+4. **`python -m rfp_intake.eval` does not exist.** Only the library functions in `eval/` are built.
 
-- **`private` (default, production)** allows only `egress: none` providers — CAII and mock. **`mixed`**
-  allows external providers per-role, but only where the role also sets `allow_external: true`.
-  **`open`** allows anything. Enforced in code and re-checked at provider construction, so an
-  in-memory routing that skipped the loader still can't reach an external service in private mode.
-- `litellm` is classed `egress: unverifiable` and therefore treated as external — a dev proxy routes
-  wherever the developer's credentials point, which cannot be checked from inside the process.
-- **Every LLM role here receives verbatim document excerpts.** There is no metadata-only role, so
-  `mixed` narrows *which* documents leak, never *whether* they do. It is for synthetic/eval corpora.
-- `RFP_INTAKE_LLM_BACKEND=mock` still short-circuits routing entirely — the offline test escape hatch.
-- Bedrock sits behind the optional `aws` extra (`langchain-aws`), so private-mode deployments never
-  install an off-box vendor SDK. `scripts/smoke_caii.py` validates any OpenAI-compatible endpoint
-  across four rungs before it is wired to the graph.
-- **Live endpoint as of 2026-08-26: CAII Nemotron 3 Super 120B** (`nvidia/nemotron-3-super-120b-a12b`),
-  `privacy_mode: private`, `external_services: []`. The endpoint URL lives in `models.yaml` under
-  `providers.caii.base_url`; the JWT comes from `RFP_INTAKE_CAII_API_KEY` (or `..._API_KEY_FILE`) and
-  never from the config file. It needs `strategy: native` — see the verified notes in `models.yaml`
-  for why guided decoding is unusable there, and note the uneven latency (~4s to ~248s per group).
-- **Still scaffold, not product:** the admin UI is read-only (sidebar panel in `app.py`); editing
-  bindings needs a write-back path and an authorisation check on who counts as an admin. Bedrock
-  discovery is unimplemented (`ListFoundationModels` is a different call shape). No model setup job.
-
-### What's genuinely untested
-Everything above has run against real PDFs (`Synthetic_RFP_NEOD001.pdf` + `Example protocol 2.pdf` —
-**these two are a matched pair**, the only two documents the user has that go together; the other
-sample PDFs are standalone) via `python -m rfp_intake.job`, using the **mock** LLM backend. That proves
-the pipeline runs end-to-end on real files without crashing and produces a valid `report.pdf`/
-`report.xlsx`. It does **not** prove extraction accuracy or contradiction-detection quality — mock
-returns canned fixtures that don't match real document text, so that run came back 35/36 fields
-`not_found`. That demo run's outputs are saved at `runs/r-demo-rfp-protocol-pair/` for reference.
-
-**The pipeline has now run against a live LLM.** Run `r-bedrock-final-161930` (AWS Bedrock,
-`us.meta.llama3-1-70b-instruct-v1:0`, synthetic + publicly-registered documents only) produced 108
-records, 15 contradictions, 15 adjudicated, 0 errors, all three reports — and **caught the planted
-`timeline.total_duration` contradiction** (verdict `conflict`, 42 months vs 40 months). Known bug in
-that output: every record appears exactly twice (162 resolved fields from a 45-field registry).
-NORMALIZE returns `{"records": ...}` while `RunState.records` carries an `operator.add` reducer, so
-LangGraph appends instead of replacing. **Not fixed** — the clean fix changes `RunState` (§3 of the
-build contract), which is the user's architectural call. It predates the LLM work and was invisible
-under mock only because mock produced no records.
-
-### Not built yet
-- **REVIEW node** — deferred to Phase 2 per §11, not MVP scope. Don't build unless asked.
-- **`audit.json`** (§6.4) and the **janitor job** (§6.5) — Phase 5 execution-model pieces, not started.
-- **`python -m rfp_intake.eval`** is listed under Commands below as documented intent, but the CLI
-  entrypoint doesn't exist yet — only the library functions (`eval/golden.py`, `eval/scoring.py`) are
-  built and tested. `score_contradiction_set` (verdict-accuracy scoring against
-  `eval/golden/contradictions.yaml`'s 3 planted cases) has only run against hand-built test fixtures,
-  never a real pipeline output.
-- `app.py` (Streamlit UI) had two status-desync bugs fixed last session (see commit `2eb401a`), but
-  hasn't been re-verified by actually clicking through it — only the underlying job/status logic was
-  tested.
-
-### Likely next steps
-1. Decide on the NORMALIZE duplication fix above, then re-run the paired-document test on CAII to see
-   actual extraction quality against `eval/golden/contradictions.yaml` (`timeline.total_duration`
-   expected verdict: `reconcilable`; the Bedrock run returned `conflict`).
-2. Wire `score_document`/`score_contradiction_set` into an actual `python -m rfp_intake.eval` CLI.
-3. `audit.json` + janitor job (Phase 5) if execution-model work resumes before eval work does.
+### The list of things to do
+1. **Make `report.pdf` downloadable from the Cloudera AI Application.** Asked for 2026-08-27.
+2. **Fix the list-shaped fields problem** described in known problems item 1.
+3. **Test with Nemotron on CAII once that endpoint is reachable again**, so the model used in
+   production is the model that was tested. Blocked on CAII access; the JWT is short-lived and the
+   endpoint lacks the two tool-calling flags named above.
+4. **Bring in more test documents.** Expected to expose gaps in EXTRACT that the current two-document
+   pair does not. Asked for 2026-08-27.
+5. **Improve the front end.** No specifics yet beyond the download button; a screenshot,
+   `8-27-app-screenshot.jpg`, was mentioned as the starting point. Asked for 2026-08-27.
+6. **Return `privacy_mode` to `private` and the models to CAII before any customer document.**
+7. Build `audit.json`, the janitor job, and the `rfp_intake.eval` command line.
 
 ## Non-negotiable rules
 
