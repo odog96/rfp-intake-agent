@@ -89,7 +89,10 @@ def build_chat_model(
     if name in _OPENAI_COMPATIBLE:
         from langchain_openai import ChatOpenAI
 
-        base_url = settings.caii_base_url if name == "caii" else settings.litellm_base_url
+        # models.yaml wins when it names an endpoint; Settings is the fallback so
+        # existing RFP_INTAKE_*_BASE_URL deployments keep working unchanged.
+        default_url = settings.caii_base_url if name == "caii" else settings.litellm_base_url
+        base_url = routing.providers[name].base_url or default_url
         return ChatOpenAI(
             base_url=base_url,
             model=binding.model,

@@ -163,3 +163,54 @@ class TestUnwrapSchemaEcho:
 
         data = {"verdict": "real", "properties": {"verdict": "echo"}}
         assert _unwrap_schema_echo(data, M) == data
+
+class TestStripReasoning:
+    """A reasoning model's chain-of-thought must never reach the JSON parser."""
+
+    def test_returns_text_unchanged_when_no_tag(self) -> None:
+        from rfp_intake.llm.structured import _strip_reasoning
+
+        assert _strip_reasoning('{"a": 1}') == '{"a": 1}'
+
+    def test_drops_preamble_before_unopened_closing_tag(self) -> None:
+        from rfp_intake.llm.structured import _strip_reasoning
+
+        # Observed shape on Nemotron 3 Super 120B: no opening tag is ever emitted.
+        raw = 'We need to extract 75.\n\n</think>\n\n{"value": 75}'
+        assert _strip_reasoning(raw) == '{"value": 75}'
+
+    def test_drops_preamble_with_matched_tags(self) -> None:
+        from rfp_intake.llm.structured import _strip_reasoning
+
+        assert _strip_reasoning('<think>deliberating</think>{"value": 75}') == '{"value": 75}'
+
+    def test_splits_on_the_last_closing_tag(self) -> None:
+        from rfp_intake.llm.structured import _strip_reasoning
+
+        # A model that quotes the tag inside its own reasoning must not truncate
+        # the split early and leave deliberation in front of the JSON.
+        raw = 'first </think> more thinking </think> {"value": 75}'
+        assert _strip_reasoning(raw) == '{"value": 75}'
+
+
+class TestRoleStrategyPin:
+    """A strategy pinned in models.yaml describes one endpoint, not every model."""
+
+    def test_honours_pin_for_a_served_model(self) -> None:
+        from langchain_openai import ChatOpenAI
+
+        from rfp_intake.llm.structured import get_structured_output_for_role
+
+        llm = ChatOpenAI(base_url="http://localhost:9/v1", model="x", api_key="k")
+        assert get_structured_output_for_role(llm, "extract").strategy == "native"
+
+    def test_ignores_pin_for_the_mock_backend(self) -> None:
+        # LLM_BACKEND=mock bypasses routing entirely, so a pin meant for a served
+        # endpoint must not reach it — that would take the offline suite off its
+        # guided path (CLAUDE.md rule 6).
+        from rfp_intake.llm.mock import MockChatModel
+        from rfp_intake.llm.structured import get_structured_output_for_role
+
+        assert get_structured_output_for_role(MockChatModel(role="extract"), "extract").strategy == (
+            "guided"
+        )

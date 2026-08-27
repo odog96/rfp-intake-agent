@@ -43,6 +43,20 @@ def _unwrap_schema_echo(data: Any, schema: type[BaseModel]) -> Any:
     return data
 
 
+def _strip_reasoning(text: str) -> str:
+    """Drop a reasoning model's chain-of-thought preamble.
+
+    Reasoning models served over an OpenAI-compatible API often emit thinking into
+    `content` and mark its end with a closing tag, sometimes without ever opening
+    one (observed on Nemotron 3 Super 120B). Everything before the last closing
+    tag is deliberation, not answer, so the JSON parser must not see it.
+    """
+    for tag in ("</think>", "</thinking>", "</reasoning>"):
+        if tag in text:
+            return text.rsplit(tag, 1)[1].strip()
+    return text
+
+
 def _decode_json_strings(args: dict[str, Any]) -> dict[str, Any]:
     """Decode values that arrived as JSON text instead of structures.
 
@@ -227,7 +241,7 @@ class StructuredOutput:
 
         response = self._llm.invoke(augmented, **kwargs)
 
-        response_text = str(response.content).strip()
+        response_text = _strip_reasoning(str(response.content).strip())
         # Clean common artifacts
         if response_text.startswith("```json"):
             response_text = response_text[7:]
@@ -269,8 +283,17 @@ def get_structured_output_for_role(llm: BaseChatModel, role: str) -> StructuredO
     Auto-detection keys on the model name, which cannot know that a given
     served model has weak tool-call adherence. Pinning is how an operator
     records what was actually observed against their endpoint.
+
+    The pin describes the *bound provider's* endpoint, so it must not follow a
+    model the routing never produced. `RFP_INTAKE_LLM_BACKEND=mock` short-circuits
+    get_llm() ahead of routing (CLAUDE.md rule 6); applying a pin meant for a
+    served endpoint to the mock would break the offline suite in exactly the way
+    that rule exists to prevent.
     """
     from rfp_intake.domain.model_routing import get_model_routing
+
+    if getattr(llm, "_llm_type", "") == "mock":
+        return StructuredOutput(llm)
 
     try:
         pinned = get_model_routing().binding(role).strategy

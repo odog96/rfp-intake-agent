@@ -41,6 +41,10 @@ class ProviderSpec(BaseModel):
     name: str
     egress: Egress
     description: str = ""
+    # Endpoint for OpenAI-compatible providers. Set here so models.yaml stays the
+    # single source of truth for *where* a role runs, alongside *what* it runs.
+    # Falls back to the corresponding Settings field when unset.
+    base_url: str | None = None
 
     @property
     def is_external(self) -> bool:

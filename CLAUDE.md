@@ -54,6 +54,11 @@ carries `privacy_mode`. Loader and invariant: `domain/model_routing.py`. Constru
 - Bedrock sits behind the optional `aws` extra (`langchain-aws`), so private-mode deployments never
   install an off-box vendor SDK. `scripts/smoke_caii.py` validates any OpenAI-compatible endpoint
   across four rungs before it is wired to the graph.
+- **Live endpoint as of 2026-08-26: CAII Nemotron 3 Super 120B** (`nvidia/nemotron-3-super-120b-a12b`),
+  `privacy_mode: private`, `external_services: []`. The endpoint URL lives in `models.yaml` under
+  `providers.caii.base_url`; the JWT comes from `RFP_INTAKE_CAII_API_KEY` (or `..._API_KEY_FILE`) and
+  never from the config file. It needs `strategy: native` — see the verified notes in `models.yaml`
+  for why guided decoding is unusable there, and note the uneven latency (~4s to ~248s per group).
 - **Still scaffold, not product:** the admin UI is read-only (sidebar panel in `app.py`); editing
   bindings needs a write-back path and an authorisation check on who counts as an admin. Bedrock
   discovery is unimplemented (`ListFoundationModels` is a different call shape). No model setup job.
@@ -65,9 +70,17 @@ sample PDFs are standalone) via `python -m rfp_intake.job`, using the **mock** L
 the pipeline runs end-to-end on real files without crashing and produces a valid `report.pdf`/
 `report.xlsx`. It does **not** prove extraction accuracy or contradiction-detection quality — mock
 returns canned fixtures that don't match real document text, so that run came back 35/36 fields
-`not_found`. **Nobody has run this against a live LLM backend yet** — no CAII/LiteLLM endpoint was
-reachable or authorized last session. That demo run's outputs are saved at
-`runs/r-demo-rfp-protocol-pair/` for reference.
+`not_found`. That demo run's outputs are saved at `runs/r-demo-rfp-protocol-pair/` for reference.
+
+**The pipeline has now run against a live LLM.** Run `r-bedrock-final-161930` (AWS Bedrock,
+`us.meta.llama3-1-70b-instruct-v1:0`, synthetic + publicly-registered documents only) produced 108
+records, 15 contradictions, 15 adjudicated, 0 errors, all three reports — and **caught the planted
+`timeline.total_duration` contradiction** (verdict `conflict`, 42 months vs 40 months). Known bug in
+that output: every record appears exactly twice (162 resolved fields from a 45-field registry).
+NORMALIZE returns `{"records": ...}` while `RunState.records` carries an `operator.add` reducer, so
+LangGraph appends instead of replacing. **Not fixed** — the clean fix changes `RunState` (§3 of the
+build contract), which is the user's architectural call. It predates the LLM work and was invisible
+under mock only because mock produced no records.
 
 ### Not built yet
 - **REVIEW node** — deferred to Phase 2 per §11, not MVP scope. Don't build unless asked.
@@ -82,9 +95,9 @@ reachable or authorized last session. That demo run's outputs are saved at
   tested.
 
 ### Likely next steps
-1. Get a real LLM backend reachable (CAII endpoint or local LiteLLM proxy) and re-run the paired-document
-   test to see actual extraction quality and the planted contradiction on `timeline.total_duration`
-   (expected verdict: `reconcilable` — see `eval/golden/contradictions.yaml`).
+1. Decide on the NORMALIZE duplication fix above, then re-run the paired-document test on CAII to see
+   actual extraction quality against `eval/golden/contradictions.yaml` (`timeline.total_duration`
+   expected verdict: `reconcilable`; the Bedrock run returned `conflict`).
 2. Wire `score_document`/`score_contradiction_set` into an actual `python -m rfp_intake.eval` CLI.
 3. `audit.json` + janitor job (Phase 5) if execution-model work resumes before eval work does.
 

@@ -17,16 +17,19 @@
 # real document egress for whichever roles they cover — `mixed` only narrows
 # WHICH documents leak, never whether they do. Use it for synthetic/eval corpora.
 
-# TEMPORARY: set to `mixed` on 2026-08-26 because the CAII Llama 3.3 70B endpoint
-# is not ready yet. Bedrock is testing-only per CLAUDE.md rule 5 — SYNTHETIC AND
-# NON-SENSITIVE DOCUMENTS ONLY. Revert to `private` before any real customer data
-# or any production run.
-privacy_mode: mixed
+# Restored to `private` on 2026-08-26: the CAII Nemotron 3 Super 120B endpoint is
+# live and passes scripts/smoke_caii.py. Nothing leaves the boundary in this mode
+# — the Bedrock bindings below are commented out, not merely disabled.
+privacy_mode: private
 
 providers:
   caii:
     egress: none
     description: Cloudera AI Inference, in-environment. The strategic target.
+    # Set here so models.yaml is the single source of truth for where a role
+    # runs. Overrides RFP_INTAKE_CAII_BASE_URL; the credential still comes from
+    # RFP_INTAKE_CAII_API_KEY / RFP_INTAKE_CAII_API_KEY_FILE, never from this file.
+    base_url: https://ml-64288d82-5dd.go01-dem.ylcu-atmi.cloudera.site/namespaces/serving-default/endpoints/goes---nemotron-3-super-120b/v1
   mock:
     egress: none
     description: Deterministic fixtures. No network. Used by the test suite.
@@ -42,36 +45,45 @@ providers:
     description: AWS Bedrock. Off-box managed service, outside the customer boundary.
 
 # `model` must match an id the provider actually serves — check with
-# `python scripts/smoke_caii.py` or `llm/discovery.py`, not by assumption.
+# `python scripts/smoke_caii.py`, not by assumption.
+#
+# Nemotron 3 Super 120B, verified against the live endpoint 2026-08-26:
+#   - native tool-calling works, including the nested $defs schemas that
+#     domain/dynamic.py builds per field group. This is the working path.
+#   - `strategy: guided` is WRONG for this endpoint and is pinned off deliberately:
+#     * vLLM's `guided_json` extra_body is accepted and silently ignored (HTTP 200,
+#       free prose back), as is NVIDIA's `nvext.guided_json`;
+#     * `response_format: {type: json_schema}` IS honoured, but on the real nested
+#       extraction schemas the constrained decoder degenerates into emitting
+#       unbounded whitespace until max_tokens — it only survives flat schemas;
+#     * it is a reasoning model, so chain-of-thought lands in `content` with a
+#       stray `</think>`, which the guided parser cannot read anyway.
+#   - Latency is uneven: a small field group returned in ~4s, `timelines` took
+#     ~248s. Budget generously and watch PLAN's fan-out width (see the throughput
+#     note in CLAUDE.md — the ceiling is our own endpoint).
 roles:
-  # Bedrock access on this account is a narrow allowlist: only
-  # us.meta.llama3-1-70b-instruct-v1:0 is reachable today. Anthropic models return
-  # ResourceNotFoundException until the Anthropic use-case form is submitted in the
-  # Bedrock console. Re-check with scripts/probe_bedrock.py before widening this.
-  #
-  # allow_external is required per-role in mixed mode — it is the recorded consent
-  # for document egress, not a formality.
   classify:
-    provider: bedrock
-    model: us.meta.llama3-1-70b-instruct-v1:0
-    allow_external: true
-    # Observed 2026-08-26: this model answers long extraction prompts in prose and
-    # emits no tool call, and Bedrock rejects tool_choice for it (only "auto" is
-    # supported). Schema-in-prompt is the reliable path here.
-    strategy: guided
+    provider: caii
+    model: nvidia/nemotron-3-super-120b-a12b
+    strategy: native
   extract:
-    provider: bedrock
-    model: us.meta.llama3-1-70b-instruct-v1:0
-    allow_external: true
-    # Observed 2026-08-26: this model answers long extraction prompts in prose and
-    # emits no tool call, and Bedrock rejects tool_choice for it (only "auto" is
-    # supported). Schema-in-prompt is the reliable path here.
-    strategy: guided
+    provider: caii
+    model: nvidia/nemotron-3-super-120b-a12b
+    strategy: native
   adjudicate:
-    provider: bedrock
-    model: us.meta.llama3-1-70b-instruct-v1:0
-    allow_external: true
-    # Observed 2026-08-26: this model answers long extraction prompts in prose and
-    # emits no tool call, and Bedrock rejects tool_choice for it (only "auto" is
-    # supported). Schema-in-prompt is the reliable path here.
-    strategy: guided
+    provider: caii
+    model: nvidia/nemotron-3-super-120b-a12b
+    strategy: native
+
+# Bedrock reference binding — testing on non-sensitive data only (CLAUDE.md rule 5).
+# Requires privacy_mode: mixed and allow_external on each role. Only
+# us.meta.llama3-1-70b-instruct-v1:0 is reachable on this account; that model
+# answers long extraction prompts in prose and Bedrock rejects tool_choice for it,
+# so it needs `strategy: guided`.
+#
+# roles:
+#   extract:
+#     provider: bedrock
+#     model: us.meta.llama3-1-70b-instruct-v1:0
+#     allow_external: true
+#     strategy: guided
