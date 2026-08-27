@@ -5,7 +5,13 @@ import subprocess
 import sys
 
 port = os.environ.get("CDSW_APP_PORT", "8100")
-app_path = "/home/cdsw/rfp-intake-agent/app.py"
+project_root = "/home/cdsw/rfp-intake-agent"
+app_path = f"{project_root}/app.py"
+
+# Streamlit inherits this process's working directory, and Settings resolves
+# config/ and runs/ relative to it. app.py sets this again for safety when it is
+# launched some other way.
+os.chdir(project_root)
 
 subprocess.run(
     [

@@ -6,11 +6,28 @@ import json
 import os
 import time
 from datetime import UTC, datetime
+from pathlib import Path
 
 import streamlit as st
 
-from rfp_intake.config.settings import get_settings
-from rfp_intake.llm.discovery import describe_active_routing
+# Resolve every relative path in Settings — config/models.yaml, config/fields.yaml,
+# runs/ — against the project root rather than whatever directory the Cloudera AI
+# Application was launched from. run_job.py does the same thing on line 9; without
+# it here the application read /home/cdsw/config/models.yaml and wrote run folders
+# to /home/cdsw/runs/ while the CML Job used /home/cdsw/rfp-intake-agent/runs/.
+# Must run before get_settings() below.
+#
+# __file__ is absent when CML runs a script through an IPython kernel (see the
+# same note in run_job.py), so fall back to the known project path rather than
+# raising NameError on startup.
+try:
+    _PROJECT_ROOT = Path(__file__).resolve().parent
+except NameError:  # pragma: no cover - depends on the CML runtime
+    _PROJECT_ROOT = Path("/home/cdsw/rfp-intake-agent")
+os.chdir(_PROJECT_ROOT)
+
+from rfp_intake.config.settings import get_settings  # noqa: E402
+from rfp_intake.llm.discovery import describe_active_routing  # noqa: E402
 
 settings = get_settings()
 
