@@ -265,3 +265,37 @@ class TestFindJsonObject:
 
         raw = 'Reasoning.\n{"spec": {"n": 42, "unit": "days"}}'
         assert _find_json_object(raw) == '{"spec": {"n": 42, "unit": "days"}}'
+
+
+class TestTokenCeilingDetection:
+    """Truncation must be named, not reported as malformed JSON."""
+
+    def test_false_when_no_metadata(self) -> None:
+        from rfp_intake.llm.structured import _hit_token_ceiling
+
+        assert _hit_token_ceiling(object()) is False
+
+    def test_false_on_a_normal_stop(self) -> None:
+        from langchain_core.messages import AIMessage
+
+        from rfp_intake.llm.structured import _hit_token_ceiling
+
+        msg = AIMessage(content="{}", response_metadata={"finish_reason": "stop"})
+        assert _hit_token_ceiling(msg) is False
+
+    def test_detects_openai_style_length(self) -> None:
+        from langchain_core.messages import AIMessage
+
+        from rfp_intake.llm.structured import _hit_token_ceiling
+
+        msg = AIMessage(content='{"a":', response_metadata={"finish_reason": "length"})
+        assert _hit_token_ceiling(msg) is True
+
+    def test_detects_bedrock_style_max_tokens(self) -> None:
+        # Bedrock Converse spells the same condition differently.
+        from langchain_core.messages import AIMessage
+
+        from rfp_intake.llm.structured import _hit_token_ceiling
+
+        msg = AIMessage(content='{"a":', response_metadata={"stopReason": "max_tokens"})
+        assert _hit_token_ceiling(msg) is True

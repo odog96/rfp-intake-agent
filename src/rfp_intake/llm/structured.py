@@ -104,6 +104,21 @@ def _find_json_object(text: str) -> str | None:
     return found
 
 
+def _hit_token_ceiling(response: object) -> bool:
+    """Whether generation stopped because it ran out of budget, not because the
+    model finished.
+
+    Every backend spells this differently — OpenAI-compatible servers use
+    `finish_reason: length`, Bedrock Converse uses `stopReason: max_tokens` — and
+    both put it in `response_metadata`, so check the union rather than one.
+    """
+    meta = getattr(response, "response_metadata", None)
+    if not isinstance(meta, dict):
+        return False
+    signals = (meta.get("finish_reason"), meta.get("stopReason"), meta.get("stop_reason"))
+    return any(s in ("length", "max_tokens") for s in signals)
+
+
 def _decode_json_strings(args: dict[str, Any]) -> dict[str, Any]:
     """Decode values that arrived as JSON text instead of structures.
 
@@ -287,6 +302,21 @@ class StructuredOutput:
             kwargs["extra_body"] = {"guided_json": json_schema}
 
         response = self._llm.invoke(augmented, **kwargs)
+
+        # A response cut off at the token ceiling is truncated JSON, which the
+        # parser below reports as malformed — a misleading error that sends you
+        # looking at the model instead of at llm_max_tokens. Name it here.
+        if _hit_token_ceiling(response):
+            logger.error(
+                "structured_output_truncated",
+                strategy="guided",
+                schema=schema.__name__,
+                detail="Response hit the token ceiling; raise llm_max_tokens.",
+            )
+            raise StructuredOutputError(
+                f"Model response for {schema.__name__} was truncated at the token "
+                f"ceiling before the JSON closed. Raise RFP_INTAKE_LLM_MAX_TOKENS."
+            )
 
         response_text = _strip_reasoning(str(response.content).strip())
         # Clean common artifacts

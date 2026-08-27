@@ -38,10 +38,11 @@ class Settings(BaseSettings):
     # indefinitely, holding a job slot with nothing to reap it. Observed
     # 2026-08-27: 3 of 9 extraction groups never returned at all until capped.
     llm_timeout_s: float = 120.0
-    # 4096, not 2048: this endpoint has no tool-call parser, so the model
-    # narrates before it answers and a smaller cap truncates it mid-reasoning —
-    # the JSON never arrives. Observed 2026-08-27 on study_design.
-    llm_max_tokens: int = 4096
+    # 8192: a narrating model with no tool-call parser spends budget on prose
+    # before the JSON starts, and the widest field group (operational_metrics —
+    # the budget drivers) returns several records per field. Both 2048 and 4096
+    # truncated real answers mid-object on 2026-08-27.
+    llm_max_tokens: int = 8192
 
     bedrock_region: str = "us-east-1"
 

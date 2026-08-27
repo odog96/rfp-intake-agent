@@ -20,7 +20,10 @@
 # Restored to `private` on 2026-08-26: the CAII Nemotron 3 Super 120B endpoint is
 # live and passes scripts/smoke_caii.py. Nothing leaves the boundary in this mode
 # — the Bedrock bindings below are commented out, not merely disabled.
-privacy_mode: private
+# TEMPORARY 2026-08-27: `mixed` for a Bedrock comparison run against the CAII
+# Nemotron results. Bedrock is testing-only per CLAUDE.md rule 5 — SYNTHETIC AND
+# NON-SENSITIVE DOCUMENTS ONLY. Revert to `private` before any customer data.
+privacy_mode: mixed
 
 providers:
   caii:
@@ -69,17 +72,28 @@ providers:
 # It is a reasoning model with no tool-call parser, so generation runs away on
 # some groups — llm_max_tokens and llm_timeout_s in Settings are what stop that.
 roles:
+  # Bedrock access on this account is a narrow allowlist: only this model is
+  # invokable. Claude models return ResourceNotFoundException until the Anthropic
+  # use-case form is submitted in the console; Llama 3.3, Nova and Mistral are
+  # denied outright by an org service control policy (p-dlt9r6fc).
+  #
+  # Verified 2026-08-27: tool-calling IS enabled on Bedrock, but this model still
+  # answers long extraction prompts in prose and emits no tool call on 3 of 4
+  # groups. Weak adherence, not a server flag — so `guided` here too.
   classify:
-    provider: caii
-    model: nvidia/nemotron-3-super-120b-a12b
+    provider: bedrock
+    model: us.meta.llama3-1-70b-instruct-v1:0
+    allow_external: true
     strategy: guided
   extract:
-    provider: caii
-    model: nvidia/nemotron-3-super-120b-a12b
+    provider: bedrock
+    model: us.meta.llama3-1-70b-instruct-v1:0
+    allow_external: true
     strategy: guided
   adjudicate:
-    provider: caii
-    model: nvidia/nemotron-3-super-120b-a12b
+    provider: bedrock
+    model: us.meta.llama3-1-70b-instruct-v1:0
+    allow_external: true
     strategy: guided
 
 # Bedrock reference binding — testing on non-sensitive data only (CLAUDE.md rule 5).
