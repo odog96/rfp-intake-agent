@@ -182,6 +182,13 @@ python -m rfp_intake.job <run_id>
 - Structured logging keyed by `run_id` / `task_id`. No print statements.
 - Type-annotate every function. `Any` requires a comment justifying it.
 
+## How to report progress here
+Lead with the answer, then the detail — never the reverse. Name things in words, not
+labels: "every extracted value appears twice in the output", not "the NORMALIZE
+duplication bug". Expand jargon on first use every time (tool calling, guided vs
+native, token ceiling, egress, privacy mode). When listing open items, say for each
+one who has to act — you, the user, or nobody yet. Tables beat paragraphs.
+
 ## When you are unsure
 Ask rather than assume, especially about clinical domain semantics. Wrong assumptions about
 whether "40 sites" means per-country or total propagate silently into a budget. The domain

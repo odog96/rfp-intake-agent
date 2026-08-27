@@ -115,11 +115,35 @@ class RunError(BaseModel):
     timestamp: datetime = Field(default_factory=datetime.now)
 
 
+class Replace(list):  # type: ignore[type-arg]
+    """Marker list telling append_or_replace to overwrite rather than append.
+
+    A node that rewrites the whole collection returns Replace(items); a node that
+    contributes one branch of a fan-in returns a plain list.
+    """
+
+
+def append_or_replace(current: list[Any], update: list[Any]) -> list[Any]:
+    """Reducer for collections that are both fanned into and rewritten.
+
+    EXTRACT runs one branch per (document, field group) and each branch returns
+    only its own records, so the default LangGraph behaviour there must be to
+    append. NORMALIZE, by contrast, rewrites every record it was given — and
+    returning that full list under a plain append reducer silently doubled the
+    output, which is what shipped until 2026-08-27. Distinguishing the two cases
+    at the type level makes the intent explicit at each return site rather than
+    leaving it to whoever next reads the reducer.
+    """
+    if isinstance(update, Replace):
+        return list(update)
+    return current + update
+
+
 class RunState(BaseModel):
     run_id: str = ""
     documents: list[Document] = Field(default_factory=list)
     tasks: list[ExtractionTask] = Field(default_factory=list)
-    records: Annotated[list[FieldRecord], operator.add] = Field(default_factory=list)
+    records: Annotated[list[FieldRecord], append_or_replace] = Field(default_factory=list)
     contradictions: list[Contradiction] = Field(default_factory=list)
     resolved: list[ResolvedField] = Field(default_factory=list)
     report_paths: dict[str, str] = Field(default_factory=dict)

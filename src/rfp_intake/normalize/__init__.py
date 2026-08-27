@@ -7,7 +7,7 @@ from typing import Any
 import structlog
 
 from rfp_intake.domain.registry import Registry, get_registry
-from rfp_intake.domain.schemas import FieldRecord, RunError, RunState
+from rfp_intake.domain.schemas import FieldRecord, Replace, RunError, RunState
 from rfp_intake.normalize.duration import normalize_duration
 from rfp_intake.normalize.types import normalize_value
 
@@ -21,12 +21,14 @@ class NormalizationError(Exception):
 def normalize_record(record: FieldRecord, registry: Registry | None = None) -> FieldRecord:
     """Normalize a single FieldRecord's raw_value into canonical form.
 
-    Sets record.value (and record.unit for duration-like fields).
-    Returns the mutated record. Non-fatal: if normalization fails,
-    record.value stays None and the failure is logged.
+    Returns a NEW record with `value` set (and `unit` for duration-like fields);
+    the input is left untouched, per rule 7 — normalizers are pure functions.
+    Non-fatal: if normalization fails, `value` stays None and it is logged.
     """
     if registry is None:
         registry = get_registry()
+
+    record = record.model_copy(deep=True)
 
     try:
         field_def = registry.get_field(record.field_id)
@@ -100,4 +102,6 @@ def normalize_node(state: RunState) -> dict[str, Any]:
         errors=len(errors),
     )
 
-    return {"records": normalized_records, "errors": errors}
+    # Replace, not append: this node rewrites every record it was handed, and
+    # returning the full list under a plain append reducer doubled the output.
+    return {"records": Replace(normalized_records), "errors": errors}
