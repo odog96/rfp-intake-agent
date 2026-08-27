@@ -33,6 +33,16 @@ class Settings(BaseSettings):
     max_concurrency: int = 4
     run_dir: Path = Path("runs")
 
+    # Both bound a single LLM call. Without them a served model that runs away —
+    # a reasoning model with no tool-call parser will — hangs the CML job
+    # indefinitely, holding a job slot with nothing to reap it. Observed
+    # 2026-08-27: 3 of 9 extraction groups never returned at all until capped.
+    llm_timeout_s: float = 120.0
+    # 4096, not 2048: this endpoint has no tool-call parser, so the model
+    # narrates before it answers and a smaller cap truncates it mid-reasoning —
+    # the JSON never arrives. Observed 2026-08-27 on study_design.
+    llm_max_tokens: int = 4096
+
     bedrock_region: str = "us-east-1"
 
     fields_yaml_path: Path = Path("config/fields.yaml")

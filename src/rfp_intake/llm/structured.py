@@ -57,6 +57,53 @@ def _strip_reasoning(text: str) -> str:
     return text
 
 
+def _find_json_object(text: str) -> str | None:
+    """Return the last balanced *top-level* JSON object in `text`, or None.
+
+    A reasoning model with no tool-call parser narrates before it answers
+    ("We need to extract operational metrics...") and emits no closing tag to
+    split on, so the object has to be located structurally.
+
+    Scans forward and skips past each complete object, so nested braces are
+    never mistaken for the start of one. Tracks string state so a brace inside a
+    quoted value — clinical text contains them — cannot unbalance the count.
+    Takes the last top-level object because the answer follows the deliberation.
+    Returns None rather than a guess when nothing balances: an unparseable
+    response must stay an error, not become a silent empty result.
+    """
+    found: str | None = None
+    i = 0
+    while i < len(text):
+        if text[i] != "{":
+            i += 1
+            continue
+        depth = 0
+        in_string = False
+        escaped = False
+        for j in range(i, len(text)):
+            ch = text[j]
+            if in_string:
+                if escaped:
+                    escaped = False
+                elif ch == "\\":
+                    escaped = True
+                elif ch == '"':
+                    in_string = False
+                continue
+            if ch == '"':
+                in_string = True
+            elif ch == "{":
+                depth += 1
+            elif ch == "}":
+                depth -= 1
+                if depth == 0:
+                    found = text[i : j + 1]
+                    i = j
+                    break
+        i += 1
+    return found
+
+
 def _decode_json_strings(args: dict[str, Any]) -> dict[str, Any]:
     """Decode values that arrived as JSON text instead of structures.
 
@@ -252,7 +299,15 @@ class StructuredOutput:
         response_text = response_text.strip()
 
         try:
-            data = json.loads(response_text)
+            try:
+                data = json.loads(response_text)
+            except json.JSONDecodeError:
+                # A model that narrates before answering leaves prose around the
+                # object; locate it structurally rather than failing the task.
+                candidate = _find_json_object(response_text)
+                if candidate is None:
+                    raise
+                data = json.loads(candidate)
             return schema.model_validate(_unwrap_schema_echo(data, schema))
         except (json.JSONDecodeError, ValueError) as e:
             logger.error(

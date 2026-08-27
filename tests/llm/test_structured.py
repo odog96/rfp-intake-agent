@@ -199,10 +199,16 @@ class TestRoleStrategyPin:
     def test_honours_pin_for_a_served_model(self) -> None:
         from langchain_openai import ChatOpenAI
 
+        from rfp_intake.domain.model_routing import get_model_routing
         from rfp_intake.llm.structured import get_structured_output_for_role
 
+        # Asserted against the shipped config rather than a literal: which
+        # strategy is correct depends on how the endpoint was deployed, and this
+        # test is about the pin being honoured, not about which one wins today.
+        pinned = get_model_routing().binding("extract").strategy
+        assert pinned is not None, "config/models.yaml should pin extract's strategy"
         llm = ChatOpenAI(base_url="http://localhost:9/v1", model="x", api_key="k")
-        assert get_structured_output_for_role(llm, "extract").strategy == "native"
+        assert get_structured_output_for_role(llm, "extract").strategy == pinned
 
     def test_ignores_pin_for_the_mock_backend(self) -> None:
         # LLM_BACKEND=mock bypasses routing entirely, so a pin meant for a served
@@ -214,3 +220,48 @@ class TestRoleStrategyPin:
         assert get_structured_output_for_role(MockChatModel(role="extract"), "extract").strategy == (
             "guided"
         )
+
+
+class TestFindJsonObject:
+    """Locating the answer inside a narrating model's prose."""
+
+    def test_returns_none_when_no_object(self) -> None:
+        from rfp_intake.llm.structured import _find_json_object
+
+        assert _find_json_object("no json here at all") is None
+
+    def test_returns_none_when_unbalanced(self) -> None:
+        # An unparseable response must stay an error, never a silent empty result.
+        from rfp_intake.llm.structured import _find_json_object
+
+        assert _find_json_object('truncated {"a": 1') is None
+
+    def test_finds_object_after_reasoning_prose(self) -> None:
+        from rfp_intake.llm.structured import _find_json_object
+
+        raw = 'We need to extract operational metrics.\n\n{"sites_total": 75}'
+        assert _find_json_object(raw) == '{"sites_total": 75}'
+
+    def test_tolerates_braces_inside_strings(self) -> None:
+        from rfp_intake.llm.structured import _find_json_object
+
+        raw = 'Thinking...\n{"quote": "dose escalation {cohort b} began"}'
+        assert _find_json_object(raw) == '{"quote": "dose escalation {cohort b} began"}'
+
+    def test_tolerates_escaped_quotes_inside_strings(self) -> None:
+        from rfp_intake.llm.structured import _find_json_object
+
+        raw = 'Prose.\n{"quote": "the site said \\"42 days\\" here"}'
+        assert _find_json_object(raw) == '{"quote": "the site said \\"42 days\\" here"}'
+
+    def test_prefers_the_answer_over_a_brace_in_the_prose(self) -> None:
+        from rfp_intake.llm.structured import _find_json_object
+
+        raw = 'I could return {something} but really:\n{"sites_total": 75}'
+        assert _find_json_object(raw) == '{"sites_total": 75}'
+
+    def test_handles_nested_objects(self) -> None:
+        from rfp_intake.llm.structured import _find_json_object
+
+        raw = 'Reasoning.\n{"spec": {"n": 42, "unit": "days"}}'
+        assert _find_json_object(raw) == '{"spec": {"n": 42, "unit": "days"}}'

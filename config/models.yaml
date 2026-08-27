@@ -47,33 +47,40 @@ providers:
 # `model` must match an id the provider actually serves — check with
 # `python scripts/smoke_caii.py`, not by assumption.
 #
-# Nemotron 3 Super 120B, verified against the live endpoint 2026-08-26:
-#   - native tool-calling works, including the nested $defs schemas that
-#     domain/dynamic.py builds per field group. This is the working path.
-#   - `strategy: guided` is WRONG for this endpoint and is pinned off deliberately:
-#     * vLLM's `guided_json` extra_body is accepted and silently ignored (HTTP 200,
-#       free prose back), as is NVIDIA's `nvext.guided_json`;
-#     * `response_format: {type: json_schema}` IS honoured, but on the real nested
-#       extraction schemas the constrained decoder degenerates into emitting
-#       unbounded whitespace until max_tokens — it only survives flat schemas;
-#     * it is a reasoning model, so chain-of-thought lands in `content` with a
-#       stray `</think>`, which the guided parser cannot read anyway.
-#   - Latency is uneven: a small field group returned in ~4s, `timelines` took
-#     ~248s. Budget generously and watch PLAN's fan-out width (see the throughput
-#     note in CLAUDE.md — the ceiling is our own endpoint).
+# Nemotron 3 Super 120B, re-verified against the live endpoint 2026-08-27.
+#
+# THIS ENDPOINT HAS TOOL-CALLING DISABLED. A streaming request returns:
+#   '"auto" tool choice requires --enable-auto-tool-choice and --tool-call-parser
+#    to be set'
+# Non-streaming requests do not error — they silently return plain text and no
+# tool call, on all 9 extraction groups. So `strategy: native` cannot work here
+# until the endpoint is redeployed with those two vLLM flags.
+#
+# `guided` (schema-in-prompt) is what actually works: the model returns correct,
+# well-formed JSON as content. Server-side constrained decoding stays off — the
+# endpoint ignores both vLLM's `guided_json` and NVIDIA's `nvext.guided_json`,
+# and `response_format: json_schema`, which it does honour, degenerates into
+# unbounded whitespace on the nested schemas domain/dynamic.py builds.
+#
+# Corrects a wrong reading on 2026-08-26 that pinned `native`: the smoke test's
+# native rung was passing via StructuredOutput's guided fallback, not via a tool
+# call. Re-test with allow_fallback=False before trusting a native result here.
+#
+# It is a reasoning model with no tool-call parser, so generation runs away on
+# some groups — llm_max_tokens and llm_timeout_s in Settings are what stop that.
 roles:
   classify:
     provider: caii
     model: nvidia/nemotron-3-super-120b-a12b
-    strategy: native
+    strategy: guided
   extract:
     provider: caii
     model: nvidia/nemotron-3-super-120b-a12b
-    strategy: native
+    strategy: guided
   adjudicate:
     provider: caii
     model: nvidia/nemotron-3-super-120b-a12b
-    strategy: native
+    strategy: guided
 
 # Bedrock reference binding — testing on non-sensitive data only (CLAUDE.md rule 5).
 # Requires privacy_mode: mixed and allow_external on each role. Only

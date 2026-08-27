@@ -97,6 +97,8 @@ def build_chat_model(
             base_url=base_url,
             model=binding.model,
             api_key=resolve_api_key(name, settings),  # type: ignore[arg-type]
+            timeout=settings.llm_timeout_s,
+            max_tokens=settings.llm_max_tokens,
         )
 
     if name == "bedrock":
