@@ -72,29 +72,28 @@ providers:
 # It is a reasoning model with no tool-call parser, so generation runs away on
 # some groups — llm_max_tokens and llm_timeout_s in Settings are what stop that.
 roles:
-  # Bedrock access on this account is a narrow allowlist: only this model is
-  # invokable. Claude models return ResourceNotFoundException until the Anthropic
-  # use-case form is submitted in the console; Llama 3.3, Nova and Mistral are
-  # denied outright by an org service control policy (p-dlt9r6fc).
+  # Claude Sonnet 4.6, verified against Bedrock 2026-08-27 with allow_fallback=False
+  # so nothing could mask the result: native tool-calling genuinely works, including
+  # operational_metrics — the budget-driver group that returned nothing usable on
+  # both Nemotron (CAII) and Llama 3.1 70B (Bedrock).
   #
-  # Verified 2026-08-27: tool-calling IS enabled on Bedrock, but this model still
-  # answers long extraction prompts in prose and emits no tool call on 3 of 4
-  # groups. Weak adherence, not a server flag — so `guided` here too.
+  # TESTING ONLY, per CLAUDE.md rule 5. Bedrock is outside the customer boundary;
+  # production runs on CAII. Synthetic and publicly-registered documents only.
   classify:
     provider: bedrock
-    model: us.meta.llama3-1-70b-instruct-v1:0
+    model: us.anthropic.claude-sonnet-4-6
     allow_external: true
-    strategy: guided
+    strategy: native
   extract:
     provider: bedrock
-    model: us.meta.llama3-1-70b-instruct-v1:0
+    model: us.anthropic.claude-sonnet-4-6
     allow_external: true
-    strategy: guided
+    strategy: native
   adjudicate:
     provider: bedrock
-    model: us.meta.llama3-1-70b-instruct-v1:0
+    model: us.anthropic.claude-sonnet-4-6
     allow_external: true
-    strategy: guided
+    strategy: native
 
 # Bedrock reference binding — testing on non-sensitive data only (CLAUDE.md rule 5).
 # Requires privacy_mode: mixed and allow_external on each role. Only

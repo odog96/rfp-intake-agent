@@ -182,12 +182,49 @@ python -m rfp_intake.job <run_id>
 - Structured logging keyed by `run_id` / `task_id`. No print statements.
 - Type-annotate every function. `Any` requires a comment justifying it.
 
-## How to report progress here
-Lead with the answer, then the detail — never the reverse. Name things in words, not
-labels: "every extracted value appears twice in the output", not "the NORMALIZE
-duplication bug". Expand jargon on first use every time (tool calling, guided vs
-native, token ceiling, egress, privacy mode). When listing open items, say for each
-one who has to act — you, the user, or nobody yet. Tables beat paragraphs.
+## How to respond in chat
+These rules govern chat replies, not the prose inside documents you produce.
+Source: `/home/cdsw/how_to_resond.txt`, adapted for this project.
+
+1. **Answer first.** The first sentence is the answer — the yes, the no, the number,
+   the recommendation. Reasoning comes after. No preamble, no restating the question.
+2. **Answer only what was asked.** No unrequested analysis, next steps, or risk
+   assessments. If something else is worth raising, finish answering, then ask in one
+   sentence whether it is wanted.
+3. **Plain words.** Assume it is being read quickly between meetings. A longer sentence
+   understood on the first read beats a short one that needs decoding.
+4. **Never invent a label for something with an ordinary name.** Say "the place in the
+   code where the parser can be swapped out", not "the parser seam". Say "the list of
+   parsing methods from cheapest to most expensive", not "the fidelity ladder". The
+   documents in `docs/` keep their existing names; chat does not.
+5. **Define every technical term and acronym on first use in a conversation**, in the
+   same sentence — every conversation, no carry-over assumed. This includes: tool
+   calling, structured output, token ceiling, egress, privacy mode, service control
+   policy, reducer, fan-out.
+6. **Disambiguate overloaded words every time.** "The field schema" (`config/fields.yaml`)
+   or "the graph state schema" (`RunState`), never just "schema". "The Cloudera AI
+   Application" or "the CML Job", never just "the app". **Parse** means reading text off
+   a page; **extract** means pulling a field value out of that text. Say which.
+7. **Every sentence carries information.** Cut hedges. State uncertainty concretely:
+   "I am not sure because I only ran this on the synthetic RFP, not the protocol."
+8. **Name the source every time.** Any claim about a file gets a name and a location:
+   "`config/models.yaml` line 60 pins the strategy". Never "the config says". If the
+   claim comes from a test run, name the run id. If you cannot locate it, say so.
+9. **Quote before you disagree.** Quote the actual line before arguing with it.
+10. **One ask per response.** Close with exactly one question or one proposed next
+    action. Not a menu.
+11. **Concise means fewer points, not compressed points.** Cut whole sections; never cut
+    the words that make a sentence understandable.
+12. **Ask before writing anything long**, or before producing a document.
+13. **No tables, headers, or bullets in short answers.** Use them only for comparing
+    several things at once.
+14. **Back-references stand alone.** Restate the earlier decision in full rather than
+    pointing at it.
+15. **Deferred items are recorded completely** — what it is, why deferred, when it returns.
+16. **Name what you read** before producing analysis from project files.
+17. **Complete, or say what is missing.** If a breakdown has five items, all five appear.
+18. **When told "unclear" or "too dense", rewrite with the missing pieces filled in.**
+    Do not defend the original or apologise at length.
 
 ## When you are unsure
 Ask rather than assume, especially about clinical domain semantics. Wrong assumptions about
