@@ -103,3 +103,77 @@ class TestEnvironmentVariables:
         # config/models.yaml ships routed to Bedrock, so a customer who is not
         # prompted for this key installs a project that cannot call any model.
         assert "AWS_BEARER_TOKEN_BEDROCK" in metadata["environment_variables"]
+
+
+class TestSpecConformance:
+    """Field names Cloudera AI accepts, and the two mistakes that cost a deployment.
+
+    Ground truth is the AMP project specification plus two AMPs published by
+    Cloudera that are known to deploy: CML_AMP_Anomaly_Detection and
+    CML_Community_AMP_Template. A field the specification does not define is not
+    ignored — it stops the deployment.
+    """
+
+    ALLOWED = {
+        "run_session": {
+            "type", "name", "entity_label", "script", "code", "kernel",
+            "cpu", "memory", "gpu", "short_summary", "environment_variables",
+        },
+        "create_job": {
+            "type", "name", "entity_label", "script", "arguments", "kernel",
+            "cpu", "memory", "gpu", "timeout", "short_summary", "long_summary",
+            "environment",
+        },
+        "start_application": {
+            "type", "name", "entity_label", "subdomain", "script", "kernel",
+            "cpu", "memory", "gpu", "short_summary", "long_summary",
+            "bypass_authentication", "static_subdomain", "environment_variables",
+        },
+    }
+
+    def test_no_task_carries_a_field_the_specification_does_not_define(
+        self, metadata: dict[str, Any]
+    ) -> None:
+        for task in metadata["tasks"]:
+            allowed = self.ALLOWED[task["type"]]
+            unknown = set(task) - allowed
+            assert not unknown, f"{task['type']} carries unknown fields: {sorted(unknown)}"
+
+    def test_run_session_has_no_long_summary(self, metadata: dict[str, Any]) -> None:
+        # The specification defines long_summary for create_job and
+        # start_application but not for run_session. One was present on
+        # 2026-08-28 when the deployment into project test-rfp-deploy failed.
+        for task in tasks_of_type(metadata, "run_session"):
+            assert "long_summary" not in task
+
+    def test_the_runtime_block_does_not_pin_a_version(
+        self, metadata: dict[str, Any]
+    ) -> None:
+        # The other half of the 2026-08-28 failure: version: "2026.04" matched
+        # nothing, because the workspace's runtime catalog listed only
+        # 2026.04.1-b7. A runtime block that matches nothing stops the AMP before
+        # a session exists, so there is no log to read — the worst way to fail.
+        # version is optional; leaving it out lets the workspace supply it, and
+        # is what Cloudera's own published AMPs do.
+        for runtime in metadata["runtimes"]:
+            assert "version" not in runtime, (
+                "pinning a runtime version makes this AMP deploy only into "
+                "workspaces holding that exact build"
+            )
+
+    def test_every_runtime_names_the_three_required_fields(
+        self, metadata: dict[str, Any]
+    ) -> None:
+        for runtime in metadata["runtimes"]:
+            assert set(runtime) >= {"editor", "kernel", "edition"}
+
+    def test_the_runtime_kernel_satisfies_requires_python(
+        self, metadata: dict[str, Any], project_root: Path
+    ) -> None:
+        # pyproject.toml sets requires-python = ">=3.11". A runtime below that
+        # installs fine and then fails at `pip install -e .`.
+        pyproject = (project_root / "pyproject.toml").read_text()
+        assert 'requires-python = ">=3.11"' in pyproject
+        for runtime in metadata["runtimes"]:
+            major, minor = runtime["kernel"].removeprefix("Python ").split(".")[:2]
+            assert (int(major), int(minor)) >= (3, 11), runtime["kernel"]

@@ -18,6 +18,7 @@ environment_variables:
       config/models.yaml. Set to "mock" to install and click through the
       application without calling any model at all, which returns fixed sample
       values and is useful only for checking that the deployment works.
+    required: false
 
   AWS_BEARER_TOKEN_BEDROCK:
     default: ""
@@ -28,12 +29,14 @@ environment_variables:
       needs model access granted for that model in the Bedrock console, which
       is a separate approval and can take a day. Leave empty for a production
       deployment on Cloudera AI Inference.
+    required: false
 
   RFP_INTAKE_BEDROCK_REGION:
     default: "us-east-1"
     description: >-
       The AWS region the Bedrock calls go to. Ignored unless
       config/models.yaml routes a step to Bedrock.
+    required: false
 
   RFP_INTAKE_CAII_API_KEY:
     default: ""
@@ -44,27 +47,28 @@ environment_variables:
       config/models.yaml under providers.caii.base_url, so that one file stays
       the single record of where each step runs. Leave empty for a Bedrock
       evaluation.
+    required: false
 
 runtimes:
-  # Matched against the runtimes registered in your workspace. If the deployment
-  # fails at the first task saying no runtime matched, open Runtime Catalog in
-  # the workspace and change the version below to one that is listed. Python
-  # 3.11 or newer is required (pyproject.toml sets requires-python = ">=3.11").
-  - editor: JupyterLab
-    kernel: Python 3.12
+  # Deliberately no `version:`. It is optional, and pinning it is what made the
+  # deployment of 2026-08-28 into project test-rfp-deploy fail before any session
+  # started, with no log to read: a runtime block that matches nothing stops the
+  # AMP before it has anything to write a log about. Cloudera's own AMPs
+  # (CML_AMP_Anomaly_Detection, CML_Community_AMP_Template) name only editor,
+  # kernel and edition for the same reason — the workspace supplies the version.
+  #
+  # Python 3.11 rather than 3.12 because pyproject.toml requires >=3.11 and 3.11
+  # is registered in more workspaces. Check yours under Runtime Catalog if the
+  # first task fails without producing a session.
+  - editor: PBJ Workbench
+    kernel: Python 3.11
     edition: Standard
-    version: "2026.04"
 
 tasks:
   - type: run_session
     name: Install dependencies
     script: scripts/amp_install_dependencies.py
     short_summary: Installing Python dependencies
-    long_summary: >-
-      Installs the packages in requirements.txt, then installs this project
-      itself in editable mode with the aws extra, so both the job and the
-      application import it straight from src/. Ends by importing the package to
-      fail here rather than inside the job later.
     kernel: python3
     cpu: 2
     memory: 8
@@ -74,6 +78,7 @@ tasks:
     entity_label: rfp_pipeline_executor
     script: run_job.py
     arguments: None
+    kernel: python3
     short_summary: Creating the job that runs the extraction pipeline
     long_summary: >-
       Creates the CML Job that does the actual work. The application never runs
@@ -84,14 +89,15 @@ tasks:
       src/rfp_intake/config/settings.py).
     cpu: 2
     memory: 8
-    kernel: python3
     environment:
       TASK_TYPE: CREATE/RUN_JOB
 
   - type: start_application
     name: RFP Intake Agent
+    entity_label: rfp_intake_agent
     subdomain: rfp-intake
     script: launch_app.py
+    kernel: python3
     short_summary: Starting the RFP Intake Agent application
     long_summary: >-
       Starts the Streamlit application that users load documents into. It shows
@@ -101,5 +107,5 @@ tasks:
       raw extraction JSON for download.
     cpu: 2
     memory: 4
-    environment:
+    environment_variables:
       TASK_TYPE: START_APPLICATION

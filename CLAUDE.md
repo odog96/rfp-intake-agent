@@ -11,7 +11,7 @@ produces a provenance-backed variable set for the Delivery Strategy & Budgeting 
 
 Phases 0–4 of ARCHITECTURE.md §10 are done. Graph topology today:
 `INGEST → CLASSIFY → PLAN → EXTRACT → NORMALIZE → RECONCILE → ADJUDICATE → DERIVE → GATE`,
-then RENDER runs after the graph finishes (see the deviations below). 506 tests passing, 1 skipped.
+then RENDER runs after the graph finishes (see the deviations below). 511 tests passing, 1 skipped.
 Pushed to https://github.com/odog96/rfp-intake-agent.git. The push is done from a terminal by
 Oliver, from inside the repository directory — this session's credentials cannot do it.
 
@@ -77,9 +77,17 @@ Two things it depends on, both of which will break quietly if changed:
   instead (`src/rfp_intake/config/paths.py`, and a deliberate cut-down copy inside `run_job.py`
   because that file runs before the package is importable).
 
-The `runtimes:` block names JupyterLab / Python 3.12 / Standard / 2026.04. If a deployment fails at
-the first task saying no runtime matched, that version is not registered in the customer's
-workspace and the block needs editing.
+**Never pin `version:` in the `runtimes:` block.** The first deployment attempt, into project
+`test-rfp-deploy` on 2026-08-28, failed at task 1 with no log and no session, because
+`version: "2026.04"` matched nothing — the workspace's runtime catalog lists only `2026.04.1-b7`.
+A runtime block that matches nothing stops the AMP before there is a session to write a log to,
+which is the worst way for this to fail. `version` is optional; leaving it out lets the workspace
+supply it, which is what Cloudera's own published AMPs do. The block now names only
+PBJ Workbench / Python 3.11 / Standard.
+
+The same attempt also carried a `long_summary` on the `run_session` task, which the AMP
+specification does not define for that task type. `tests/config/test_project_metadata.py` now
+checks every task's field names against the specification, so neither mistake can come back.
 
 ### The list of things to do
 1. **Bring in more test documents.** Expected to expose gaps in EXTRACT that the current
