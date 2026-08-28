@@ -7,14 +7,13 @@ produces a provenance-backed variable set for the Delivery Strategy & Budgeting 
 **Read `docs/ARCHITECTURE.md` before writing code. It is the build contract, not background reading.**
 `config/fields.yaml` is the single source of truth for what gets extracted.
 
-## Current status (as of 2026-08-27)
+## Current status (as of 2026-08-28)
 
 Phases 0–4 of ARCHITECTURE.md §10 are done. Graph topology today:
 `INGEST → CLASSIFY → PLAN → EXTRACT → NORMALIZE → RECONCILE → ADJUDICATE → DERIVE → GATE`,
-then RENDER runs after the graph finishes (see the deviations below). 467 tests passing, 1 skipped.
-Nothing has been pushed to a remote yet; `origin` points at
-https://github.com/odog96/rfp-intake-agent.git and the push needs credentials this environment
-does not have.
+then RENDER runs after the graph finishes (see the deviations below). 506 tests passing, 1 skipped.
+Pushed to https://github.com/odog96/rfp-intake-agent.git. The push is done from a terminal by
+Oliver, from inside the repository directory — this session's credentials cannot do it.
 
 **The whole path works end to end through the Cloudera AI Application.** A user loads documents,
 the application creates a run of the CML Job named "RFP Pipeline Executor", the job runs the
@@ -62,6 +61,25 @@ recorded inline in its own section rather than only here. The load-bearing ones:
 3. **`audit.json` (§6.4) and the janitor job (§6.5) are not built.** Without the janitor, a run whose
    job process dies leaves `status.json` saying "running" forever.
 4. **`python -m rfp_intake.eval` does not exist.** Only the library functions in `eval/` are built.
+
+### Deploying into a fresh Cloudera AI project
+`.project-metadata.yaml` makes this project an AMP (Applied ML Prototype), so a customer deploys it
+from the GitHub URL rather than following instructions by hand. It installs the dependencies
+(`scripts/amp_install_dependencies.py`), creates the CML Job named "RFP Pipeline Executor", starts
+the Cloudera AI Application, and prompts for four environment variables. Added 2026-08-28; not yet
+run against a fresh project.
+
+Two things it depends on, both of which will break quietly if changed:
+- **The job name in `.project-metadata.yaml` must equal `Settings.job_name`.** `app.py` finds the
+  job by name. `tests/config/test_project_metadata.py` fails if they drift apart.
+- **Nothing may hardcode `/home/cdsw/rfp-intake-agent`.** An AMP clones the repository into
+  `/home/cdsw` itself, so `run_job.py`, `app.py` and `launch_app.py` now find the project root
+  instead (`src/rfp_intake/config/paths.py`, and a deliberate cut-down copy inside `run_job.py`
+  because that file runs before the package is importable).
+
+The `runtimes:` block names JupyterLab / Python 3.12 / Standard / 2026.04. If a deployment fails at
+the first task saying no runtime matched, that version is not registered in the customer's
+workspace and the block needs editing.
 
 ### The list of things to do
 1. **Bring in more test documents.** Expected to expose gaps in EXTRACT that the current

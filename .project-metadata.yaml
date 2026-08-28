@@ -1,0 +1,105 @@
+name: RFP Intake Agent
+description: >-
+  Reads clinical study RFP and protocol documents and produces a
+  provenance-backed variable set for a Delivery Strategy and Budgeting team.
+  Every extracted value carries the sentence it came from, the document it came
+  from and the page number, and any two documents that disagree are surfaced
+  rather than silently resolved.
+author: "Cloudera"
+date: "2026-08-28"
+specification_version: 1.0
+prototype_version: 1.0
+
+environment_variables:
+  RFP_INTAKE_LLM_BACKEND:
+    default: "routed"
+    description: >-
+      Leave as "routed" to take the provider and model for each step from
+      config/models.yaml. Set to "mock" to install and click through the
+      application without calling any model at all, which returns fixed sample
+      values and is useful only for checking that the deployment works.
+
+  AWS_BEARER_TOKEN_BEDROCK:
+    default: ""
+    description: >-
+      An AWS Bedrock API key, used only while config/models.yaml routes a step
+      to Bedrock. Required for a first evaluation, because config/models.yaml
+      ships pointing at Claude Sonnet 4.6 on Bedrock. Your AWS account also
+      needs model access granted for that model in the Bedrock console, which
+      is a separate approval and can take a day. Leave empty for a production
+      deployment on Cloudera AI Inference.
+
+  RFP_INTAKE_BEDROCK_REGION:
+    default: "us-east-1"
+    description: >-
+      The AWS region the Bedrock calls go to. Ignored unless
+      config/models.yaml routes a step to Bedrock.
+
+  RFP_INTAKE_CAII_API_KEY:
+    default: ""
+    description: >-
+      The CDP JWT for your Cloudera AI Inference endpoint. This is the
+      production inference path, where document text never leaves the Cloudera
+      environment. The endpoint URL itself is not set here: it lives in
+      config/models.yaml under providers.caii.base_url, so that one file stays
+      the single record of where each step runs. Leave empty for a Bedrock
+      evaluation.
+
+runtimes:
+  # Matched against the runtimes registered in your workspace. If the deployment
+  # fails at the first task saying no runtime matched, open Runtime Catalog in
+  # the workspace and change the version below to one that is listed. Python
+  # 3.11 or newer is required (pyproject.toml sets requires-python = ">=3.11").
+  - editor: JupyterLab
+    kernel: Python 3.12
+    edition: Standard
+    version: "2026.04"
+
+tasks:
+  - type: run_session
+    name: Install dependencies
+    script: scripts/amp_install_dependencies.py
+    short_summary: Installing Python dependencies
+    long_summary: >-
+      Installs the packages in requirements.txt, then installs this project
+      itself in editable mode with the aws extra, so both the job and the
+      application import it straight from src/. Ends by importing the package to
+      fail here rather than inside the job later.
+    kernel: python3
+    cpu: 2
+    memory: 8
+
+  - type: create_job
+    name: RFP Pipeline Executor
+    entity_label: rfp_pipeline_executor
+    script: run_job.py
+    arguments: None
+    short_summary: Creating the job that runs the extraction pipeline
+    long_summary: >-
+      Creates the CML Job that does the actual work. The application never runs
+      the pipeline itself; it writes the uploaded documents into a run folder,
+      creates a run of this job, and then polls for the outcome. The job name
+      must stay exactly "RFP Pipeline Executor", because the application finds
+      the job by that name (the default of job_name in
+      src/rfp_intake/config/settings.py).
+    cpu: 2
+    memory: 8
+    kernel: python3
+    environment:
+      TASK_TYPE: CREATE/RUN_JOB
+
+  - type: start_application
+    name: RFP Intake Agent
+    subdomain: rfp-intake
+    script: launch_app.py
+    short_summary: Starting the RFP Intake Agent application
+    long_summary: >-
+      Starts the Streamlit application that users load documents into. It shows
+      which model each step is routed to and whether document text stays inside
+      the Cloudera environment, creates a run of the RFP Pipeline Executor job,
+      reports the outcome, and offers the report PDF, the spreadsheet and the
+      raw extraction JSON for download.
+    cpu: 2
+    memory: 4
+    environment:
+      TASK_TYPE: START_APPLICATION
