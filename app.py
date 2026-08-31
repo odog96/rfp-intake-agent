@@ -480,10 +480,11 @@ if run_id and st.session_state.job_triggered:
     cml_state = classify_cml_status(cml_status)
     status_path = run_path / "status.json"
     if status_path.exists():
-        try:
-            status = json.loads(status_path.read_text())
-        except (OSError, ValueError):
-            status = None
+        # Deliberately unguarded, as it has always been: a status.json that
+        # cannot be parsed is a real fault and must not be quietly reported as
+        # "the review never started", which is what swallowing it here would do
+        # to a run that is actually still going.
+        status = json.loads(status_path.read_text())
 
 cml_terminal_failure = cml_state == "failed"
 finished = bool(status and status.get("state") in ("completed", "failed"))
