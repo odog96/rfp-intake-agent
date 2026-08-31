@@ -16,3 +16,15 @@ runs/
 uv.lock
 creds.txt
 *.creds
+
+# Workspace scratch that sits beside the project in /home/cdsw. It matters here
+# because an AMP-deployed project clones this repository into /home/cdsw itself:
+# in that layout these loose files land inside the working tree, where a stray
+# `git add .` would commit notes, credentials and screenshots. On a manual clone
+# they sit one level up and these rules simply never fire.
+*.ipynb
+!requirements.txt
+*.txt
+*.png
+!docs/**/*.png
+claude_launcher.sh
