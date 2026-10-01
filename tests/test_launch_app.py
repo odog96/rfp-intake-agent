@@ -1,16 +1,28 @@
-"""The Cloudera AI Application launcher must survive a runtime with no __file__.
+"""The Cloudera AI Application launcher must survive an unprepared runtime.
 
-The bug being guarded: Cloudera AI starts an Application by exec'ing the script
-through a PBJ/IPython kernel, which does not define __file__. On 2026-08-28 the
-AMP deployment reached the start_application task and died there with
-`NameError: name '__file__' is not defined` / `Engine exited with status 1`,
-because launch_app.py derived the project root from __file__ while run_job.py
-and app.py already worked around its absence.
+Two real deployment failures are guarded here, and the second was caused by the
+fix for the first.
+
+2026-08-28 — Cloudera AI starts an Application by exec'ing the script through a
+PBJ/IPython kernel, which does not define __file__. The AMP deployment reached
+the start_application task and died with `NameError: name '__file__' is not
+defined` / `Engine exited with status 1`, because launch_app.py derived the
+project root from __file__ while run_job.py and app.py already worked around its
+absence.
+
+2026-10-01 — the workaround added for that caught the NameError and recovered by
+importing rfp_intake.config.paths. A new Application then died with
+`ModuleNotFoundError: No module named 'rfp_intake'`, because `pip install -e .`
+puts the package on one runtime's path only. The launcher now searches for the
+root the way run_job.py does, importing nothing, and passes src/ to Streamlit on
+PYTHONPATH so the page it runs can import the package as well.
 """
 
 from __future__ import annotations
 
+import os
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -33,6 +45,7 @@ def run_launcher(
     def fake_run(command, **kwargs):
         captured["command"] = command
         captured["cwd_at_call"] = Path.cwd()
+        captured["env"] = kwargs.get("env")
         return subprocess.CompletedProcess(command, 0)
 
     monkeypatch.setattr(subprocess, "run", fake_run)
@@ -54,10 +67,70 @@ def run_launcher(
     return captured
 
 
+def block_rfp_intake_imports(monkeypatch) -> None:
+    """Make `import rfp_intake` raise, the way an unprepared runtime does.
+
+    An editable install puts the package on one runtime's path only. An
+    Application started on a different runtime cannot import it, so any launcher
+    line that does is a line that fails there.
+    """
+    class Blocker:
+        def find_module(self, name, path=None):  # pragma: no cover - legacy hook
+            return None
+
+        def find_spec(self, name, path=None, target=None):
+            if name == "rfp_intake" or name.startswith("rfp_intake."):
+                raise ModuleNotFoundError(f"No module named {name!r}")
+            return None
+
+    for name in [n for n in sys.modules if n == "rfp_intake" or n.startswith("rfp_intake.")]:
+        monkeypatch.delitem(sys.modules, name)
+    monkeypatch.setattr(sys, "meta_path", [Blocker(), *sys.meta_path])
+
+
 def test_launcher_runs_without_dunder_file(monkeypatch, tmp_path):
     """The launcher finds the project root with no __file__ and no NameError."""
     result = run_launcher(monkeypatch, tmp_path, "8100")
     assert result["namespace"]["project_root"] == find_project_root()
+
+
+def test_launcher_starts_without_importing_the_package(monkeypatch, tmp_path):
+    """The launcher must start on a runtime where rfp_intake is not importable.
+
+    The bug this guards is the Application created on 2026-10-01, which died with
+    `NameError: name '__file__' is not defined` followed by `ModuleNotFoundError:
+    No module named 'rfp_intake'` / `Engine exited with status 1`. The NameError
+    fallback recovered by importing the package — the one thing a fresh runtime
+    cannot do, because `pip install -e .` only ever ran on one of them.
+
+    Order matters: expected_root is resolved before imports are blocked, since
+    find_project_root lives in the package being blocked.
+    """
+    expected_root = find_project_root()
+    block_rfp_intake_imports(monkeypatch)
+    result = run_launcher(monkeypatch, tmp_path, "8100")
+    assert result["namespace"]["project_root"] == expected_root
+
+
+def test_launcher_puts_the_source_directory_on_the_child_path(monkeypatch, tmp_path):
+    """Streamlit gets src/ on PYTHONPATH, so the page can import rfp_intake.
+
+    Finding the project root fixes the launcher only. The page it runs imports
+    rfp_intake at module level, and that import fails on a runtime without the
+    editable install unless the child is told where the source is.
+    """
+    result = run_launcher(monkeypatch, tmp_path, "8100")
+    source_dir = str(find_project_root() / "src")
+    assert source_dir in result["env"]["PYTHONPATH"].split(os.pathsep)
+
+
+def test_launcher_keeps_an_existing_python_path(monkeypatch, tmp_path):
+    """src/ is prepended, not substituted — a runtime's own PYTHONPATH survives."""
+    monkeypatch.setenv("PYTHONPATH", "/opt/somewhere")
+    result = run_launcher(monkeypatch, tmp_path, "8100")
+    entries = result["env"]["PYTHONPATH"].split(os.pathsep)
+    assert entries[0] == str(find_project_root() / "src")
+    assert "/opt/somewhere" in entries
 
 
 def test_launcher_runs_app_from_the_project_root(monkeypatch, tmp_path):
