@@ -27,7 +27,25 @@ except NameError:  # pragma: no cover - depends on the CML runtime
 
     project_root = find_project_root()
 
-app_path = project_root / "app.py"
+# Which page the Application serves. app_v2.py is the current one: it draws the
+# pipeline's nine stages as cards. app.py is the previous page, kept working and
+# unchanged, so rolling back is setting this variable rather than editing code —
+# in Project Settings → Advanced → Environment Variables, then restarting the
+# Application.
+#
+# Not declared in .project-metadata.yaml on purpose. An AMP prompts for every
+# variable it declares, and a customer deploying this project should not be asked
+# to choose a page.
+app_filename = os.environ.get("RFP_INTAKE_APP_FILE", "app_v2.py")
+app_path = project_root / app_filename
+if not app_path.is_file():
+    # Fail here with the path, rather than letting Streamlit start and serve an
+    # error page the Application's own log will not explain.
+    raise SystemExit(
+        f"RFP_INTAKE_APP_FILE is {app_filename!r}, which is not a file in "
+        f"{project_root}. Set it to app_v2.py (the stage-card page) or app.py "
+        "(the previous page)."
+    )
 
 # Streamlit inherits this process's working directory, and Settings resolves
 # config/ and runs/ relative to it. app.py sets this again for safety when it is
