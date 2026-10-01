@@ -17,6 +17,12 @@
 #   aliases        alternative names as they appear in real documents.
 #                  Angus explicitly asked for these — they feed both the prompt and page targeting.
 #   hint           one line of instruction injected into the extraction prompt for this field
+#   plain          one line of plain English for a reader without a clinical background.
+#                  Printed in report.pdf — under the group heading for a group, and in the
+#                  "Words used in this report" list for a field. NEVER sent to a model:
+#                  `hint` is written for the extraction model, `plain` is written for the
+#                  person reading the report, and the two must not be swapped.
+#                  Optional. Omit it where the label is already plain ("Total number of sites").
 #   scoped         true  => value may legitimately differ by cohort/arm/part/country.
 #                  Extractor MUST emit one record per scope. Reconciler will NOT
 #                  treat differing scopes as a contradiction.
@@ -31,6 +37,7 @@ version: 1
 groups:
   - id: study_design
     label: Study Design and Structure
+    plain: What kind of study this is, and how it is split into separate parts or groups.
     search_hints:
       headings: ["Study Design", "Overall Design", "Trial Design", "Synopsis", "Study Schema",
                  "Overview of Study Design", "Description of Study", "Study Parts", "Study Overview"]
@@ -41,6 +48,7 @@ groups:
 
   - id: phase_population
     label: Study Phase and Population
+    plain: How far along the drug's development this study sits, and who takes part in it.
     search_hints:
       headings: ["Synopsis", "Study Phase", "Objectives", "Population", "Study Population",
                  "Inclusion Criteria", "Indication", "Background", "Rationale", "Title Page"]
@@ -50,6 +58,9 @@ groups:
 
   - id: interim_analyses
     label: Interim Analyses and Decision Points
+    plain: >
+      Planned points where the results are looked at before the study ends, and a decision is
+      taken about whether and how to carry on.
     search_hints:
       headings: ["Interim Analysis", "Statistical Considerations", "Statistical Methods",
                  "Data Monitoring Committee", "DMC", "DSMB", "Study Governance",
@@ -60,6 +71,7 @@ groups:
 
   - id: treatment_dosing
     label: Treatment and Dosing
+    plain: What the study drug is, how it is given to a participant, and how often.
     search_hints:
       headings: ["Investigational Product", "Study Drug", "Treatment", "Dosage and Administration",
                  "Study Treatments", "IMP", "Dosing Regimen", "Trial Medication", "Pharmacy Manual"]
@@ -70,6 +82,9 @@ groups:
 
   - id: visits
     label: Subject Visit Schedule and Intensity
+    plain: >
+      How often a participant comes into the clinic and how much is done at each appointment.
+      These are the participant's visits, not the monitor's visits to the site.
     search_hints:
       headings: ["Schedule of Assessments", "Schedule of Activities", "SoA", "Study Procedures",
                  "Visit Schedule", "Study Flow Chart", "Table of Assessments", "Study Calendar",
@@ -84,6 +99,7 @@ groups:
 
   - id: timelines
     label: Study Timelines
+    plain: How long the whole study runs, and how long each stage of it lasts.
     search_hints:
       headings: ["Study Duration", "Study Timelines", "Timeline", "Study Period", "Milestones",
                  "Recruitment", "Enrolment", "Enrollment", "Project Schedule", "Deliverables"]
@@ -94,6 +110,9 @@ groups:
 
   - id: blinding_monitoring
     label: Blinding and Unblinded Monitoring
+    plain: >
+      Who is allowed to know which treatment a participant was given, and whether keeping that
+      secret forces a second, separately staffed monitor onto the study.
     search_hints:
       headings: ["Blinding", "Randomisation and Blinding", "Unblinding", "Treatment Allocation",
                  "IP Accountability", "Pharmacy Manual", "Drug Accountability", "Monitoring Plan"]
@@ -104,6 +123,9 @@ groups:
 
   - id: operational_metrics
     label: Operational Metrics and Volumes
+    plain: >
+      The counts a budget is built from: how many hospitals or clinics, how many participants,
+      how many forms, how many monitoring visits.
     search_hints:
       headings: ["Number of Sites", "Number of Subjects", "Sample Size", "Countries",
                  "Scope of Work", "Assumptions", "Budget Assumptions", "Study Scope",
@@ -117,6 +139,9 @@ groups:
 
   - id: clinical_monitoring
     label: Clinical Monitoring Requirements
+    plain: >
+      How often the sponsor expects someone to visit each site to check the work, and how much of
+      the recorded data that person has to check against the site's own records.
     search_hints:
       headings: ["Monitoring", "Clinical Monitoring", "Monitoring Plan", "Site Monitoring",
                  "Source Data Verification", "Risk Based Monitoring", "Quality Management",
@@ -165,6 +190,9 @@ fields:
       One entry per distinct cohort, arm, dose level, treatment group or study part.
       Capture the stated start condition/timing for each, if given. Do not invent structure that
       the document does not state.
+    plain: >
+      The separate groups a study splits into: an arm is one treatment being compared, a cohort a
+      group dosed together, a dose level one strength tested. Each one adds work.
     source_priority: protocol
     budget_driver: true
 
@@ -175,6 +203,9 @@ fields:
     values: [yes, no, not_specified]
     aliases: ["first-in-human", "FIH", "FIM", "first-in-man", "first administration to humans"]
     hint: Only "yes" if the document explicitly describes the study or compound as first-in-human.
+    plain: >
+      Whether the drug has never been given to a person before. If so, safety monitoring is much
+      heavier and the first doses go to one person at a time.
     source_priority: protocol
 
   - id: design.healthy_volunteers
@@ -183,6 +214,9 @@ fields:
     type: enum
     values: [yes, no, not_specified]
     aliases: ["healthy volunteer", "healthy subject", "HV", "normal healthy volunteer", "NHV"]
+    plain: >
+      Whether some participants are healthy people rather than patients who have the disease being
+      treated. Healthy-volunteer groups are usually run at different sites.
     source_priority: protocol
 
   - id: design.healthy_volunteer_scope
@@ -202,6 +236,9 @@ fields:
     hint: >
       Map to the closest enum value. "Phase Ib" -> phase_1. "Phase IIa"/"Phase IIb" -> phase_2.
       Combined phases map to the combined enum. Record the verbatim phase text in raw_value.
+    plain: >
+      How far along the drug's testing this study is. Phase 1 is the earliest and smallest; Phase 3
+      is the large study that supports approval.
     source_priority: protocol
     budget_driver: true
 
@@ -235,6 +272,9 @@ fields:
       Formal planned interim analyses only. A DSMB/IDMC safety review is NOT automatically an
       interim analysis — capture it only if the document frames it as one, and note the distinction
       in `notes`.
+    plain: >
+      Whether the results are formally analysed before the study ends, to decide whether to carry
+      on. Each analysis needs its own data cut, statistics and committee meeting.
     # Angus: this can appear in EITHER document. No blanket protocol precedence.
     source_priority: any
     budget_driver: true
@@ -266,6 +306,9 @@ fields:
     hint: >
       Multiple forms allowed (e.g. IV loading dose then SC maintenance). Route of administration
       determines the form for injectables. Use `other` with a note for anything unlisted.
+    plain: >
+      How the drug gets into the body — a tablet, an injection under the skin, a drip into a vein.
+      A drip ties up a clinic room and a nurse for hours; a tablet does not.
     source_priority: protocol
     budget_driver: true
 
@@ -306,6 +349,9 @@ fields:
       Read the Schedule of Assessments table where present — it is the authoritative source.
       Count visits per period where the table permits. If frequency differs by cohort/arm/part,
       emit one record per scope.
+    plain: >
+      How often a participant attends the clinic at each stage of the study. These are the
+      participant's appointments, not the monitor's visits to the site.
     source_priority: protocol
     budget_driver: true
 
@@ -328,6 +374,9 @@ fields:
     hint: >
       Flag each factor the document provides concrete evidence for. This feeds the derived
       intensity rating — each flag must have its own quote.
+    plain: >
+      What the document names that makes an appointment long or demanding: repeated blood sampling,
+      scans, heart tracings, an overnight stay. These drive the rating below.
     source_priority: protocol
 
   - id: visits.intensity_rating
@@ -341,6 +390,9 @@ fields:
       DERIVED — computed by the rubric in ARCHITECTURE.md §4.8, never extracted by the model.
       The report must show the contributing evidence alongside the rating so a reviewer can
       disagree with it.
+    plain: >
+      A low / moderate / high rating of how demanding each appointment is. No document states this:
+      the tool works it out from the procedures it found, so it is a starting point, not a fact.
     budget_driver: true
 
 # --- Group 6: Study Timelines -----------------------------------------------
@@ -381,6 +433,9 @@ fields:
     values: [open_label, single_blind, double_blind, triple_blind, partially_blinded, not_specified]
     aliases: ["open-label", "single-blind", "double-blind", "double-masked", "triple-blind",
               "blinded", "unblinded study"]
+    plain: >
+      Who is kept from knowing which treatment a participant is on. Open-label: everyone knows.
+      Double-blind: neither the participant nor the site staff does, so separate staff are needed.
     source_priority: protocol
     budget_driver: true
 
@@ -396,6 +451,9 @@ fields:
       blinded/unblinded staff, IP accountability by unblinded personnel, pharmacy manual
       requirements). When answering "likely", the quote must be the trigger text, and the
       inference must be stated in `notes`. This field carries real budget weight — do not guess.
+    plain: >
+      Whether someone allowed to see which treatment each participant is on must visit the site. On
+      a blinded study that cannot be the usual monitor, so it means paying for a second one.
     source_priority: any
     budget_driver: true
 
@@ -450,6 +508,9 @@ fields:
     type: int
     aliases: ["CRF pages", "eCRF pages", "unique CRF pages", "case report form pages"]
     hint: Distinguish unique CRF pages from total pages across all subjects. Note which in `notes`.
+    plain: >
+      CRF means case report form — the forms a site fills in for each participant. The page count
+      drives data entry, checking and database work.
     source_priority: rfp
     budget_driver: true
 
@@ -470,6 +531,9 @@ fields:
     hint: >
       `per` is critical: "4 IMVs" per site versus per study differ by two orders of magnitude
       in the budget. If the document does not say, set per=not_specified rather than assuming.
+    plain: >
+      Visits by the sponsor's or CRO's monitor to check a site — not the participant's appointments.
+      Whether a count is per site or for the whole study changes the budget enormously.
     source_priority: rfp
     budget_driver: true
 
@@ -517,6 +581,9 @@ fields:
     label: Source data verification expectations
     type: text
     aliases: ["SDV", "source data verification", "100% SDV", "targeted SDV", "partial SDV"]
+    plain: >
+      SDV means source data verification: a monitor checks what the site typed into the study
+      database against the site's own records. Checking everything costs far more than a sample.
     source_priority: rfp
     budget_driver: true
 
@@ -525,6 +592,9 @@ fields:
     label: Source data review expectations
     type: text
     aliases: ["SDR", "source data review"]
+    plain: >
+      SDR means source data review: a monitor reads the site's records for problems, rather than
+      comparing them field by field with the database. Lighter work than SDV above.
     source_priority: rfp
 
   - id: monitoring.strategy_guidance

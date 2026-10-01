@@ -241,7 +241,7 @@ class FieldRecord(BaseModel):
     quote: str                           # VERBATIM span from the source. Validated as substring.
     provenance: Provenance
     status: Literal["found", "not_specified", "not_found"] = "found"
-    confidence: float                    # 0..1, model-reported, calibrated in GATE
+    confidence: float                    # 0..1, the model's own rating. Nothing calibrates it (§4.9)
     scope: str | None = None             # "total" | "cohort:A" | "country:DE" — prevents false conflicts
     notes: str | None = None
 
@@ -494,9 +494,26 @@ is what makes the whole pipeline testable without a filesystem.
 - **`extraction.json` (primary)** — the machine-readable contract. This is what a downstream budget service
   consumes. Full fidelity: every `ResolvedField` with value, status, confidence, all `sources`, quotes,
   contradictions, and `derived_from`. Versioned by the `fields.yaml` registry version that produced it.
-- **`report.pdf` (primary)** — the human deliverable, and the artifact Angus reviews. Executive summary,
-  contradictions section up front (see §4.7 — this is where conflicts get resolved in MVP), then variables
-  by group with value, status, source document, page and quote.
+- **`report.pdf` (primary)** — the human deliverable, and the artifact Angus reviews. Five sections, in
+  this order: (1) five lines naming the documents, the counts and what to do with the report; (2) **All
+  variables** — every variable by group, with value, status, confidence and pages, a row in a disagreement
+  saying so and pointing at its number; (3) **Disagreements between the documents** — each one numbered,
+  with both sides' values and pages and the verdict (see §4.7 — this is where conflicts get resolved in
+  MVP); (4) **Flagged for review** — every other value needing a look, each with the reason it is flagged;
+  (5) **Schedules** — the many-row variables (visit schedule, timeline components), one table each. Then
+  Appendix A quotes every source passage, Appendix B holds the adjudicator's reasoning and the dismissed
+  disagreements, and the plain-English word list is last.
+  *Deviation, 2026-09-18:* the quote moved from beside each value to Appendix A after a customer found
+  the 15-page report too long to read. What is shown where is decided in `render/report_model.py`, and
+  `tests/render/test_report_model.py::assert_nothing_lost` fails if any variable, value, page, status,
+  quote or disagreement from `RunState` is missing from the report.
+  *Deviation, 2026-09-30:* the same customer asked for the variables before the decisions — see
+  everything that was read before being asked to adjudicate any of it — so the review sections moved
+  behind **All variables**, and every flagged row now carries the reason it is flagged rather than only
+  its name. The printed order is set in `render/pdf_renderer.py:build_report_pdf` and asserted by
+  `tests/render/test_pdf_renderer.py::test_the_five_sections_are_in_the_order_the_customer_asked_for`.
+  The reason on each flagged row is recomputed in `render/report_model.py:_review_reasons` from the same
+  inputs GATE used, so the report cannot name a rule that did not fire.
 - **`report.xlsx` (renderer)** — a renderer alongside the two above, not the primary path. One row per field:
   `Group | Variable | Value | Status | Confidence | Source Doc | Page | Quote | Contradiction`.
   Conditional formatting: red = conflict, amber = needs_review, green = confirmed, grey = not found.

@@ -19,6 +19,7 @@ from rfp_intake.domain.schemas import (
     RunState,
 )
 from rfp_intake.render.pdf_renderer import build_report_pdf
+from rfp_intake.render.report_model import SCHEDULE_THRESHOLD
 
 
 def _use_real_registry(fields_yaml_path) -> None:  # type: ignore[no-untyped-def]
@@ -120,68 +121,206 @@ class TestBuildReportPdf:
         assert len(pdf) > 1000  # non-trivial — every field in the registry got a line
 
 
-class TestContradictionsSectionLength:
-    """A dismissed disagreement is recorded, not written up at length."""
+def _pdf_text(pdf: bytes) -> str:
+    import pymupdf
 
-    @staticmethod
-    def _contradiction(field_id: str, verdict: str, n_records: int = 2):
-        from rfp_intake.domain.schemas import Contradiction, FieldRecord, Provenance
+    with pymupdf.open(stream=pdf, filetype="pdf") as doc:
+        return " ".join(" ".join(p.get_text().split()) for p in doc)
 
-        records = [
-            FieldRecord(
-                field_id=field_id,
-                group="operational_metrics",
-                raw_value=f"value-{i}",
-                quote=f"quote number {i} " + ("padding " * 20),
-                provenance=Provenance(doc_id="doc-1", doc_kind="rfp", page=i + 1),
-                confidence=0.9,
-            )
-            for i in range(n_records)
+
+def _headings(pdf: bytes) -> list[str]:
+    """The section headings, in printed order, as standalone lines.
+
+    Substring search over the flattened text cannot do this: the header block
+    names "Words used in this report" and the disagreements lead names
+    "Appendix B", so `text.index(...)` finds the mention rather than the heading
+    and reports them in the wrong order. scripts/rerender_report.py matches lines
+    for the same reason.
+    """
+    import pymupdf
+
+    wanted = {
+        "All variables",
+        "Disagreements between the documents",
+        "Flagged for review",
+        "Schedules",
+        "Words used in this report",
+    }
+    out: list[str] = []
+    with pymupdf.open(stream=pdf, filetype="pdf") as doc:
+        for page in doc:
+            for line in page.get_text().splitlines():
+                line = line.strip()
+                if line in wanted or line.startswith(("Appendix A —", "Appendix B —")):
+                    out.append(line)
+    return out
+
+
+def _conflict_state():  # type: ignore[no-untyped-def]
+    from rfp_intake.domain.schemas import Contradiction, FieldRecord, Provenance
+
+    def rec(value: str, page: int, doc: str, kind: str) -> FieldRecord:
+        return FieldRecord(
+            field_id="interim.planned", group="interim_analyses", raw_value=value, value=value,
+            quote=f"quote on page {page}", confidence=0.9,
+            provenance=Provenance(doc_id=doc, doc_kind=kind, page=page),  # type: ignore[arg-type]
+        )
+
+    conflict = Contradiction(
+        field_id="interim.planned", verdict="conflict", severity="high",
+        explanation="The RFP (d-rfp) plans an interim analysis; the protocol (d-prot) does not.",
+        records=[rec("false", 98, "d-prot", "protocol"), rec("true", 4, "d-rfp", "rfp")],
+    )
+    dismissed = Contradiction(
+        field_id="study.indication", verdict="not_a_conflict",
+        records=[
+            FieldRecord(field_id="study.indication", group="phase_population", raw_value=v,
+                        value=v, quote=v, confidence=0.9,
+                        provenance=Provenance(doc_id=d, doc_kind=k, page=pg))  # type: ignore[arg-type]
+            for v, d, k, pg in (("AL amyloidosis", "d-prot", "protocol", 11),
+                                ("Light chain amyloidosis", "d-rfp", "rfp", 1))
+        ],
+    )
+    return RunState(
+        run_id="r-1",
+        resolved=[
+            ResolvedField(field_id="interim.planned", value="false", status="needs_review",
+                          confidence=0.9, contradiction=conflict,
+                          sources=[r.provenance for r in conflict.records]),
+            ResolvedField(field_id="study.indication", value="AL amyloidosis", status="confirmed",
+                          confidence=0.9, contradiction=dismissed, quote="AL amyloidosis",
+                          sources=[dismissed.records[0].provenance]),
+        ],
+        contradictions=[conflict, dismissed],
+    )
+
+
+class TestReportText:
+    """What an analyst sees, read back out of the finished PDF."""
+
+    def test_every_registry_variable_is_named(self, fields_yaml_path) -> None:  # type: ignore[no-untyped-def]
+        _use_real_registry(fields_yaml_path)
+        text = _pdf_text(build_report_pdf(RunState(run_id="r-1"), _registry(), generated_at="t"))
+        for f in _registry().fields:
+            assert " ".join(f.label.split()) in text, f.label
+
+    def test_the_five_sections_are_in_the_order_the_customer_asked_for(
+        self, fields_yaml_path  # type: ignore[no-untyped-def]
+    ) -> None:
+        """Variables first, then the two review sections. See pdf_renderer's docstring.
+
+        Until 2026-09-30 the review sections came first and this test asserted a
+        conflict was on page 1. The customer asked for the opposite order: see
+        everything that was read before being asked to adjudicate any of it.
+        """
+        _use_real_registry(fields_yaml_path)
+        headings = _headings(build_report_pdf(_conflict_state(), _registry(), generated_at="t"))
+        # "Schedules" is absent here on purpose: _conflict_state holds no variable
+        # with enough entries to become a schedule, and _schedules then renders
+        # nothing rather than an empty heading.
+        assert [h.split(" —")[0] for h in headings] == [
+            "All variables",
+            "Disagreements between the documents",
+            "Flagged for review",
+            "Appendix A",
+            "Appendix B",
+            "Words used in this report",
         ]
-        return Contradiction(
-            field_id=field_id,
-            records=records,
-            verdict=verdict,  # type: ignore[arg-type]
-            explanation="A long explanation. " * 40,
-            severity="high",
+
+    def test_schedules_are_printed_before_the_appendices(self, fields_yaml_path) -> None:  # type: ignore[no-untyped-def]
+        """A variable with many entries becomes its own table, still ahead of Appendix A.
+
+        Only the word list moved behind the appendices on 2026-09-30. The visit
+        schedule and the timeline components are budget drivers, so they stay in
+        the part a reader reads straight through.
+        """
+        _use_real_registry(fields_yaml_path)
+        state = RunState(
+            run_id="r-1",
+            resolved=[
+                ResolvedField(
+                    field_id="visits.frequency_by_period", value=f"every {n} weeks",
+                    status="confirmed", confidence=0.9, scope=f"period {n}",
+                    sources=[Provenance(doc_id="p1", doc_kind="protocol", page=n)],
+                    quote=f"every {n} weeks",
+                )
+                for n in range(1, SCHEDULE_THRESHOLD + 3)
+            ],
         )
+        headings = [h.split(" —")[0] for h in _headings(build_report_pdf(state, _registry(),
+                                                                        generated_at="t"))]
+        assert headings.index("Schedules") < headings.index("Appendix A")
+        # Appendix B is absent here — this state has no contradiction to reason
+        # about. The word list is still behind the appendix that is printed.
+        assert headings.index("Appendix A") < headings.index("Words used in this report")
 
-    def test_dismissed_entries_are_far_shorter_than_real_ones(self) -> None:
-        from rfp_intake.domain.registry import get_registry
-        from rfp_intake.render.pdf_renderer import _contradictions_section, _styles
+    def test_a_disagreement_is_named_on_its_variable_row_and_tabled_in_full(
+        self, fields_yaml_path  # type: ignore[no-untyped-def]
+    ) -> None:
+        """The variables table flags the row and points at the numbered table."""
+        _use_real_registry(fields_yaml_path)
+        text = _pdf_text(build_report_pdf(_conflict_state(), _registry(), generated_at="t"))
+        assert "Interim analyses planned" in text
+        # The row in All variables says so, and says where to read the detail.
+        assert "Sources disagree — see Disagreement 1" in text
+        # The numbered table carries both sides with their pages, and the verdict.
+        assert "No — Protocol p.98" in text
+        assert "Yes — RFP p.4" in text
+        assert "Conflict" in text
 
-        styles = _styles()
-        registry = get_registry()
-        real = _contradictions_section(
-            [self._contradiction("ops.sites_total", "conflict")], registry, styles
+    def test_confidence_is_printed_and_explained(self, fields_yaml_path) -> None:  # type: ignore[no-untyped-def]
+        """Angus Gray asked how the percentage is produced, so the report says.
+
+        The figure is printed on every row, not only when it is low — the example
+        the customer praised read "(Confirmed, 100% confidence)".
+        """
+        _use_real_registry(fields_yaml_path)
+        rf = ResolvedField(
+            field_id="ops.sites_total", value=75, status="confirmed", confidence=1.0,
+            scope="total", sources=[Provenance(doc_id="rfp1", doc_kind="rfp", page=5)],
+            quote="75 sites total",
         )
-        dismissed = _contradictions_section(
-            [self._contradiction("ops.sites_total", "not_a_conflict")], registry, styles
+        text = _pdf_text(build_report_pdf(RunState(run_id="r-1", resolved=[rf]), _registry(),
+                                          generated_at="t"))
+        assert "Confidence" in text
+        assert "100%" in text
+        assert "the extraction model's own rating" in text
+        assert "not a probability of being correct" in text
+
+    def test_a_flagged_value_carries_its_reason(self, fields_yaml_path) -> None:  # type: ignore[no-untyped-def]
+        """Before 2026-09-30 this section printed names only, under "Also check"."""
+        _use_real_registry(fields_yaml_path)
+        rf = ResolvedField(
+            field_id="ops.sites_total", value=75, status="needs_review", confidence=0.5,
+            scope="total", sources=[Provenance(doc_id="rfp1", doc_kind="rfp", page=5)],
+            quote="75 sites total",
         )
-        assert len(dismissed) < len(real)
+        text = _pdf_text(build_report_pdf(RunState(run_id="r-1", resolved=[rf]), _registry(),
+                                          generated_at="t"))
+        assert "Why it is flagged" in text
+        assert "Confidence below 80%" in text
 
-    def test_dismissed_entries_still_appear(self) -> None:
-        # They must remain visible: "we checked and it was fine" is information.
-        from rfp_intake.domain.registry import get_registry
-        from rfp_intake.render.pdf_renderer import _contradictions_section, _styles
+    def test_reasoning_and_dismissed_entries_are_in_the_appendix(self, fields_yaml_path) -> None:  # type: ignore[no-untyped-def]
+        _use_real_registry(fields_yaml_path)
+        text = _pdf_text(build_report_pdf(_conflict_state(), _registry(), generated_at="t"))
+        assert "Appendix B" in text
+        # Document ids in the adjudicator's reasoning are replaced by names.
+        assert "The RFP (RFP) plans an interim analysis; the protocol (Protocol) does not." in text
+        assert "Checked and dismissed (1)" in text
+        assert "Light chain amyloidosis" in text
 
-        story = _contradictions_section(
-            [self._contradiction("ops.sites_total", "not_a_conflict")],
-            get_registry(),
-            _styles(),
+    def test_quotes_are_in_the_evidence_appendix(self, fields_yaml_path) -> None:  # type: ignore[no-untyped-def]
+        _use_real_registry(fields_yaml_path)
+        rf = ResolvedField(
+            field_id="ops.sites_total", value=75, status="confirmed", confidence=0.92,
+            scope="total", sources=[Provenance(doc_id="rfp1", doc_kind="rfp", page=5)],
+            quote="75 sites total",
         )
-        assert any("dismissed" in str(getattr(p, "text", "")) for p in story)
-
-    def test_quotes_are_capped(self) -> None:
-        # One entry in run r-20260827-180418 carried 27 source quotes.
-        from rfp_intake.domain.registry import get_registry
-        from rfp_intake.render.pdf_renderer import _MAX_QUOTES, _contradictions_section, _styles
-
-        story = _contradictions_section(
-            [self._contradiction("ops.sites_total", "conflict", n_records=27)],
-            get_registry(),
-            _styles(),
-        )
-        quoted = [p for p in story if 'doc-1 (rfp' in str(getattr(p, "text", ""))]
-        assert len(quoted) == _MAX_QUOTES
-        assert any("further sources" in str(getattr(p, "text", "")) for p in story)
+        text = _pdf_text(build_report_pdf(RunState(run_id="r-1", resolved=[rf]), _registry(),
+                                          generated_at="t"))
+        # The heading, not a mention of it: the header block names Appendix A on
+        # page 1, so slicing at the first "Appendix A" would return the whole
+        # document and the test would pass without the quote being in the appendix.
+        evidence = text[text.index("Appendix A — Evidence"):]
+        assert '"75 sites total"' in evidence
+        assert "RFP p.5, 92%" in evidence

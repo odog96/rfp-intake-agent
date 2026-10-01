@@ -7,11 +7,11 @@ produces a provenance-backed variable set for the Delivery Strategy & Budgeting 
 **Read `docs/ARCHITECTURE.md` before writing code. It is the build contract, not background reading.**
 `config/fields.yaml` is the single source of truth for what gets extracted.
 
-## Current status (as of 2026-08-28)
+## Current status (as of 2026-09-30)
 
 Phases 0–4 of ARCHITECTURE.md §10 are done. Graph topology today:
 `INGEST → CLASSIFY → PLAN → EXTRACT → NORMALIZE → RECONCILE → ADJUDICATE → DERIVE → GATE`,
-then RENDER runs after the graph finishes (see the deviations below). 511 tests passing, 1 skipped.
+then RENDER runs after the graph finishes (see the deviations below). 591 tests passing, 1 skipped.
 Pushed to https://github.com/odog96/rfp-intake-agent.git. The push is done from a terminal by
 Oliver, from inside the repository directory — this session's credentials cannot do it.
 
@@ -61,6 +61,12 @@ recorded inline in its own section rather than only here. The load-bearing ones:
 3. **`audit.json` (§6.4) and the janitor job (§6.5) are not built.** Without the janitor, a run whose
    job process dies leaves `status.json` saying "running" forever.
 4. **`python -m rfp_intake.eval` does not exist.** Only the library functions in `eval/` are built.
+5. **The confidence percentage is not calibrated and the report now says so.** It is the extraction
+   model's own rating of how clearly a document stated the value, plus `CORROBORATION_BOOST_PER_SOURCE`
+   (0.05) for each extra passage that agreed, capped at 1.0. Nothing checks it against hand-marked
+   answers, so it is not a probability of being correct, and GATE only compares it to
+   `CONFIDENCE_CONFIRMED` (0.80). Angus Gray asked how the number is produced; report.pdf answers in
+   those terms on page 1. Calibrating it needs the golden set and the `eval/` work in §9.
 
 ### Deploying into a fresh Cloudera AI project
 `.project-metadata.yaml` makes this project an AMP (Applied ML Prototype), so a customer deploys it
@@ -102,6 +108,62 @@ checks every task's field names against the specification, so neither mistake ca
 5. **Return `privacy_mode` to `private` and the models to CAII before any customer document.**
    `config/models.yaml` is on `mixed` with Claude Sonnet 4.6 on Bedrock for testing.
 6. Build `audit.json`, the janitor job, and the `rfp_intake.eval` command line.
+
+### Done 2026-09-30: report.pdf restructured around what the customer asked for (step 3 of 3)
+Angus Gray read the 2026-09-18 report and asked for four things: the references organised in tables and
+moved to an appendix, simpler first pages, clearer yes/no answers, and an explanation of where the
+confidence percentage comes from. He also asked for the variables *before* the decisions — see
+everything that was read before being asked to adjudicate any of it. `report.pdf` is now five sections:
+five lines of header, **All variables**, **Disagreements between the documents**, **Flagged for review**,
+**Schedules**, then Appendix A (quotes), Appendix B (reasoning) and the plain-English word list last.
+
+Two things that were missing rather than merely long. Every flagged row now carries **why** it is
+flagged — the old report listed names under "Also check" with no reason — recomputed in
+`render/report_model.py:_review_reasons` from the same inputs GATE used, so the report cannot name a
+rule that did not fire. `scripts/check_flag_reasons.py <run_id>` proves that on a real run by
+recomputing the rule from `extraction.json` and comparing: 20/20 on `r-20260923-131601`, 30/30 on
+`r-20260922-230150` and 30/30 on `r-20260901-172918`. And "Needs your attention"/"Also check" are now
+named for what they are:
+disagreements between the documents, and values flagged for review.
+
+Plain English is in `config/fields.yaml` (`plain:` on each group and field), not in Python, so Angus can
+correct any line without a code change. **That wording is unverified clinical phrasing — present it as a
+draft for his sign-off.** `scripts/rerender_report.py` rebuilds a finished run's report from its
+`extraction.json` with no model calls, writing `report-rerender.pdf` and never over `report.pdf`.
+
+Re-rendered page counts: `r-20260923-131601` 15 pages with Appendix A on page 8; `r-20260922-230150` and
+`r-20260901-172918` 16 pages with Appendix A on page 9. The 2026-09-18 layout was 13 pages with Appendix
+A on page 7, so the part a reader reads straight through grew by one to two pages — the reasons on every
+flagged row and the confidence column are new content, not padding. 591 tests passing, 1 skipped.
+Deferred, not dropped: `Row.reasons`, `Row.is_pointer` and `ReportModel.glossary` have no test coverage
+in the suite, so "every flag has a true reason" rests on `scripts/check_flag_reasons.py` being run by
+hand rather than on `pytest`; and step 2 of the original three, ADJUDICATE writing a one-sentence
+explanation, which needs a prompt change and one Bedrock run.
+
+### Done 2026-09-22: ENGINE_SKIPPED left the application waiting forever
+Pressing "Start review" while a review is already going makes CML discard the new run with status
+`ENGINE_SKIPPED` (run `ut0ikf68f4jv48rv`, 16 seconds after `jo4tb8u1un7tsk01`). `classify_cml_status`
+did not know that word, so it returned "unknown", `app.py` never reached a terminal state, and the
+page sat on "Waiting for the pipeline to start". `skipped` is now its own state, terminal but not a
+failure, and the page says another review was already running. The first live run of the new report
+is `r-20260922-230150`: 14 pages, 7 before the appendix, 93 resolved values, 14 disagreements, and
+the usual 17 dropped records from quote validation in the visits group.
+
+### Done 2026-09-18: a shorter report.pdf (step 1 of 3)
+A customer said the report was too long. `render/pdf_renderer.py` was rewritten on top of a new
+`render/report_model.py`; the pipeline, prompts, `extraction.json` and `report.xlsx` are unchanged.
+Re-rendering run `r-20260901-172918` from its `extraction.json`: the part before the appendix went
+from 15 pages / 6,517 words to 7 pages / 2,601 words, with every decision on page 1. The whole file
+is 14 pages because Appendix A now quotes every source passage. Shortening is merging only (identical
+values, each document's pages once, readable values); free-text rewordings the adjudicator dismissed
+are folded into Appendix A, but never for a budget driver. `assert_nothing_lost` in
+`tests/render/test_report_model.py` checks this on hand-built states and on every `runs/*/` folder
+present. 582 tests passing, 1 skipped.
+Next: step 2 — have ADJUDICATE also write a one-sentence explanation for page 1 (a prompt change, needs
+one Bedrock run on the synthetic pair); step 3 — show the customer the before and after.
+Found while doing it, not fixed: `extraction.json` does not record which file each `doc_id` came from,
+so a report rebuilt from it can only name documents by kind; and EXTRACT returns near-duplicate scopes
+("Liver CT imaging" and "Liver CT imaging (all eligible subjects)") that the report shows as two rows.
 
 ### Done 2026-08-27, with the run that proved it
 - Duplicate records: NORMALIZE was returning every record into a list that appended rather than

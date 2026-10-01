@@ -22,6 +22,9 @@ class SearchHints(BaseModel):
 class GroupDef(BaseModel):
     id: str
     label: str
+    # One line of plain English for a reader without a clinical background,
+    # printed under the group's heading in report.pdf. See FieldDef.plain.
+    plain: str | None = None
     search_hints: SearchHints = Field(default_factory=SearchHints)
 
 
@@ -47,6 +50,14 @@ class FieldDef(BaseModel):
             return None
         return [str(item).lower() if isinstance(item, bool) else str(item) for item in v]
     hint: str | None = None
+    # What this variable means, for a reader without a clinical background.
+    #
+    # `plain` and `hint` are not interchangeable and must not be swapped.
+    # `hint` is an instruction written for the extraction model ("2-4 sentences
+    # maximum") and is never printed in a report. `plain` is written for the
+    # person reading report.pdf and is never put in a prompt — the glossary in
+    # render/pdf_renderer.py is its only consumer.
+    plain: str | None = None
     scoped: bool = False
     source_priority: str | None = None
     budget_driver: bool = False
