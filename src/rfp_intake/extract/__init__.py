@@ -126,6 +126,7 @@ def extract_group(
                         node="EXTRACT",
                         task_id=f"{task.doc_id}:{task.group}:{record.field_id}",
                         error=f"Validation failed after retry: {reason}",
+                        kind="validation",
                     ))
         except Exception as e:
             logger.error("repair_retry_failed", error=str(e), task=task.group)
@@ -134,6 +135,7 @@ def extract_group(
                     node="EXTRACT",
                     task_id=f"{task.doc_id}:{task.group}",
                     error=f"Repair retry failed: {v}",
+                    kind="validation",
                 ))
     elif violations:
         for v in violations:
@@ -141,6 +143,7 @@ def extract_group(
                 node="EXTRACT",
                 task_id=f"{task.doc_id}:{task.group}",
                 error=f"Validation failed: {v}",
+                kind="validation",
             ))
 
     logger.info(

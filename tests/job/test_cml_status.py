@@ -18,6 +18,10 @@ class TestClassifyCmlStatus:
             ("ENGINE_TIMEDOUT", "failed"),
             ("ENGINE_KILLED", "failed"),
             ("ENGINE_STOPPED", "failed"),
+            # Observed on run ut0ikf68f4jv48rv, 2026-09-22: CML discarded it
+            # because another run of the same job was still going. Classified
+            # as unknown until then, which left the application waiting forever.
+            ("ENGINE_SKIPPED", "skipped"),
             ("ENGINE_SUCCEEDED", "succeeded"),
             ("ENGINE_RUNNING", "running"),
             ("ENGINE_SCHEDULING", "pending"),
@@ -34,6 +38,12 @@ class TestClassifyCmlStatus:
     )
     def test_classification(self, raw: str | None, expected: str) -> None:
         assert classify_cml_status(raw) == expected
+
+    def test_a_skipped_run_is_terminal_and_not_a_failure(self) -> None:
+        # It never started, so "the job failed" would send someone to read logs
+        # that do not exist.
+        assert is_terminal(classify_cml_status("ENGINE_SKIPPED"))
+        assert classify_cml_status("ENGINE_SKIPPED") != "failed"
 
     def test_unknown_is_never_treated_as_running(self) -> None:
         # The bug being guarded: an unclassifiable status left the application

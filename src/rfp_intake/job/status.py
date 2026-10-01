@@ -19,6 +19,28 @@ class DocumentStatus(BaseModel):
     note: str | None = None
 
 
+class RunFailure(BaseModel):
+    """Why a run failed, in a shape the page can branch on without reading prose.
+
+    `error` on RunStatus stays exactly as it was — one string — so a page or a
+    script written before this key existed keeps working. This block is added
+    beside it for a reader that wants to say something more specific than "the
+    review stopped": a model service that cannot be reached is not the same
+    event as a document that could not be parsed, and telling an analyst to
+    check their files when the real fault is an expired credential is the
+    failure this key exists to prevent.
+
+    `reason` and `action` are the two sentences shown on the page. `detail` is
+    the provider's own words, for the operator's expander.
+    """
+
+    kind: Literal["model_service", "no_extraction", "unexpected"]
+    reason: str
+    action: str
+    service: str | None = None
+    detail: str | None = None
+
+
 class RunStatus(BaseModel):
     """Top-level status.json schema — what the CAI Application polls."""
 
@@ -30,6 +52,7 @@ class RunStatus(BaseModel):
     progress: dict[str, int] | None = None
     documents: list[DocumentStatus] = Field(default_factory=list)
     error: str | None = None
+    failure: RunFailure | None = None
 
 
 class StatusWriter:
@@ -48,6 +71,7 @@ class StatusWriter:
         progress: dict[str, int] | None = None,
         documents: list[DocumentStatus] | None = None,
         error: str | None = None,
+        failure: RunFailure | None = None,
     ) -> None:
         """Write status.json atomically (write .tmp then rename)."""
         status = RunStatus(
@@ -59,6 +83,7 @@ class StatusWriter:
             progress=progress,
             documents=documents or [],
             error=error,
+            failure=failure,
         )
         self._path.parent.mkdir(parents=True, exist_ok=True)
         tmp = self._path.with_suffix(".tmp")

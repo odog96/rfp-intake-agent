@@ -35,6 +35,7 @@ from rfp_intake.config.settings import get_settings  # noqa: E402
 from rfp_intake.job.args import RUN_ID_ENV_VAR  # noqa: E402
 from rfp_intake.job.cml_status import classify_cml_status  # noqa: E402
 from rfp_intake.llm.discovery import describe_active_routing  # noqa: E402
+from rfp_intake.llm.health import probe_model_service  # noqa: E402
 
 settings = get_settings()
 
@@ -129,6 +130,9 @@ _STEPS = (
 # a failed run. A node name that is not here falls back to the raw value, so a
 # node added by another workstream changes the wording but never crashes the page.
 _NODE_LABELS = dict(_STEPS)
+# Written by the job before INGEST, while it checks that the model service
+# answers at all. Not one of the nine steps, so it is not in _STEPS.
+_NODE_LABELS["PREFLIGHT"] = "Checking the model service"
 _NODE_LABELS["DONE"] = "Review complete"
 _NODE_LABELS["ERROR"] = "Run failed"
 
@@ -320,6 +324,38 @@ def _has_inputs(run_id: str) -> bool:
     return inputs_dir.is_dir() and any(p.is_file() for p in inputs_dir.iterdir())
 
 
+def _failure_words(status: dict) -> tuple[str, str]:
+    """The headline and the sentence for a run that wrote `state: failed`.
+
+    `status["failure"]` is written by the job (job/status.py, RunFailure) and
+    says what kind of failure this was. A model service that would not answer
+    and a set of documents nothing could be extracted from produce the same
+    empty report, and telling an analyst to check their files when an access
+    key has expired sends the wrong person to look in the wrong place — which
+    is exactly what happened on runs r-20260831-150720 to r-20260901-140857.
+
+    A status.json without the `failure` key — any run written before the key
+    existed — falls back to the original wording, unchanged.
+    """
+    failure = status.get("failure") or {}
+    kind = failure.get("kind")
+    sentence = " ".join(part for part in (failure.get("reason"), failure.get("action")) if part)
+
+    if kind == "model_service" and sentence:
+        service = failure.get("service") or "the model service"
+        return f"Review stopped — no answer from {service}", sentence
+
+    if kind == "no_extraction" and sentence:
+        return "Review stopped — nothing could be extracted", sentence
+
+    return (
+        f"Review stopped while {_step_label(status.get('node')).lower()}",
+        "No report was produced. Your files are still here — press try again. If "
+        "it stops a second time, send the run identifier below to your platform "
+        "contact.",
+    )
+
+
 def _failure_view(
     run_path: Path,
     headline: str,
@@ -410,9 +446,23 @@ def _completion_view(run_path: Path, status: dict) -> None:
         if disagreements:
             st.warning(_disagreement_sentence(fields, disagreements))
 
-        if data.get("errors"):
+        errors = data.get("errors") or []
+        # `kind` is written by the engine (domain/schemas.py, RunError). A step
+        # that never got an answer from the model service is a different event
+        # from one whose answer was rejected, and only the first is worth
+        # telling someone to go and fix. Errors written before `kind` existed
+        # default to call_failed, which is what they were.
+        unanswered = [e for e in errors if e.get("kind", "call_failed") == "call_failed"]
+        if unanswered:
             st.warning(
-                f"{len(data['errors'])} field(s) failed during the run — see the JSON file."
+                f"{len(unanswered)} step(s) could not get an answer from the model "
+                "service, so some fields are marked not found even though the "
+                "documents may say otherwise. Check the model connection in the "
+                "sidebar, then run the review again."
+            )
+        elif errors:
+            st.warning(
+                f"{len(errors)} field(s) failed during the run — see the JSON file."
             )
     else:
         # A completed run showing three zeros with no explanation is worse than
@@ -459,6 +509,18 @@ with st.sidebar:
                 st.caption(f"**{role}** → `{binding['provider']}` / `{binding['model']}`")
             st.caption("Edit `config/models.yaml` to change bindings.")
 
+            # On a button, never on every rerun: this page reruns every two
+            # seconds while a run is going, and a check that ran on each of
+            # those would be a call to a paid service twice a second.
+            if st.button("Check the model connection", use_container_width=True):
+                with st.spinner("Asking the model service one short question"):
+                    probe = probe_model_service()
+                if probe is None:
+                    st.success("The model service answered.")
+                else:
+                    st.error(f"{probe.reason} {probe.action}")
+                    st.caption(probe.detail)
+
 
 st.title("RFP intake agent")
 
@@ -487,10 +549,12 @@ if run_id and st.session_state.job_triggered:
         status = json.loads(status_path.read_text())
 
 cml_terminal_failure = cml_state == "failed"
+# A skipped run never started and never will, so it ends the wait like a failure.
+cml_skipped = cml_state == "skipped"
 finished = bool(status and status.get("state") in ("completed", "failed"))
 terminal = finished or (
     st.session_state.job_triggered
-    and (cml_terminal_failure or (status is None and cml_state == "succeeded"))
+    and (cml_terminal_failure or cml_skipped or (status is None and cml_state == "succeeded"))
 )
 
 
@@ -581,16 +645,15 @@ elif status and status.get("state") == "completed":
 # Only their presentation changes.
 elif status and status.get("state") == "failed":
     node = status.get("node")
+    headline, sentence = _failure_words(status)
     _failure_view(
         run_path,
-        f"Review stopped while {_step_label(node).lower()}",
-        "No report was produced. Your files are still here — press try again. If "
-        "it stops a second time, send the run identifier below to your platform "
-        "contact.",
+        headline,
+        sentence,
         documents=status.get("documents") or [],
         node=node,
         cml_status=cml_status,
-        error=status.get("error"),
+        error=(status.get("failure") or {}).get("detail") or status.get("error"),
     )
 
 elif status:
@@ -605,6 +668,18 @@ elif status:
         "Press try again.",
         documents=status.get("documents") or [],
         node=status.get("node"),
+        cml_status=cml_status,
+    )
+
+elif cml_skipped:
+    # CML runs one review at a time and discards a request that arrives while
+    # another is going. Pressing the button twice is the way to get here.
+    _failure_view(
+        run_path,
+        "The review never started — another review was already running",
+        "Only one review runs at a time, so this one was discarded. Your files "
+        "are still here — press try again once the other review has finished.",
+        documents=[],
         cml_status=cml_status,
     )
 

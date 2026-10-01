@@ -16,18 +16,27 @@ Matching is deliberately permissive about the `ENGINE_` prefix and about case,
 and anything unrecognised is reported as unknown rather than quietly treated as
 "still running". A status this module cannot classify is a status the operator
 needs to see.
+
+`ENGINE_SKIPPED` — a run CML never started because another run of the same job
+was still going — was such a status until 2026-09-22, and produced that same
+endless wait. It is now a state of its own.
 """
 
 from __future__ import annotations
 
 from typing import Literal
 
-CmlRunState = Literal["pending", "running", "succeeded", "failed", "unknown"]
+CmlRunState = Literal["pending", "running", "succeeded", "failed", "skipped", "unknown"]
 
 # Substrings, checked against the status with any ENGINE_ prefix removed. The
 # API has added values over time (ENGINE_STOPPING, ENGINE_TIMEDOUT), so matching
 # on a substring rather than an exact set means a new spelling of an existing
 # concept still lands in the right bucket.
+# CML skips a run it will never start, which is not the same as one that ran
+# and failed: on 2026-09-22 run ut0ikf68f4jv48rv came back ENGINE_SKIPPED
+# because run jo4tb8u1un7tsk01 of the same job was still going, 16 seconds
+# older. It has its own state so the application can say why nothing happened.
+_SKIPPED = ("skipped",)
 _FAILED = ("failed", "timedout", "timed_out", "killed", "stopped", "aborted", "error")
 _SUCCEEDED = ("succeeded", "success", "finished", "completed")
 _RUNNING = ("running", "starting", "restarting")
@@ -47,7 +56,10 @@ def classify_cml_status(status: str | None) -> CmlRunState:
     if text.startswith("engine_"):
         text = text[len("engine_") :]
 
-    # Failure is checked first: a status that mentions both (a "stopped" run that
+    for needle in _SKIPPED:
+        if needle in text:
+            return "skipped"
+    # Failure is checked next: a status that mentions both (a "stopped" run that
     # had been "running") is a failure from the operator's point of view.
     for needle in _FAILED:
         if needle in text:
@@ -66,4 +78,4 @@ def classify_cml_status(status: str | None) -> CmlRunState:
 
 def is_terminal(state: CmlRunState) -> bool:
     """Whether the job run has stopped and will not change state again."""
-    return state in ("succeeded", "failed")
+    return state in ("succeeded", "failed", "skipped")

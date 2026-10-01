@@ -112,6 +112,12 @@ class RunError(BaseModel):
     node: str
     task_id: str | None = None
     error: str
+    # "validation" means the model answered and the answer was rejected — the
+    # call itself worked. "call_failed" means the step never got an answer.
+    # job/__init__.py uses the distinction to tell a run that extracted nothing
+    # because the documents were silent from one that extracted nothing because
+    # every LLM call failed.
+    kind: Literal["call_failed", "validation"] = "call_failed"
     timestamp: datetime = Field(default_factory=datetime.now)
 
 
