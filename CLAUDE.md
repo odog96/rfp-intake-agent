@@ -102,12 +102,61 @@ checks every task's field names against the specification, so neither mistake ca
    production is the model that was tested. Blocked on CAII access; the token is short-lived and the
    endpoint is served without the two tool-calling flags named above.
 3. **Improve the front end.** A screenshot, `8-27-app-screenshot.jpg`, was mentioned as the starting
-   point. Asked for 2026-08-27. The Results section with downloads is done; nothing else is specified.
+   point. Asked for 2026-08-27. The Results section with downloads is done. Stage cards are done in
+   `app_v2.py` but not yet live — see the 2026-10-01 entry below. Still unspecified: a past-run
+   browser, the 101 extracted fields shown as a table, and the contradictions shown individually.
 4. **Fix the two extraction problems above** — the phase of a referenced study, and the study
    duration splitting per subject.
 5. **Return `privacy_mode` to `private` and the models to CAII before any customer document.**
    `config/models.yaml` is on `mixed` with Claude Sonnet 4.6 on Bedrock for testing.
 6. Build `audit.json`, the janitor job, and the `rfp_intake.eval` command line.
+
+### Done 2026-10-01: the nine stages as cards, in app_v2.py — built but NOT live
+Oliver said the application felt too minimal and showed a "Document Analytics Research" screenshot as
+inspiration for a different use case. Agreed scope was one change: the pipeline's nine stages drawn as
+cards instead of the single `st.status` line that said only "step 4 of 9". Designed first as a static
+mockup, `docs/mockups/stage-cards.html`, which is the reference design and is not read by the
+application — Streamlit builds its page from Python and never loads an HTML file.
+
+**`app.py` is untouched, and `launch_app.py:36` still starts `app.py`, so the Cloudera AI Application
+still serves the old page.** The new work is a parallel copy, `app_v2.py`. Switching the launcher over
+is a separate decision, deliberately not taken.
+
+`app_v2.py` adds `_stage_palette`, `_stage_states`, `_card_html` and `_stage_cards` after
+`_step_label`, and calls `_stage_cards` from three places: the in-progress view (replacing the
+`st.status` block), `_failure_view`, and `_completion_view` inside a collapsed expander. It reuses
+`_STEPS`, `_NODE_LABELS` and `_STEP_POSITION` rather than restating the stage list, so the nine nodes
+stay defined in one place.
+
+Four constraints the Cloudera AI Application container imposes, all of which this respects and any
+future front-end change must too:
+- **No external request from the browser.** No CDN, no font download. The font stack is named, not
+  fetched. A customer network may block it, and rule 10 above governs egress.
+- **No custom Streamlit component and no new dependency.** A component serves its own JavaScript from
+  its own endpoint, and `launch_app.py` binds `--server.address=127.0.0.1` behind the reverse proxy
+  named by `subdomain:` in `.project-metadata.yaml`, so that endpoint may not be reachable.
+  Styling is one `st.html` call. Verified that works: Streamlit 1.62.0 does not sanitise raw HTML —
+  the string `sanitize` appears zero times in its `StreamlitMarkdown.*.js` bundle.
+- **Everything inline.** No `static/` directory, no absolute asset paths.
+- **The card colours cannot inherit the theme**, because they live in a `<style>` block. `_stage_palette`
+  reads `st.context.theme.type`, falls back to `theme.base`, then to dark. There is no
+  `.streamlit/config.toml` in this project, so the fallback is what runs today.
+
+Tested without a server, per the standing rule that nothing is started on a local port.
+`streamlit.testing.v1.AppTest` ran the whole of `app_v2.py` against two real runs:
+`r-20260923-131601` drew 9 done cards, `r-20261001-031210` drew 10 with `PREFLIGHT` failed and the
+nine below it "Not run". The in-progress view cannot be driven that way — it ends in
+`time.sleep(2)` + `st.rerun()` and never terminates — so its generated HTML was exercised directly
+with a stub Streamlit: 3 done, 1 running, 5 waiting at `EXTRACT`, one pulsing dot, stage order equal
+to `_STEPS`. An unrecognised node name yields nine "waiting" rows rather than raising, matching what
+`_step_label` already does. Error detail from `status.json` is escaped before it reaches the page
+(checked with `<img src=x onerror=...>`). The whole block is about 4.6 KB per rerun, so the
+two-second polling cost is unchanged.
+
+**592 tests passing, 1 skipped — one more than the 591 recorded on 2026-09-30, and not because a test
+was added.** `tests/render/test_report_model.py` is parametrised once per folder in `runs/`, and
+`r-20261001-032936` is a new folder. Nothing in `app_v2.py` has test coverage in the suite; the
+checks above were run by hand, which is the same gap the 2026-09-30 entry records for `Row.reasons`.
 
 ### Done 2026-09-30: report.pdf restructured around what the customer asked for (step 3 of 3)
 Angus Gray read the 2026-09-18 report and asked for four things: the references organised in tables and

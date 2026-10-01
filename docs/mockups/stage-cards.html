@@ -1,0 +1,304 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Stage cards mockup</title>
+<style>
+  /* Streamlit's own dark palette and type stack, so the mockup does not promise
+     a look the Streamlit port cannot deliver. */
+  :root {
+    --bg: #0e1117;
+    --panel: #161a23;
+    --panel-2: #1c212c;
+    --line: #2a3140;
+    --text: #fafafa;
+    --muted: #9aa4b2;
+    --dim: #6b7484;
+    --accent: #ff4b4b;
+    --done: #21c55d;
+    --running: #3b82f6;
+    --fail: #ef4444;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: "Source Sans Pro", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    font-size: 16px;
+    line-height: 1.6;
+  }
+  .wrap { max-width: 880px; margin: 0 auto; padding: 32px 16px 96px; }
+
+  .mockup-note {
+    border: 1px dashed var(--line);
+    border-radius: 8px;
+    padding: 12px 16px;
+    color: var(--muted);
+    font-size: 0.85rem;
+    margin-bottom: 28px;
+  }
+  .mockup-note strong { color: var(--text); }
+
+  h1 { font-size: 2.1rem; font-weight: 700; margin: 0 0 4px; letter-spacing: -0.01em; }
+  .sub { color: var(--muted); font-size: 0.9rem; margin: 0 0 24px; }
+
+  /* State switcher — the only interactive part. */
+  .tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--line); margin-bottom: 28px; flex-wrap: wrap; }
+  .tab {
+    appearance: none; background: none; border: none; cursor: pointer;
+    color: var(--muted); font: inherit; font-size: 0.95rem;
+    padding: 10px 14px; border-bottom: 2px solid transparent; margin-bottom: -1px;
+  }
+  .tab:hover { color: var(--text); }
+  .tab[aria-selected="true"] { color: var(--text); border-bottom-color: var(--accent); }
+
+  .state { display: none; }
+  .state.active { display: block; }
+
+  /* Run header line: what the page says above the cards. */
+  .runline {
+    display: flex; align-items: baseline; justify-content: space-between;
+    gap: 16px; flex-wrap: wrap; margin-bottom: 18px;
+  }
+  .runline .headline { font-size: 1.1rem; font-weight: 600; }
+  .runline .meta { color: var(--dim); font-size: 0.82rem; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+
+  /* The cards. */
+  .cards { display: flex; flex-direction: column; gap: 8px; }
+  .card {
+    display: grid;
+    grid-template-columns: 34px 1fr auto;
+    align-items: center;
+    gap: 14px;
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-left: 3px solid var(--line);
+    border-radius: 8px;
+    padding: 12px 16px;
+  }
+  .card .num {
+    width: 26px; height: 26px; border-radius: 50%;
+    display: grid; place-items: center;
+    font-size: 0.78rem; font-weight: 600;
+    background: var(--panel-2); color: var(--dim);
+    border: 1px solid var(--line);
+  }
+  .card .label { font-size: 0.97rem; font-weight: 500; }
+  /* The engine's own name for the stage, so the wording in the CML Job log and
+     the wording on this page are visibly the same thing. */
+  .card .engine {
+    display: block; font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 0.72rem; color: var(--dim); letter-spacing: 0.04em; margin-top: 1px;
+  }
+  .badge {
+    font-size: 0.72rem; font-weight: 600; letter-spacing: 0.06em;
+    text-transform: uppercase; padding: 3px 9px; border-radius: 999px;
+    border: 1px solid var(--line); color: var(--dim); white-space: nowrap;
+  }
+
+  /* --- per-state styling --- */
+  .card.done { border-left-color: var(--done); }
+  .card.done .num { background: rgba(33,197,93,0.14); color: var(--done); border-color: rgba(33,197,93,0.35); }
+  .card.done .badge { color: var(--done); border-color: rgba(33,197,93,0.35); background: rgba(33,197,93,0.10); }
+
+  .card.running { border-left-color: var(--running); background: var(--panel-2); }
+  .card.running .num { background: rgba(59,130,246,0.16); color: var(--running); border-color: rgba(59,130,246,0.40); }
+  .card.running .label { font-weight: 600; }
+  .card.running .badge { color: var(--running); border-color: rgba(59,130,246,0.40); background: rgba(59,130,246,0.10); }
+
+  .card.waiting { opacity: 0.55; }
+
+  .card.failed { border-left-color: var(--fail); background: rgba(239,68,68,0.06); }
+  .card.failed .num { background: rgba(239,68,68,0.16); color: var(--fail); border-color: rgba(239,68,68,0.40); }
+  .card.failed .badge { color: var(--fail); border-color: rgba(239,68,68,0.40); background: rgba(239,68,68,0.10); }
+
+  /* The pulsing dot on the running card. */
+  .dot {
+    display: inline-block; width: 7px; height: 7px; border-radius: 50%;
+    background: var(--running); margin-right: 7px; vertical-align: 1px;
+    animation: pulse 1.4s ease-in-out infinite;
+  }
+  @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.25; } }
+  @media (prefers-reduced-motion: reduce) { .dot { animation: none; } }
+
+  /* Error text, shown on the card that failed rather than only in a banner. */
+  .card-error {
+    grid-column: 2 / -1;
+    color: #fca5a5; font-size: 0.86rem; line-height: 1.5;
+    border-top: 1px solid rgba(239,68,68,0.25); margin-top: 10px; padding-top: 10px;
+  }
+  .card-error code {
+    display: block; margin-top: 6px; color: var(--dim);
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.74rem;
+    white-space: pre-wrap; word-break: break-word;
+  }
+
+  /* The preflight card sits above the nine; it is not one of them. */
+  .preflight { margin-bottom: 8px; }
+  .preflight .num { font-size: 0.9rem; }
+  .divider { color: var(--dim); font-size: 0.74rem; letter-spacing: 0.08em;
+             text-transform: uppercase; margin: 16px 0 8px; }
+
+  /* Completion banner + the three numbers the finished page already shows. */
+  .banner {
+    border-radius: 8px; padding: 12px 16px; font-size: 0.93rem;
+    background: rgba(33,197,93,0.12); border: 1px solid rgba(33,197,93,0.30);
+    color: #bbf7d0; margin-bottom: 20px;
+  }
+  .banner.bad { background: rgba(239,68,68,0.10); border-color: rgba(239,68,68,0.30); color: #fecaca; }
+  .metrics { display: flex; gap: 40px; flex-wrap: wrap; margin-bottom: 24px; }
+  .metric .k { color: var(--muted); font-size: 0.82rem; }
+  .metric .v { font-size: 1.9rem; font-weight: 600; line-height: 1.2; }
+
+  .ghost-dl { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 4px; }
+  .ghost-dl span {
+    border: 1px solid var(--line); border-radius: 6px; padding: 6px 12px;
+    font-size: 0.85rem; color: var(--muted);
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <div class="mockup-note">
+    <strong>Mockup, not the application.</strong> Nothing here is live — no documents are
+    read and no run is started. Every stage name comes from <code>app.py:117-127</code>,
+    and the numbers and the error text come from real runs:
+    <code>r-20260923-131601</code> (completed) and <code>r-20261001-031210</code> (failed).
+    Four states are shown so every case can be seen at once; the real page shows one.
+  </div>
+
+  <h1>RFP intake agent</h1>
+  <p class="sub">Upload an RFP and its protocol. You get a review report back.</p>
+
+  <div class="tabs" role="tablist">
+    <button class="tab" role="tab" aria-selected="true"  data-state="running">Running</button>
+    <button class="tab" role="tab" aria-selected="false" data-state="preflight">Checking the model service</button>
+    <button class="tab" role="tab" aria-selected="false" data-state="failed">Failed</button>
+    <button class="tab" role="tab" aria-selected="false" data-state="complete">Complete</button>
+  </div>
+
+  <!-- ============ Running: EXTRACT in progress ============ -->
+  <section class="state active" id="state-running">
+    <div class="runline">
+      <div class="headline">Reviewing your documents</div>
+      <div class="meta">r-20260923-131601 · step 4 of 9 · 3m 12s elapsed</div>
+    </div>
+    <div class="cards">
+      <div class="card done"><span class="num">✓</span><span class="label">Reading documents<span class="engine">INGEST</span></span><span class="badge">Done</span></div>
+      <div class="card done"><span class="num">✓</span><span class="label">Identifying document types<span class="engine">CLASSIFY</span></span><span class="badge">Done</span></div>
+      <div class="card done"><span class="num">✓</span><span class="label">Planning the extraction<span class="engine">PLAN</span></span><span class="badge">Done</span></div>
+      <div class="card running"><span class="num">4</span><span class="label">Pulling out study details<span class="engine">EXTRACT</span></span><span class="badge"><span class="dot"></span>Running</span></div>
+      <div class="card waiting"><span class="num">5</span><span class="label">Standardising values<span class="engine">NORMALIZE</span></span><span class="badge">Waiting</span></div>
+      <div class="card waiting"><span class="num">6</span><span class="label">Comparing the documents<span class="engine">RECONCILE</span></span><span class="badge">Waiting</span></div>
+      <div class="card waiting"><span class="num">7</span><span class="label">Resolving disagreements<span class="engine">ADJUDICATE</span></span><span class="badge">Waiting</span></div>
+      <div class="card waiting"><span class="num">8</span><span class="label">Calculating derived values<span class="engine">DERIVE</span></span><span class="badge">Waiting</span></div>
+      <div class="card waiting"><span class="num">9</span><span class="label">Final checks<span class="engine">GATE</span></span><span class="badge">Waiting</span></div>
+    </div>
+  </section>
+
+  <!-- ============ Preflight: before stage 1 ============ -->
+  <section class="state" id="state-preflight">
+    <div class="runline">
+      <div class="headline">Starting the review</div>
+      <div class="meta">r-20261001-032936 · 4s elapsed</div>
+    </div>
+    <div class="cards">
+      <div class="card running preflight">
+        <span class="num">⚡</span>
+        <span class="label">Checking the model service<span class="engine">PREFLIGHT</span></span>
+        <span class="badge"><span class="dot"></span>Running</span>
+      </div>
+    </div>
+    <div class="divider">Then nine stages</div>
+    <div class="cards">
+      <div class="card waiting"><span class="num">1</span><span class="label">Reading documents<span class="engine">INGEST</span></span><span class="badge">Waiting</span></div>
+      <div class="card waiting"><span class="num">2</span><span class="label">Identifying document types<span class="engine">CLASSIFY</span></span><span class="badge">Waiting</span></div>
+      <div class="card waiting"><span class="num">3</span><span class="label">Planning the extraction<span class="engine">PLAN</span></span><span class="badge">Waiting</span></div>
+      <div class="card waiting"><span class="num">4</span><span class="label">Pulling out study details<span class="engine">EXTRACT</span></span><span class="badge">Waiting</span></div>
+      <div class="card waiting"><span class="num">5</span><span class="label">Standardising values<span class="engine">NORMALIZE</span></span><span class="badge">Waiting</span></div>
+      <div class="card waiting"><span class="num">6</span><span class="label">Comparing the documents<span class="engine">RECONCILE</span></span><span class="badge">Waiting</span></div>
+      <div class="card waiting"><span class="num">7</span><span class="label">Resolving disagreements<span class="engine">ADJUDICATE</span></span><span class="badge">Waiting</span></div>
+      <div class="card waiting"><span class="num">8</span><span class="label">Calculating derived values<span class="engine">DERIVE</span></span><span class="badge">Waiting</span></div>
+      <div class="card waiting"><span class="num">9</span><span class="label">Final checks<span class="engine">GATE</span></span><span class="badge">Waiting</span></div>
+    </div>
+  </section>
+
+  <!-- ============ Failed: the real Bedrock failure ============ -->
+  <section class="state" id="state-failed">
+    <div class="runline">
+      <div class="headline">Run failed</div>
+      <div class="meta">r-20261001-031210 · failed after 1s</div>
+    </div>
+    <div class="banner bad">
+      AWS Bedrock refused the access key this project is using. This is not a problem
+      with your documents. An administrator needs to check the AWS Bedrock credential,
+      then the review can be run again.
+    </div>
+    <div class="cards">
+      <div class="card failed preflight">
+        <span class="num">✕</span>
+        <span class="label">Checking the model service<span class="engine">PREFLIGHT</span></span>
+        <span class="badge">Failed</span>
+        <div class="card-error">
+          AWS Bedrock refused the access key this project is using.
+          <code>AccessDeniedException: An error occurred (AccessDeniedException) when calling the Converse operation: Invalid API Key format: Must start with pre-defined prefix</code>
+        </div>
+      </div>
+    </div>
+    <div class="divider">Never started</div>
+    <div class="cards">
+      <div class="card waiting"><span class="num">1</span><span class="label">Reading documents<span class="engine">INGEST</span></span><span class="badge">Not run</span></div>
+      <div class="card waiting"><span class="num">2</span><span class="label">Identifying document types<span class="engine">CLASSIFY</span></span><span class="badge">Not run</span></div>
+      <div class="card waiting"><span class="num">3</span><span class="label">Planning the extraction<span class="engine">PLAN</span></span><span class="badge">Not run</span></div>
+      <div class="card waiting"><span class="num">4</span><span class="label">Pulling out study details<span class="engine">EXTRACT</span></span><span class="badge">Not run</span></div>
+      <div class="card waiting"><span class="num">5</span><span class="label">Standardising values<span class="engine">NORMALIZE</span></span><span class="badge">Not run</span></div>
+      <div class="card waiting"><span class="num">6</span><span class="label">Comparing the documents<span class="engine">RECONCILE</span></span><span class="badge">Not run</span></div>
+      <div class="card waiting"><span class="num">7</span><span class="label">Resolving disagreements<span class="engine">ADJUDICATE</span></span><span class="badge">Not run</span></div>
+      <div class="card waiting"><span class="num">8</span><span class="label">Calculating derived values<span class="engine">DERIVE</span></span><span class="badge">Not run</span></div>
+      <div class="card waiting"><span class="num">9</span><span class="label">Final checks<span class="engine">GATE</span></span><span class="badge">Not run</span></div>
+    </div>
+  </section>
+
+  <!-- ============ Complete: all nine done ============ -->
+  <section class="state" id="state-complete">
+    <div class="runline">
+      <div class="headline">Review complete</div>
+      <div class="meta">r-20260923-131601 · 7m 37s</div>
+    </div>
+    <div class="banner">✅ Review complete · 2 documents read</div>
+    <div class="metrics">
+      <div class="metric"><div class="k">Fields filled</div><div class="v">99 of 101</div></div>
+      <div class="metric"><div class="k">Need a human check</div><div class="v">20</div></div>
+      <div class="metric"><div class="k">Disagreements found</div><div class="v">8</div></div>
+    </div>
+    <div class="cards">
+      <div class="card done"><span class="num">✓</span><span class="label">Reading documents<span class="engine">INGEST</span></span><span class="badge">Done</span></div>
+      <div class="card done"><span class="num">✓</span><span class="label">Identifying document types<span class="engine">CLASSIFY</span></span><span class="badge">Done</span></div>
+      <div class="card done"><span class="num">✓</span><span class="label">Planning the extraction<span class="engine">PLAN</span></span><span class="badge">Done</span></div>
+      <div class="card done"><span class="num">✓</span><span class="label">Pulling out study details<span class="engine">EXTRACT</span></span><span class="badge">Done</span></div>
+      <div class="card done"><span class="num">✓</span><span class="label">Standardising values<span class="engine">NORMALIZE</span></span><span class="badge">Done</span></div>
+      <div class="card done"><span class="num">✓</span><span class="label">Comparing the documents<span class="engine">RECONCILE</span></span><span class="badge">Done</span></div>
+      <div class="card done"><span class="num">✓</span><span class="label">Resolving disagreements<span class="engine">ADJUDICATE</span></span><span class="badge">Done</span></div>
+      <div class="card done"><span class="num">✓</span><span class="label">Calculating derived values<span class="engine">DERIVE</span></span><span class="badge">Done</span></div>
+      <div class="card done"><span class="num">✓</span><span class="label">Final checks<span class="engine">GATE</span></span><span class="badge">Done</span></div>
+    </div>
+    <div class="divider">Downloads (already built — unchanged by this mockup)</div>
+    <div class="ghost-dl"><span>report.pdf</span><span>report.xlsx</span><span>extraction.json</span></div>
+  </section>
+
+</div>
+
+<script>
+  // The only script: switch which of the four states is shown.
+  const tabs = document.querySelectorAll('.tab');
+  tabs.forEach(tab => tab.addEventListener('click', () => {
+    tabs.forEach(t => t.setAttribute('aria-selected', String(t === tab)));
+    document.querySelectorAll('.state').forEach(s => s.classList.remove('active'));
+    document.getElementById('state-' + tab.dataset.state).classList.add('active');
+  }));
+</script>
+</body>
+</html>
