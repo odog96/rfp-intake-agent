@@ -1,0 +1,217 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>RFP intake agent — user interface mockup, version 2</title>
+<style>
+  :root {
+    --bg: #0e1117; --panel: #161b22; --panel2: #1c2230; --line: #2a3140;
+    --text: #e6edf3; --muted: #8b98a9; --dim: #6b7684;
+    --ok: #3fb950; --warn: #d29922; --bad: #f85149; --accent: #4a8fe0;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; padding: 40px 24px 72px; background: #05070b; color: var(--text);
+    font-family: "Source Sans 3", "Segoe UI", system-ui, -apple-system, sans-serif;
+    font-size: 15px; line-height: 1.6; }
+  .wrap { max-width: 1080px; margin: 0 auto; }
+  .note { color: var(--muted); font-size: 14px; margin: 0 0 30px; max-width: 74ch; }
+  .note strong { color: var(--text); font-weight: 500; }
+  .caption { color: var(--dim); font-size: 13px; margin: 0 0 10px; }
+  .label { font-size: 13px; color: var(--muted); margin: 32px 0 10px; }
+  .label b { color: var(--text); font-weight: 500; }
+  .screen { display: flex; background: var(--bg); border: 1px solid var(--line);
+    border-radius: 10px; overflow: hidden; margin: 0 0 12px; }
+  .side { width: 210px; flex: 0 0 210px; background: var(--panel);
+    border-right: 1px solid var(--line); padding: 20px 16px; }
+  .side h4 { margin: 0 0 12px; font-size: 13px; font-weight: 500; color: var(--muted); }
+  .main { flex: 1; min-width: 0; padding: 26px 30px 30px; }
+  h1 { font-size: 26px; font-weight: 500; margin: 0 0 4px; }
+  .sub { color: var(--muted); font-size: 14px; margin: 0 0 22px; }
+  .pill { border-radius: 6px; padding: 8px 10px; font-size: 13px; margin: 0 0 10px;
+    background: rgba(210,153,34,.13); color: #e3b341; border: 1px solid rgba(210,153,34,.3); }
+  .disc { color: var(--dim); font-size: 12px; margin: 0 0 16px; line-height: 1.5; }
+  .exp { border-top: 1px solid var(--line); padding-top: 12px; color: var(--muted); font-size: 13px; }
+  .exp::before { content: "\25B8  "; color: var(--dim); }
+  .uploader { border: 1px dashed var(--line); background: var(--panel); border-radius: 8px;
+    padding: 12px 14px; margin: 0 0 14px; }
+  .file { display: flex; align-items: center; gap: 10px; font-size: 13px; padding: 7px 0; }
+  .file + .file { border-top: 1px solid var(--line); }
+  .file .name { flex: 1; }
+  .file .size { color: var(--dim); font-size: 12px; }
+  .btn { display: inline-block; border: 1px solid var(--line); background: var(--panel2);
+    color: var(--text); border-radius: 6px; padding: 8px 16px; font-size: 14px; }
+  .btn.quiet { background: transparent; color: var(--muted); }
+  .status { background: var(--panel); border: 1px solid var(--line); border-radius: 8px;
+    padding: 15px 16px; margin-top: 16px; }
+  .status .head { display: flex; align-items: center; gap: 9px; margin: 0 0 13px; font-size: 14px; }
+  .status .head .rid { margin-left: auto; font-family: ui-monospace, Menlo, monospace;
+    font-size: 12px; color: var(--dim); }
+  .bar { height: 5px; background: #0b0f16; border-radius: 3px; overflow: hidden; margin: 0 0 9px; }
+  .bar i { display: block; height: 100%; background: var(--accent); }
+  .docs { border-top: 1px solid var(--line); margin-top: 12px; padding-top: 10px; font-size: 13px; }
+  .docs div { display: flex; gap: 9px; align-items: center; padding: 4px 0; }
+  .docs .name { flex: 1; }
+  .docs .st { color: var(--dim); font-size: 12px; }
+  .done { display: flex; align-items: center; gap: 9px; font-size: 14px; margin: 0 0 16px; }
+  .metrics { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; margin: 0 0 16px; }
+  .metric { background: var(--panel); border-radius: 8px; padding: 15px 16px; }
+  .metric .lab { font-size: 13px; color: var(--muted); margin: 0 0 5px; }
+  .metric .val { font-size: 28px; font-weight: 500; line-height: 1.1; margin: 0; }
+  .metric .of { font-size: 15px; color: var(--dim); font-weight: 400; }
+  .banner { border-radius: 8px; padding: 12px 14px; font-size: 13.5px; margin: 0 0 18px; }
+  .banner.warn { background: rgba(210,153,34,.11); border: 1px solid rgba(210,153,34,.28); color: #e3b341; }
+  .banner.bad { background: rgba(248,81,73,.10); border: 1px solid rgba(248,81,73,.28); color: #ff7b72; }
+  .banner .h { font-weight: 500; display: block; margin: 0 0 5px; font-size: 14px; }
+  .dl { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin: 0 0 18px; }
+  .dl div { border: 1px solid var(--line); background: var(--panel2); border-radius: 6px;
+    padding: 9px; text-align: center; font-size: 13.5px; }
+  .foot { display: flex; align-items: center; gap: 16px; border-top: 1px solid var(--line);
+    padding-top: 14px; font-size: 13px; color: var(--muted); }
+  .foot .rid { font-family: ui-monospace, Menlo, monospace; font-size: 12px; color: var(--dim); }
+  .foot .last { margin-left: auto; color: var(--accent); }
+  .tech { background: var(--panel); border-radius: 6px; padding: 12px 14px;
+    font-family: ui-monospace, Menlo, monospace; font-size: 12px; color: var(--muted); line-height: 1.9; }
+  .tech .err { color: #ff7b72; }
+  .ok { color: var(--ok); } .warnt { color: var(--warn); } .badt { color: var(--bad); }
+  .dimt { color: var(--dim); }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <p class="note"><strong>Mockup only — version 2, 31 August 2026.</strong>
+  Four states of the Cloudera AI Application page, matching
+  <code>docs/UI_SPEC.md</code> version 2. Colours and spacing approximate Streamlit's dark
+  theme; they are not a pixel target. Sample values come from the NEOD001 test pair.
+  This file is documentation and is never served to users. It replaces the earlier
+  two-state mockup.</p>
+
+  <p class="label"><b>State A</b> — a run in progress. Specification sections 3 and 4.</p>
+  <div class="screen">
+    <div class="side">
+      <h4>Environment</h4>
+      <div class="pill">&#9650; Mixed mode — document text may leave the environment</div>
+      <p class="disc">Non-sensitive or synthetic documents only. Never production data.</p>
+      <div class="exp">Model routing</div>
+    </div>
+    <div class="main">
+      <h1>RFP intake agent</h1>
+      <p class="sub">Upload an RFP and its protocol. You get a review report back.</p>
+      <div class="uploader">
+        <div class="file"><span class="dimt">&#9635;</span><span class="name">Synthetic_RFP_NEOD001.pdf</span><span class="size">84 KB</span></div>
+        <div class="file"><span class="dimt">&#9635;</span><span class="name">Example_Protocol_2.pdf</span><span class="size">2.6 MB</span></div>
+      </div>
+      <span class="btn">Start review</span>
+      <div class="status">
+        <div class="head"><span class="ok">&#9679;</span><span>Comparing the documents</span><span class="rid">r-20260831-111036</span></div>
+        <div class="bar"><i style="width:64%"></i></div>
+        <p class="caption" style="margin:0">29 of 45 fields extracted &middot; step 6 of 9</p>
+        <div class="docs">
+          <div><span class="ok">&#10003;</span><span class="name">Synthetic_RFP_NEOD001.pdf</span><span class="st">read, 12 pages</span></div>
+          <div><span class="ok">&#10003;</span><span class="name">Example_Protocol_2.pdf</span><span class="st">read, 148 pages</span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <p class="label"><b>State B</b> — the run finished and produced a report. Specification section 5.</p>
+  <div class="screen">
+    <div class="side">
+      <h4>Environment</h4>
+      <div class="pill">&#9650; Mixed mode — document text may leave the environment</div>
+      <p class="disc">Non-sensitive or synthetic documents only. Never production data.</p>
+      <div class="exp">Model routing</div>
+    </div>
+    <div class="main">
+      <h1>RFP intake agent</h1>
+      <div class="done"><span class="ok">&#10003;</span><span>Review complete &middot; 2 documents, 160 pages, 4 min 12 s</span></div>
+      <div class="metrics">
+        <div class="metric"><p class="lab">Fields filled</p><p class="val">38 <span class="of">of 45</span></p></div>
+        <div class="metric"><p class="lab">Need a human check</p><p class="val warnt">7</p></div>
+        <div class="metric"><p class="lab">Disagreements found</p><p class="val badt">3</p></div>
+      </div>
+      <div class="banner warn">The RFP and the protocol disagree in 3 places, including study duration.
+        Each one is listed with its page references in the report.</div>
+      <div class="dl">
+        <div>&#8595; Report (PDF)</div><div>&#8595; Report (Excel)</div><div>&#8595; Extracted data (JSON)</div>
+      </div>
+      <div class="foot">
+        <span class="exp" style="border:0; padding:0">Run details</span>
+        <span class="rid">r-20260831-111036</span>
+        <span class="last">Start another review</span>
+      </div>
+    </div>
+  </div>
+
+  <p class="label"><b>State C</b> — the run failed and produced nothing. Specification section 6.
+  The headline changes with the failure condition; the layout does not.</p>
+  <div class="screen">
+    <div class="side">
+      <h4>Environment</h4>
+      <div class="pill">&#9650; Mixed mode — document text may leave the environment</div>
+      <p class="disc">Non-sensitive or synthetic documents only. Never production data.</p>
+      <div class="exp">Model routing</div>
+    </div>
+    <div class="main">
+      <h1>RFP intake agent</h1>
+      <div class="banner bad">
+        <span class="h">&#9888; Review stopped while comparing the documents</span>
+        No report was produced. Your files are still here — press try again. If it stops a
+        second time, send the run identifier below to your platform contact.
+      </div>
+      <div class="uploader">
+        <div class="file"><span class="dimt">&#9635;</span><span class="name">Synthetic_RFP_NEOD001.pdf</span><span class="size">read, 12 pages</span></div>
+        <div class="file"><span class="dimt">&#9635;</span><span class="name">Example_Protocol_2.pdf</span><span class="size">read, 148 pages</span></div>
+      </div>
+      <div style="display:flex; gap:10px; margin-bottom:18px;">
+        <span class="btn">Try again</span>
+        <span class="btn quiet">Start over with different files</span>
+      </div>
+      <div style="border-top:1px solid var(--line); padding-top:14px;">
+        <p class="exp" style="border:0; padding:0; margin:0 0 10px;">Run details</p>
+        <div class="tech">
+          <div>run id&nbsp;&nbsp;r-20260831-111036</div>
+          <div>job run&nbsp;&nbsp;dl9k-2h71-xxvb-0042</div>
+          <div>stopped at&nbsp;&nbsp;RECONCILE</div>
+          <div>cml status&nbsp;&nbsp;ENGINE_SUCCEEDED</div>
+          <div class="err">KeyError: 'study_duration_months'</div>
+        </div>
+        <p class="caption" style="margin:10px 0 0;">Full logs are in the Job Runs tab of the Cloudera AI project.</p>
+      </div>
+    </div>
+  </div>
+
+  <p class="label"><b>State D</b> — the run finished but one document could not be read.
+  Specification section 7. This is state B with an amber tick and one extra sentence. It is
+  not an error and is not drawn in red.</p>
+  <div class="screen">
+    <div class="side">
+      <h4>Environment</h4>
+      <div class="pill">&#9650; Mixed mode — document text may leave the environment</div>
+      <p class="disc">Non-sensitive or synthetic documents only. Never production data.</p>
+      <div class="exp">Model routing</div>
+    </div>
+    <div class="main">
+      <h1>RFP intake agent</h1>
+      <div class="done"><span class="warnt">&#10003;</span><span>Review complete, with 1 document missing &middot; 1 document, 12 pages, 2 min 05 s</span></div>
+      <div class="metrics">
+        <div class="metric"><p class="lab">Fields filled</p><p class="val">21 <span class="of">of 45</span></p></div>
+        <div class="metric"><p class="lab">Need a human check</p><p class="val warnt">9</p></div>
+        <div class="metric"><p class="lab">Disagreements found</p><p class="val">0</p></div>
+      </div>
+      <div class="banner warn">Example_Protocol_2.pdf could not be read, so the report was built
+        from the remaining document only. Fields that would have come from it are marked not found.</div>
+      <div class="dl">
+        <div>&#8595; Report (PDF)</div><div>&#8595; Report (Excel)</div><div>&#8595; Extracted data (JSON)</div>
+      </div>
+      <div class="foot">
+        <span class="exp" style="border:0; padding:0">Run details</span>
+        <span class="rid">r-20260831-114402</span>
+        <span class="last">Start another review</span>
+      </div>
+    </div>
+  </div>
+
+</div>
+</body>
+</html>
