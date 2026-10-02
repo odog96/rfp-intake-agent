@@ -4,6 +4,17 @@ Stage 4 of `docs/PLAN_2026-10-02.md`. The rules in the system prompt are
 `docs/ANALYST_PROCEDURE_PROTOCOL.md` section 8, which is Angus Gray describing
 how he tells the study he is costing from the ones a protocol mentions in
 passing.
+
+**The subject test, added 2026-10-02 after live run `r-20261002-213531-stage4`.**
+That run's five `mixed` removals included three sentences about this study: the
+plan to pool this study's own serum samples in a population PK analysis
+(synopsis p.24, section 3.4.1.4.8.5 p.46 and section 10.5 p.97), this study's
+own progression-confirmation procedure (Appendix 1 p.109) and this study's own
+0.03 ng/mL stratification threshold (Appendix 2 p.110). Each names outside work
+and the model read "mentions another study" as "is about another study". The
+prompt now says to judge a sentence by its subject, and carries those sentences
+as worked examples of what to keep. The sentences are listed in this plan's
+stage 4 test so a later run cannot lose the check.
 """
 
 from __future__ import annotations
@@ -25,7 +36,8 @@ DIFFERENT study.
 THIS STUDY is identified as:
 {identity}
 
-A passage describes a DIFFERENT study when it:
+A passage describes a DIFFERENT study when the passage is itself about that \
+other study — when it:
 - describes a study that is ongoing or already completed,
 - gives a study number other than this study's,
 - gives a phase or a design different from this study's,
@@ -33,11 +45,33 @@ A passage describes a DIFFERENT study when it:
 happened.
 
 Prior drug experience, nonclinical work and published literature are about \
-different studies even when they are about the same drug.
+different studies when the passage is reporting what those studies did or \
+found, even when they are about the same drug.
 
-A passage still describes THIS study when it only refers to another study as \
-background without taking any fact from it, and when it states this study's own \
-design, population, visits, drug handling or procedures.
+JUDGE A SENTENCE BY WHAT IT IS ABOUT, NOT BY WHAT IT MENTIONS. A sentence \
+belongs to THIS study whenever this study is its subject, however many other \
+studies, authors or publications the sentence names. A sentence belongs to THIS \
+study when it:
+- says what will be done with this study's own samples, data or measurements, \
+including pooling them with samples or data from other studies,
+- states a procedure, assessment, visit or judgement this study's \
+investigators or staff will carry out,
+- states a number this study will use — a threshold, a limit, a criterion — \
+even when it cites the paper the number was taken or adapted from,
+- gives the source of one of this study's own tables, values or criteria.
+
+These real sentences were all removed wrongly from a protocol. Every one of \
+them belongs to THIS study and must be kept:
+- "Serum concentrations from this study will be pooled with data from similar \
+samples from other studies in a population PK analysis." — this study's own \
+analysis plan.
+- "A repeated assessment at an interval that is determined by the investigator \
+is required to confirm the progression." — this study's own procedure.
+- "Modified from the value of 0.025 ng/mL cited in Kumar et al, to 0.03 ng/mL, \
+which is the lowest validated determination for this commercially available \
+test." — this study's own threshold.
+- "Source: Palladini 2014." and "Modified from Table 2 in Comenzo 2012." — a \
+citation for this study's own table.
 
 Answer for each section with one of:
 - this_study: every part of the section is about this study.
@@ -48,8 +82,11 @@ about a different study.
 For `mixed`, and ONLY for `mixed`, also return those sentences in \
 `other_study_sentences`, copied character-for-character from the section text. \
 Each is checked against the text and a sentence that does not match is kept, not \
-removed. Copy whole sentences. Do not paraphrase, do not shorten, and do not \
-return a sentence that states a fact about this study.
+removed. Copy whole sentences. Do not paraphrase and do not shorten.
+
+Return a sentence only when that sentence, read on its own, is about the other \
+study. If the sentence would still be true and still be needed for this study \
+with the other study's name taken out of it, do not return it.
 
 Give a `reason` of one sentence for every section, including `this_study`.
 

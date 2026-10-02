@@ -18,7 +18,7 @@ against it anyway).
 Phases 0–4 of ARCHITECTURE.md §10 are done, and stages 1, 2, 3 and 4 of `docs/PLAN_2026-10-02.md`. Graph
 topology today:
 `INGEST → CLASSIFY → FIND_SECTIONS → SET_ASIDE_SECTIONS → MARK_OTHER_STUDY → PLAN → EXTRACT → NORMALIZE → RECONCILE → ADJUDICATE → DERIVE → GATE`,
-then RENDER runs after the graph finishes (see the deviations below). 800 tests passing, 1 skipped.
+then RENDER runs after the graph finishes (see the deviations below). 806 tests passing, 1 skipped.
 Pushed to https://github.com/odog96/rfp-intake-agent.git. The push is done from a terminal by
 Oliver, from inside the repository directory — this session's credentials cannot do it.
 
@@ -32,12 +32,14 @@ Claude Sonnet 4.6 on AWS Bedrock (`us.anthropic.claude-sonnet-4-6`), `privacy_mo
 **Testing only** — Bedrock is outside the customer boundary, so synthetic and publicly-registered
 documents only, per rule 5 below. Production is CAII and `privacy_mode: private`.
 
-On the two-document test pair, the current baseline run `r-20261002-213531-stage4` (2026-10-02) gave
-**27 of the 36 registry fields at least one confirmed row**, in 9m10s, with 8 contradiction clusters and
-27 EXTRACT errors, and caught the planted `timeline.total_duration` disagreement. Quote that first figure
-when comparing runs. The previous baseline, `r-20261002-200521-stage2`, gave 26 of 36 in 5m56s with 12
-clusters and 5 EXTRACT errors; the stage 2 entry below has its full table, and the stage 4 entry explains
-why the error count moved and why it is not yet attributed to a stage.
+On the two-document test pair, the current baseline run `r-20261002-222824-stage4b` (2026-10-02) gave
+**27 of the 36 registry fields at least one confirmed row**, in 9m03s, with 9 contradiction clusters and
+22 EXTRACT errors, and caught the planted `timeline.total_duration` disagreement. Quote that first figure
+when comparing runs. Two earlier runs matter for comparison: `r-20261002-213531-stage4`, the first run
+with MARK_OTHER_STUDY, gave 27 of 36 in 9m10s with 8 clusters and 27 EXTRACT errors but removed three
+sentences about this study; and `r-20261002-200521-stage2` gave 26 of 36 in 5m56s with 12 clusters and
+5 EXTRACT errors. The stage 2 entry below has the stage 2 table, and the stage 4 entries explain why the
+error count moved and why it is still not attributed to a stage.
 
 An earlier version of this line claimed "108 confirmed fields", which was never comparable to anything:
 `config/fields.yaml` defines 36 fields, and 108 was a count of field × scope rows under the August
@@ -155,10 +157,16 @@ checks every task's field names against the specification, so neither mistake ca
    removing "Background" and "Rationale" from the `phase_population` search hints, which the plan held
    back until stage 4 had passed on its own. The study duration splitting per subject is the other
    extraction problem and is half fixed — see known problem 2 above.
-4a. **Find out why EXTRACT dropped 27 records in run `r-20261002-213531-stage4` where the previous
-   baseline dropped 5.** All 27 are `quote_not_found_in_excerpt`, 9 of them `visits.frequency_by_period`.
-   The stage 4 entry below lists what is and is not known; the first thing to check is whether a `mixed`
-   removal's `"\n\n"` gap inside PROTOCOL SYNOPSIS breaks quotes for the visits and timelines groups.
+4a. **Find out why EXTRACT dropped 22 records in run `r-20261002-222824-stage4b` where the baseline
+   before MARK_OTHER_STUDY dropped 5.** 21 of the 22 are `quote_not_found_in_excerpt`, 8 of them
+   `visits.frequency_by_period` on the protocol and 5 `ops.monitoring_visits` on the RFP.
+   **MARK_OTHER_STUDY is now largely ruled out as the cause.** Run `r-20261002-222824-stage4b` makes one
+   removal of 1,084 characters, against the previous run's eight removals of 6,458 characters, and the
+   count only fell from 27 to 22. The gap of 17 against the stage 2 baseline survives a run that removes
+   almost nothing, and 5 of the 22 are on the synthetic RFP, where nothing is removed at all. So check
+   SET_ASIDE_SECTIONS next, not MARK_OTHER_STUDY: `r-20261002-213531-stage4` was the first live run to
+   include it, PLAN made 32 tasks against the stage 2 baseline's 26, and a section set aside between
+   PLAN's scoring and EXTRACT's excerpt would produce exactly this error.
 5. **Return `privacy_mode` to `private` and the models to CAII before any customer document.**
    `config/models.yaml` is on `mixed` with Claude Sonnet 4.6 on Bedrock for testing.
 6. Build `audit.json`, the janitor job, and the `rfp_intake.eval` command line.
@@ -287,6 +295,49 @@ mechanism worth checking first is the removal gap: a `mixed` removal inside PROT
 longer be found. That is a hypothesis, not a finding — nothing has been measured. The field-level
 outcome went up, not down (27 fields against 26, 74 confirmed rows against 62), which is why this is
 recorded as the next thing to chase rather than as a regression that blocks the stage.
+
+### Done 2026-10-02: Stage 4, second pass — the subject test in MARK_OTHER_STUDY's prompt
+**Three of the five single-sentence removals above were about this study, not a different one.** Read
+one by one, the five `mixed` removals from `r-20261002-213531-stage4` split three to two: the pooled
+pharmacokinetic analysis sentence (PROTOCOL SYNOPSIS p.24, section 3.4.1.4.8.5 p.46, section 10.5
+p.97), this study's own progression-confirmation procedure (Appendix 1 p.109, 370 characters) and this
+study's own 0.03 ng/mL stratification threshold (Appendix 2 p.110, 158 characters) all have this study
+as their subject and each one names outside work; the rest were bare citations. The model had read
+"mentions another study" as "is about another study". The progression sentence is the one that mattered
+most — it requires a repeated assessment at an interval the investigator sets, which is a visit a budget
+carries.
+
+**What changed: one prompt, no code.** `other_study/prompt.py` now says to judge a sentence by what it
+is about rather than by what it mentions, lists the four shapes that keep a sentence with this study
+(this study's samples including pooled ones, its procedures, its own numbers however they are cited, and
+the sources of its own tables), carries those three real sentences as worked examples of what to keep,
+and narrows the published-literature rule from "even when about the same drug" to "when the passage is
+reporting what those studies did or found" — which still catches 1.3.2. Six tests in
+`tests/other_study/test_other_study.py::TestThePrompt` hold each rule, including one that the
+literature rule still bites, so a later edit cannot quietly lose 1.3.2. The five cases are written into
+the stage 4 test in `docs/PLAN_2026-10-02.md`, which is the version a person should read.
+
+**Live run `r-20261002-222824-stage4b` passed all four criteria.** None of the three sentences was
+removed. Section 1.3.2 is still removed and still in the report's Appendix C. `study.phase` is one
+`phase_3` row, `confirmed`, confidence 1.0, from Amendment p.11 and RFP p.2, with no `phase_1_2` row
+anywhere. 27 of 36 fields keep a confirmed row, equal to the previous run and above the floor of 26.
+
+**One real change beyond the three sentences: the run now removes 1,084 characters, not 6,458.** 1.3.2
+is cut as five sentences on p.39 rather than as a whole section across p.39–40, and the two nonclinical
+sections — 1.3 Background on NEOD001 and Figure 1 — are now kept. The five sentences cut from 1.3.2 are
+the ones that carry the harm: the Phase 1/2 study number NEOD001-001, the 30 September 2015 data cutoff,
+the 27 and 42 subject counts and the adverse-event summary. Keeping 1.3 and Figure 1 is a loosening,
+and stage 5's first step — removing "Background" and "Rationale" from the `phase_population` search
+hints — is the other half of the same fix, so it now matters more than it did. Resolved rows fell from
+97 to 88 and clusters went 8 to 9; the new cluster is `monitoring.strategy_guidance`, verdict
+`not_a_conflict`, so nothing was broken by it.
+
+**806 tests passing, 1 skipped** — six more than the 800 after the first stage 4 pass, and the six are
+the new `TestThePrompt` cases. Do not read that as the whole arithmetic.
+`tests/render/test_report_model.py` is parametrised per run folder, and it now collects 17 cases from
+the 26 folders in `runs/`, so the new folder should have made seven. It did not, and which older folder
+stopped being collected has not been chased. Recount from the pytest summary line rather than adding to
+this number.
 
 ### Done 2026-10-02: Stage 3 — SET_ASIDE_SECTIONS, the sections an analyst skips
 Stage 3 of `docs/PLAN_2026-10-02.md`. An eleventh node, SET_ASIDE_SECTIONS, sits between FIND_SECTIONS

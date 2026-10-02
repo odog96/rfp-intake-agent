@@ -435,6 +435,49 @@ class TestThePrompt:
         messages = build_other_study_prompt("- Title: A Study", [])
         assert "If you cannot tell, answer this_study" in str(messages[0].content)
 
+    def test_the_subject_test_is_stated(self) -> None:
+        """A sentence is judged by what it is about, not by what it names.
+
+        Live run `r-20261002-213531-stage4` removed three sentences whose subject
+        is this study because each one named outside work: the pooled PK analysis,
+        the progression-confirmation procedure and the 0.03 ng/mL threshold. See
+        the stage 4 test in `docs/PLAN_2026-10-02.md`.
+        """
+        system = str(build_other_study_prompt("- Title: A Study", [])[0].content)
+        assert "JUDGE A SENTENCE BY WHAT IT IS ABOUT, NOT BY WHAT IT MENTIONS." in system
+        assert "whenever this study is its subject" in system
+
+    def test_the_three_wrongly_removed_sentences_are_in_the_prompt_as_keeps(self) -> None:
+        """The three real mistakes are carried as worked examples.
+
+        They are quoted in `docs/PLAN_2026-10-02.md` stage 4 as well. Both copies
+        exist on purpose: the plan is the pass criterion a person reads, the
+        prompt is what the model reads.
+        """
+        system = str(build_other_study_prompt("- Title: A Study", [])[0].content)
+        assert "pooled with data from similar samples from other studies" in system
+        assert "required to confirm the progression" in system
+        assert "0.03 ng/mL" in system
+
+    def test_pooling_a_studys_own_samples_is_not_grounds_for_removal(self) -> None:
+        """The prompt must say so, because the sentence names other studies."""
+        system = str(build_other_study_prompt("- Title: A Study", [])[0].content)
+        assert "including pooling them with samples or data from other studies" in system
+
+    def test_a_citation_for_this_studys_own_number_is_not_grounds_for_removal(self) -> None:
+        """Appendix 2's threshold cites Kumar et al and is still this study's number."""
+        system = str(build_other_study_prompt("- Title: A Study", [])[0].content)
+        assert "even when it cites the paper the number was taken or adapted from" in system
+
+    def test_reporting_literature_is_still_grounds_for_removal(self) -> None:
+        """The subject test must not save section 1.3.2.
+
+        1.3.2 Clinical Experience reports another study's design and results, so
+        narrowing the published-literature rule has to stop at reporting.
+        """
+        system = str(build_other_study_prompt("- Title: A Study", [])[0].content)
+        assert "reporting what those studies did or found" in system
+
 
 class TestTheNode:
     def _patched(
