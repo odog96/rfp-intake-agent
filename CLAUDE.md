@@ -15,10 +15,10 @@ against it anyway).
 
 ## Current status (as of 2026-10-02)
 
-Phases 0–4 of ARCHITECTURE.md §10 are done, and stage 1 of `docs/PLAN_2026-10-02.md`. Graph topology
-today:
+Phases 0–4 of ARCHITECTURE.md §10 are done, and stages 1 and 2 of `docs/PLAN_2026-10-02.md`. Graph
+topology today:
 `INGEST → CLASSIFY → FIND_SECTIONS → PLAN → EXTRACT → NORMALIZE → RECONCILE → ADJUDICATE → DERIVE → GATE`,
-then RENDER runs after the graph finishes (see the deviations below). 620 tests passing, 1 skipped.
+then RENDER runs after the graph finishes (see the deviations below). 635 tests passing, 1 skipped.
 Pushed to https://github.com/odog96/rfp-intake-agent.git. The push is done from a terminal by
 Oliver, from inside the repository directory — this session's credentials cannot do it.
 
@@ -63,14 +63,18 @@ recorded inline in its own section rather than only here. The load-bearing ones:
    pipeline knows that a value about another study should be discarded. Repeated in run
    `r-20261001-032936`, from section 1.3.2 "Clinical Experience" (PDF page 39). The fix is stage 4 of
    `docs/PLAN_2026-10-02.md` (a new MARK_OTHER_STUDY node), not a prompt change in EXTRACT.
-   Two causes found on 2026-10-01 by reading the code: PLAN sends whole pages plus one page of margin,
-   so text from sections it did not choose reaches the model; and the `phase_population` search hints
-   name the headings "Background" and "Rationale".
-1a. **PLAN depends on PDF bookmarks.** A PDF with no bookmarks gets pages 1 to 5 for every field group.
-   `samples/Synthetic_RFP_NEOD001.pdf` has none, so its page 6 (the services requested) is never read.
-   **Half fixed on 2026-10-02.** FIND_SECTIONS now produces one whole-document section for that PDF, so
-   a section covering page 6 exists — but PLAN does not read `Document.sections` yet, so the pipeline
-   still sends pages 1 to 5. Stage 2 of `docs/PLAN_2026-10-02.md` closes the gap.
+   Two causes found on 2026-10-01 by reading the code. The first — PLAN sends whole pages plus one page
+   of margin, so text from sections it did not choose reaches the model — **was fixed by stage 2 on
+   2026-10-02**: the excerpt now holds only the chosen sections' text, and on the real protocol the
+   `phase_population` task whose window is pages 35–41 contains no text from section 1.3.2 on page 39.
+   The second cause stands: the `phase_population` search hints name the headings "Background" and
+   "Rationale". Offline only — this has not yet been shown on a live Bedrock run.
+1a. ~~**PLAN depends on PDF bookmarks.** A PDF with no bookmarks gets pages 1 to 5 for every field
+   group.~~ **Fixed on 2026-10-02** by stages 1 and 2 of `docs/PLAN_2026-10-02.md`. FIND_SECTIONS gives
+   `samples/Synthetic_RFP_NEOD001.pdf` one whole-document section, and PLAN now sends sections rather than
+   the first five pages, so all nine of that document's extraction tasks include page 6 — the services
+   requested, which no run before 2026-10-02 ever read. Shown offline on the real PDF by
+   `tests/plan/test_plan_sections_samples.py`; not yet shown on a live Bedrock run.
 2. **`timeline.total_duration` splits by enrolment timing.** Same run: "approximately 3.5-4 years"
    for early enrollers and "1.5-2 years" for late ones, both confirmed, with the study-level 42
    months absent. Correct per-subject, wrong as the study duration a budget needs.
@@ -128,6 +132,76 @@ checks every task's field names against the specification, so neither mistake ca
    `config/models.yaml` is on `mixed` with Claude Sonnet 4.6 on Bedrock for testing.
 6. Build `audit.json`, the janitor job, and the `rfp_intake.eval` command line.
 
+### Done 2026-10-02: Stage 2 — PLAN and EXTRACT read sections instead of pages
+Stage 2 of `docs/PLAN_2026-10-02.md`. Stage 1 gave every document sections; nothing read them. Now PLAN
+chooses sections and the excerpt EXTRACT sends holds only the chosen sections' text, cut at the exact
+character offsets. This is what makes a page that holds two sections usable: page 39 of
+`samples/Example protocol 2.pdf` holds the end of section 1.3.1 and the start of section 1.3.2, and 1.3.2
+is where the phase of a different study comes from.
+
+**PLAN** (`src/rfp_intake/plan/scoring.py`, `src/rfp_intake/plan/__init__.py`). `score_section(section,
+hints, text)` replaces the bookmark-entry scorer, with the four weights unchanged (`HEADING_EXACT_MATCH`
+5.0, `HEADING_PARTIAL_MATCH` 3.0, `KEYWORD_DENSITY_WEIGHT` 2.0, `MAX_KEYWORD_DENSITY_SCORE` 4.0). It is
+given the **section's own text**, not its pages, because scoring 1.3.1 on page 39 credited 1.3.1 for
+1.3.2's words. `select_sections` takes the top `DEFAULT_TOP_K` (3) scoring above zero and returns them in
+document order; a zero-scoring section is never chosen to fill k. `select_windows` and `merge_windows` are
+deleted along with the one-page margin they applied, and so is the "first 5 pages" fallback. When nothing
+scores, PLAN sends every section if the whole document fits one call and otherwise the first three, logged
+as `plan_no_section_scored`.
+
+`ExtractionTask` (`src/rfp_intake/domain/schemas.py`) gained `section_ids`. `page_window` stays, because
+`src/rfp_intake/extract/validate.py` checks each record's page against it and the prompt prints it. **A
+window is now a weaker guard than it looks**: when the chosen sections are not adjacent the window spans
+the gap. What keeps unchosen text out is the excerpt plus quote validation, not the window — on the real
+protocol the `phase_population` task covering pages 35–41 contains no text from section 1.3.2 even though
+page 39 is inside its window.
+
+**EXTRACT** (`src/rfp_intake/extract/prompt.py`). `_build_excerpt` emits one block per section per page,
+each with its own `--- Page N ---` marker, so two chosen sections are never joined and a quote cannot span
+the gap between them and still validate. `build_excerpt` is still the single function quote validation
+reads, so the model and the validator cannot see different text. The human message gained a `SECTIONS:`
+line naming the chosen headings. A task with no `section_ids` falls back to whole pages (the pre-2026-10-02
+behaviour, for a `Document` built by hand); a task naming sections the document does not have gets an
+**empty excerpt** and a logged `excerpt_sections_not_on_document`, because falling back to whole pages
+there would quietly restore exactly what this stage removed.
+
+**Known limitation, accepted deliberately as the plan asks: a table can come from a section PLAN did not
+choose.** `TableData` records which page a table is on but not where on the page, so a table is included
+when its page falls inside a chosen section. Where two sections share a page, the table may belong to the
+other one. Not fixed, because fixing it needs a table position the parsers do not currently record.
+
+**`DEFAULT_TOKEN_BUDGET`, `estimate_text_tokens` and `estimate_tokens` moved to
+`src/rfp_intake/domain/budget.py`.** The stage 1 entry below says they were moved to `plan/scoring.py` to
+break a circular import; that was wrong and the import error came back as soon as `plan/__init__.py`
+imported `rfp_intake.sections`. Importing `rfp_intake.plan.scoring` executes `rfp_intake/plan/__init__.py`
+first, so there is no way for `rfp_intake.sections` to read a constant out of the `plan` package without a
+cycle. `plan/scoring.py` and `plan/__init__.py` re-export all three names, so existing imports still work.
+
+**PLAN writes sections back onto a `Document` that has none.** `_sections_for` calls the same
+`find_sections` and assigns the result to `doc.sections` and `doc.section_source`. Computing them and
+keeping them local handed EXTRACT tasks naming sections the document did not carry, and every excerpt came
+back empty — which is how `tests/graph/test_pipeline_integration.py` failed while the PLAN and EXTRACT
+tests all passed.
+
+On the two real sample PDFs, offline: 26 tasks across 9 groups (protocol 17, synthetic RFP 9), down from
+the 37 the old whole-page planner produced; largest task 3,932 estimated tokens, under the 4,000 budget;
+all 9 synthetic-RFP tasks include page 6; no protocol task contains a 300-character probe from a section
+PLAN did not choose; and `phase_population` chooses PROTOCOL SYNOPSIS (split into pages 11–17 and 18–26)
+plus sections 1.2 and 1.4 — never 1.3.2.
+
+Unchanged, deliberately: NORMALIZE, RECONCILE, ADJUDICATE, DERIVE, GATE, every parser, `extraction.json`,
+`report.pdf`, `report.xlsx`, and `privacy_mode`.
+
+**635 tests passing, 1 skipped** — 15 more than the 620 after stage 1. `tests/plan/test_scoring.py` was
+rewritten against the new signature (the margin test is now `test_no_page_margin_is_applied`),
+`tests/plan/test_plan.py` had `test_fallback_without_outline` replaced by
+`test_a_document_without_an_outline_is_read_whole` and gained `test_tasks_fit_the_token_budget`,
+`tests/extract/test_prompt.py` gained a `TestExcerptFromSections` class of 7 tests, and
+`tests/plan/test_plan_sections_samples.py` is new — 10 tests on the two real PDFs, marked `slow`, no model
+call. No existing test was deleted. **No live model run was made for this stage**, so everything above is
+offline evidence; the next live Bedrock run on the synthetic pair is what would show the effect on
+`study.phase` itself.
+
 ### Done 2026-10-02: Stage 1 — FIND_SECTIONS, a tenth node between CLASSIFY and PLAN
 Stage 1 of `docs/PLAN_2026-10-02.md`. A new node, FIND_SECTIONS, splits every document into sections
 whose boundaries are a (page, character offset) pair rather than a page number. That is the point of it:
@@ -160,7 +234,8 @@ fix is for a parser to record heading candidates, not for this node to open the 
 **`DEFAULT_TOKEN_BUDGET` moved from `plan/__init__.py` to `plan/scoring.py`**, and is re-exported from
 `plan/__init__.py` so existing imports keep working. `sections/` needs the same number for rule 2, and
 in stage 2 `plan/__init__.py` will import `sections/`, so the constant had to sit in a module neither of
-those two imports.
+those two imports. **Superseded on 2026-10-02 by stage 2: `plan/scoring.py` was the wrong module and the
+circular import came back. All three names now live in `domain/budget.py` — see the stage 2 entry above.**
 
 **PLAN, EXTRACT and the prompts are unchanged.** `Document.sections` and `Document.section_source` are
 produced and travel in the graph state, and nothing reads them yet — PLAN still scores `Document.outline`

@@ -1,4 +1,10 @@
-"""Tests for plan generation end-to-end."""
+"""Tests for plan generation end-to-end, on a hand-built document.
+
+Updated for stage 2 of docs/PLAN_2026-10-02.md: PLAN chooses sections, not pages
+widened by a one-page margin, and there is no first-5-pages fallback. The document
+below keeps its `outline`, because FIND_SECTIONS turns an outline into sections, so
+these tests still exercise the bookmarks path end to end.
+"""
 
 from __future__ import annotations
 
@@ -87,10 +93,18 @@ class TestPlanExtraction:
 
         for task in tasks:
             assert task.page_window[0] >= 1
-            assert task.page_window[1] <= doc.pages + 1  # margin can add 1
+            # No margin any more: a window cannot reach past the last page.
+            assert task.page_window[1] <= doc.pages
+            assert task.section_ids, "every task names the sections it reads"
 
-    def test_fallback_without_outline(self, fields_yaml_path) -> None:  # type: ignore[no-untyped-def]
-        """Documents without outline fall back to first N pages."""
+    def test_a_document_without_an_outline_is_read_whole(self, fields_yaml_path) -> None:  # type: ignore[no-untyped-def]
+        """Replaces test_fallback_without_outline, which asserted the first 5 pages.
+
+        A document with no bookmarks gets one whole-document section from
+        FIND_SECTIONS when its text fits one extraction call, and PLAN sends that
+        one section to every group. This is the shape of
+        samples/Synthetic_RFP_NEOD001.pdf, whose page 6 the old fallback never read.
+        """
         os.environ["RFP_INTAKE_FIELDS_YAML_PATH"] = str(fields_yaml_path)
         from rfp_intake.domain.registry import get_registry
         get_registry.cache_clear()
@@ -109,9 +123,37 @@ class TestPlanExtraction:
 
         tasks = plan_extraction([doc], registry)
         assert len(tasks) >= 9  # at least one per group
-        # All should use fallback window
+
         for task in tasks:
-            assert task.page_window[0] == 1
+            assert task.page_window == (1, 30), "every page, including the last"
+            assert len(task.section_ids) == 1
+
+    def test_tasks_fit_the_token_budget(self, fields_yaml_path) -> None:  # type: ignore[no-untyped-def]
+        """A section too big for one call becomes several tasks naming that section."""
+        os.environ["RFP_INTAKE_FIELDS_YAML_PATH"] = str(fields_yaml_path)
+        from rfp_intake.domain.registry import get_registry
+        get_registry.cache_clear()
+
+        from rfp_intake.domain.budget import DEFAULT_TOKEN_BUDGET
+        from rfp_intake.plan import plan_extraction
+        registry = get_registry()
+
+        doc = _make_doc_with_outline()
+        # Make one chosen section far too long for a single extraction call.
+        doc.page_texts[3] = "randomised parallel group trial. " * 900
+        doc.page_texts[4] = "double-blind 1:1 allocation. " * 900
+
+        tasks = plan_extraction([doc], registry)
+        design = [t for t in tasks if t.group == "study_design"]
+
+        assert len(design) > 1, "the oversized section was split"
+        for task in design:
+            pages_in_task = task.page_window[1] - task.page_window[0] + 1
+            # A page is the smallest unit PLAN can split by, so a task is either
+            # inside the budget or a single page that is over it on its own.
+            assert (task.budget_tokens or 0) <= DEFAULT_TOKEN_BUDGET or pages_in_task == 1
+        # The split tasks still name the section they came from.
+        assert all(task.section_ids for task in design)
 
 
 class TestPlanNode:

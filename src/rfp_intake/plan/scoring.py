@@ -1,16 +1,29 @@
-"""Outline section scoring for page targeting."""
+"""Section scoring for extraction targeting.
+
+Scores a section from FIND_SECTIONS against a field group's `search_hints`.
+Rewritten on 2026-10-02 (stage 2 of `docs/PLAN_2026-10-02.md`) to take a
+`Section` and that section's text instead of an `OutlineEntry` and the document's
+pages. The weights below are unchanged.
+
+**This module must not import `rfp_intake.sections`**, because `rfp_intake.plan`
+imports `rfp_intake.sections` and importing any module of this package executes
+`plan/__init__.py`. So `score_section` is handed the section's text rather than
+computing it: `plan/__init__.py` imports both modules and does the joining.
+
+The token budget itself lives in `domain/budget.py`, for the same reason, and is
+re-exported here so that `from rfp_intake.plan.scoring import
+DEFAULT_TOKEN_BUDGET` keeps working.
+"""
 
 from __future__ import annotations
 
+from rfp_intake.domain.budget import (
+    DEFAULT_TOKEN_BUDGET,
+    estimate_text_tokens,
+    estimate_tokens,
+)
 from rfp_intake.domain.registry import SearchHints
-from rfp_intake.domain.schemas import OutlineEntry
-
-# The most text one extraction call is given, estimated as characters / 4.
-# It lives here rather than in plan/__init__.py because FIND_SECTIONS
-# (rfp_intake.sections) needs the same number for its rule 2, and in stage 2 of
-# PLAN_2026-10-02.md plan/__init__.py will import rfp_intake.sections — so the
-# constant has to sit in a module neither of those two imports.
-DEFAULT_TOKEN_BUDGET = 4000
+from rfp_intake.domain.schemas import Section
 
 # Scoring weights
 HEADING_EXACT_MATCH = 5.0
@@ -20,18 +33,20 @@ MAX_KEYWORD_DENSITY_SCORE = 4.0
 
 
 def score_section(
-    entry: OutlineEntry,
+    section: Section,
     hints: SearchHints,
-    page_texts: dict[int, str],
+    text: str,
 ) -> float:
-    """Score an outline section against group search hints.
+    """Score one section against a field group's search hints.
 
-    Higher score = more likely to contain relevant content for the field group.
+    Higher score = more likely to contain content for the field group. `text` is
+    the section's own text, which the caller gets from
+    `rfp_intake.sections.section_text`.
     """
     score = 0.0
 
     # Heading match scoring
-    heading_lower = entry.heading.lower().strip()
+    heading_lower = section.heading.lower().strip()
     for hint_heading in hints.headings:
         hint_lower = hint_heading.lower().strip()
         if hint_lower == heading_lower:
@@ -41,81 +56,49 @@ def score_section(
             score += HEADING_PARTIAL_MATCH
             break
 
-    # Keyword density in the section's pages
-    if hints.keywords:
-        page_start = entry.page_start
-        page_end = entry.page_end or entry.page_start
-        section_text = ""
-        for p in range(page_start, page_end + 1):
-            section_text += " " + page_texts.get(p, "")
-
-        if section_text.strip():
-            section_lower = section_text.lower()
-            keyword_hits = sum(
-                1 for kw in hints.keywords if kw.lower() in section_lower
-            )
-            density = keyword_hits / len(hints.keywords)
-            score += min(density * KEYWORD_DENSITY_WEIGHT * 10, MAX_KEYWORD_DENSITY_SCORE)
+    # Keyword density in the section's own text. Before stage 2 this read whole
+    # pages, so a keyword in a neighbouring section on the same page counted
+    # towards this section's score.
+    if hints.keywords and text.strip():
+        text_lower = text.lower()
+        keyword_hits = sum(1 for kw in hints.keywords if kw.lower() in text_lower)
+        density = keyword_hits / len(hints.keywords)
+        score += min(density * KEYWORD_DENSITY_WEIGHT * 10, MAX_KEYWORD_DENSITY_SCORE)
 
     return score
 
 
-def select_windows(
-    entries: list[OutlineEntry],
+def select_sections(
+    sections: list[Section],
     scores: list[float],
     k: int = 3,
-    margin: int = 1,
-    max_page: int = 0,
-) -> list[tuple[int, int]]:
-    """Select top-k sections by score and expand by margin pages.
+) -> list[Section]:
+    """The k highest-scoring sections, returned in document order.
 
-    Returns list of (start_page, end_page) windows, not yet merged.
+    A section scoring zero is never chosen. There is no page margin: before
+    stage 2 the chosen pages were widened by one page either side, which is how
+    text from a section PLAN had not chosen reached the extraction model.
+    Section boundaries are exact, so nothing needs widening.
     """
-    if not entries or not scores:
+    if not sections or not scores:
         return []
 
-    # Sort by score descending
-    scored = sorted(zip(scores, entries, strict=True), key=lambda x: x[0], reverse=True)
-
-    # Take top-k with score > 0
-    top_k = [(s, e) for s, e in scored if s > 0][:k]
-
-    if not top_k:
-        return []
-
-    windows: list[tuple[int, int]] = []
-    for _, entry in top_k:
-        start = max(1, entry.page_start - margin)
-        end = entry.page_end or entry.page_start
-        end = end + margin
-        if max_page > 0:
-            end = min(end, max_page)
-        windows.append((start, end))
-
-    return windows
+    ranked = sorted(
+        zip(scores, range(len(sections)), strict=True),
+        key=lambda pair: (-pair[0], pair[1]),
+    )
+    chosen = [index for score, index in ranked if score > 0][:k]
+    return [sections[index] for index in sorted(chosen)]
 
 
-def merge_windows(windows: list[tuple[int, int]]) -> list[tuple[int, int]]:
-    """Merge overlapping or adjacent page windows."""
-    if not windows:
-        return []
-
-    sorted_windows = sorted(windows, key=lambda w: w[0])
-    merged: list[tuple[int, int]] = [sorted_windows[0]]
-
-    for start, end in sorted_windows[1:]:
-        prev_start, prev_end = merged[-1]
-        if start <= prev_end + 1:
-            merged[-1] = (prev_start, max(prev_end, end))
-        else:
-            merged.append((start, end))
-
-    return merged
-
-
-def estimate_tokens(page_texts: dict[int, str], page_window: tuple[int, int]) -> int:
-    """Estimate token count for a page window (chars / 4 approximation)."""
-    total_chars = 0
-    for p in range(page_window[0], page_window[1] + 1):
-        total_chars += len(page_texts.get(p, ""))
-    return total_chars // 4
+__all__ = [
+    "DEFAULT_TOKEN_BUDGET",
+    "HEADING_EXACT_MATCH",
+    "HEADING_PARTIAL_MATCH",
+    "KEYWORD_DENSITY_WEIGHT",
+    "MAX_KEYWORD_DENSITY_SCORE",
+    "estimate_text_tokens",
+    "estimate_tokens",
+    "score_section",
+    "select_sections",
+]

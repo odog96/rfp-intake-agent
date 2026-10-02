@@ -33,8 +33,8 @@ from typing import Any, Literal
 
 import structlog
 
+from rfp_intake.domain.budget import DEFAULT_TOKEN_BUDGET, estimate_tokens
 from rfp_intake.domain.schemas import Document, RunError, RunState, Section
-from rfp_intake.plan.scoring import DEFAULT_TOKEN_BUDGET, estimate_tokens
 from rfp_intake.sections.headings import find_headings
 
 logger = structlog.get_logger()

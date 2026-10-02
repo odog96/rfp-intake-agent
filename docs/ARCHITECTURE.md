@@ -214,10 +214,11 @@ free-form model search cannot guarantee.
 smallest unit PLAN could choose was a whole page plus one page of margin, so text from a section PLAN
 had not chosen still reached the extraction model — which is how `study.phase` came back as the phase of
 a different study from page 39 of `samples/Example protocol 2.pdf`. A section boundary is now a
-(page number, character offset into that page's text) pair, so a page can be cut in two. The two dashed
-nodes after it, SET_ASIDE_SECTIONS and MARK_OTHER_STUDY, are stages 3 and 4 of the same plan and are not
-built; PLAN today reads `Document.outline` and whole pages, and stage 2 of that plan is what moves it
-onto sections.
+(page number, character offset into that page's text) pair, so a page can be cut in two. **Stage 2 of
+the same plan, also 2026-10-02, moved PLAN and EXTRACT onto those sections**: PLAN scores sections rather
+than `Document.outline` entries, and the excerpt EXTRACT sends holds only the chosen sections' text. The
+two dashed nodes after FIND_SECTIONS, SET_ASIDE_SECTIONS and MARK_OTHER_STUDY, are stages 3 and 4 of the
+same plan and are not built.
 
 **Every edge is a static Python edge or a `Send`.** There are no LLM-chosen routes and no agent delegation.
 In MVP there is exactly one conditional edge: `ADJUDICATE` is skipped when the candidate set is empty.
@@ -347,6 +348,24 @@ no choice made in whole pages can keep one and drop the other. Sections tile a d
 to the start of the next heading at any level — so no text is in two sections and none is dropped. Text
 before the first heading becomes a section headed "Front matter".
 
+**`ExtractionTask` gained `section_ids` on 2026-10-02** (stage 2 of `docs/PLAN_2026-10-02.md`):
+
+```python
+class ExtractionTask(BaseModel):
+    doc_id: str
+    group: str
+    page_window: tuple[int, int]   # first and last page the chosen sections touch
+    section_ids: list[str] = []    # the sections PLAN chose; empty = every page in page_window
+    budget_tokens: int | None = None
+```
+
+`page_window` stays because `extract/validate.py` checks each extracted record's page against it, and it
+is what the prompt prints on its `DOCUMENT:` line. When the chosen sections are not next to each other the
+window spans the gap, so `page_window` alone is a weaker guard than it looks — what actually keeps text
+from an unchosen section out of a record is that the excerpt is built from `section_ids` and the quote must
+be a substring of that excerpt. An empty `section_ids` means every page in `page_window`, which is what a
+task built by hand without sections means.
+
 **The `scope` field is not optional decoration.** "40 sites" (total) and "12 sites" (Germany) are not a
 contradiction. Without scope, the reconciler generates false positives on every multi-cohort study — and
 multi-part studies are exactly the ones DSB cares most about. Extraction prompts must set scope explicitly.
@@ -445,20 +464,35 @@ offsets and returns the pages between whole, so a caller can keep the `--- Page 
 extraction prompt and quote validation both depend on.
 
 ### 4.3 PLAN
-**Steps 2 to 4 below are what PLAN does today, and stage 2 of `docs/PLAN_2026-10-02.md` replaces them**
-with scoring over FIND_SECTIONS' sections, no page margin, and no "first 5 pages" fallback. Until then
-PLAN still scores `Document.outline` and chooses whole pages, and `Document.sections` is produced but not
-yet read by any node.
+**Rewritten on 2026-10-02 by stage 2 of `docs/PLAN_2026-10-02.md`.** PLAN chooses sections, not pages.
+The page margin, the embedding-similarity fallback and the "first 5 pages" fallback are all gone; the
+scoring weights are unchanged.
 
-Pure Python. For each `(doc, group)`:
-1. Look up the group's `search_hints` (headings, keywords, regex) in `fields.yaml`.
-2. Score every outline section; take top-k sections plus a configurable page margin.
-3. If keyword scoring finds nothing, fall back to embedding similarity over page chunks.
-4. If still nothing, take the document abstract/synopsis pages — never the whole document.
-5. Emit `ExtractionTask(doc_id, group, page_window, budget_tokens)`.
+Pure Python, no model call. For each `(doc, group)`:
+1. Look up the group's `search_hints` (headings, keywords) in `fields.yaml`.
+2. Score every section from FIND_SECTIONS (`plan/scoring.py:score_section`) — the heading against
+   `headings`, the **section's own text** against `keywords`. Scoring the section's text rather than its
+   pages is load-bearing: section 1.3.1 shares page 39 of `samples/Example protocol 2.pdf` with section
+   1.3.2, and scoring by page credited 1.3.1 for 1.3.2's words.
+3. Take the top k (`DEFAULT_TOP_K = 3`) sections scoring above zero, in document order
+   (`plan/scoring.py:select_sections`). **A zero-scoring section is never chosen to fill k.**
+4. If nothing scored: send every section when the whole document fits one extraction call, otherwise the
+   first `DEFAULT_TOP_K` sections, logged as `plan_no_section_scored`. A document that FIND_SECTIONS rule 2
+   made one section is therefore sent whole to every group — which is what finally reads page 6 of
+   `samples/Synthetic_RFP_NEOD001.pdf`.
+5. Emit `ExtractionTask(doc_id, group, page_window, section_ids, budget_tokens)`, where `page_window` is
+   the first and last page the chosen sections touch.
 
-Cap `page_window` by token budget. A window that would exceed the budget is split into multiple tasks and
-their records merge naturally at fan-in (that is what the `operator.add` reducer is for).
+**One call per (document, group) unless the chosen sections do not fit one call.** A set of sections over
+the token budget is split by page, every resulting task naming the same sections, and their records merge
+at fan-in (that is what the `append_or_replace` reducer in §3 is for). A page is the smallest unit PLAN can
+split by, so one page larger than the budget on its own stays one task and is logged as
+`plan_page_over_budget`.
+
+PLAN sections a document itself, by calling the same `find_sections`, when it is handed one whose
+`sections` are empty, and **writes the result back onto the `Document`** — otherwise the tasks would name
+sections the document does not carry and every excerpt would come back empty. In the graph FIND_SECTIONS
+has always already run; this is for a caller that builds a `Document` by hand.
 
 ### 4.4 EXTRACT (the fan-out leaf)
 One structured-output call per task. Bounded schema = only that group's fields. Prompt skeleton:
@@ -478,8 +512,25 @@ FIELDS
 {rendered from fields.yaml: id, label, type, enum values, aliases, hint}
 
 DOCUMENT: {doc_kind}, pages {p_start}–{p_end}
-<excerpt>{page-tagged text and tables}</excerpt>
+SECTIONS: {headings of the sections PLAN chose}
+<excerpt>{page-tagged text of those sections, and tables}</excerpt>
 ```
+
+**The excerpt holds only the chosen sections' text, as of 2026-10-02** (stage 2 of
+`docs/PLAN_2026-10-02.md`). `extract/prompt.py:_build_excerpt` cuts each section at its exact character
+offsets and emits one block per section per page, each with its own `--- Page N ---` marker. Two blocks are
+never joined, so a quote cannot span the gap between two chosen sections and still validate. The same
+function is what quote validation reads (`build_excerpt`, called from `extract/__init__.py`), so the model
+and the validator can never see different text — do not add a second excerpt builder.
+
+A task whose `section_ids` is empty falls back to whole pages in `page_window`. A task naming sections the
+document does not have gets an **empty excerpt** and a logged `excerpt_sections_not_on_document`, rather
+than falling back to whole pages, because that fallback would quietly restore the behaviour this change
+removed.
+
+**Known limitation: a table can come from a section PLAN did not choose.** `TableData` records the page a
+table is on but not where on the page, so a table is included when its page falls inside a chosen section.
+Where two sections share a page, the table may belong to the other one. Accepted for now.
 
 **Post-call validation, in code, non-negotiable:**
 1. `quote` must be a substring of the excerpt (normalized whitespace). Fail → one repair retry with the

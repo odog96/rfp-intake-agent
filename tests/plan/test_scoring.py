@@ -1,145 +1,124 @@
-"""Tests for outline section scoring logic."""
+"""Tests for section scoring and section selection.
+
+Rewritten for stage 2 of docs/PLAN_2026-10-02.md, which made PLAN score sections
+rather than bookmark entries. `select_windows` and `merge_windows` are gone with
+the page margin they existed to apply, so their tests are gone too; `TestScore`
+and `TestEstimateTokens` are the same cases against the new signature.
+"""
 
 from __future__ import annotations
 
+from rfp_intake.domain.budget import estimate_text_tokens, estimate_tokens
 from rfp_intake.domain.registry import SearchHints
-from rfp_intake.domain.schemas import OutlineEntry
-from rfp_intake.plan.scoring import (
-    estimate_tokens,
-    merge_windows,
-    score_section,
-    select_windows,
-)
+from rfp_intake.domain.schemas import Section
+from rfp_intake.plan.scoring import score_section, select_sections
 
 
 def _make_hints(
     headings: list[str] | None = None,
     keywords: list[str] | None = None,
 ) -> SearchHints:
-    return SearchHints(
-        headings=headings or [],
-        keywords=keywords or [],
+    return SearchHints(headings=headings or [], keywords=keywords or [])
+
+
+def _section(heading: str, page_start: int = 1, page_end: int | None = None) -> Section:
+    return Section(
+        id=f"doc-001:{heading}",
+        heading=heading,
+        level=1,
+        page_start=page_start,
+        page_end=page_end if page_end is not None else page_start,
     )
-
-
-def _make_entry(heading: str, page_start: int, page_end: int | None = None) -> OutlineEntry:
-    return OutlineEntry(heading=heading, page_start=page_start, page_end=page_end, level=1)
 
 
 class TestScoreSection:
     def test_exact_heading_match(self) -> None:
-        hints = _make_hints(headings=["Study Design"])
-        entry = _make_entry("Study Design", 3, 5)
-        score = score_section(entry, hints, {})
+        score = score_section(_section("Study Design", 3, 5), _make_hints(["Study Design"]), "")
         assert score >= 5.0
 
     def test_partial_heading_match(self) -> None:
-        hints = _make_hints(headings=["Study Design"])
-        entry = _make_entry("Overview of Study Design and Methods", 3, 5)
-        score = score_section(entry, hints, {})
+        section = _section("Overview of Study Design and Methods", 3, 5)
+        score = score_section(section, _make_hints(["Study Design"]), "")
         assert score >= 3.0
 
     def test_no_match(self) -> None:
         hints = _make_hints(headings=["Study Design"], keywords=["randomised"])
-        entry = _make_entry("References", 50, 55)
-        score = score_section(entry, hints, {50: "bibliography"})
+        score = score_section(_section("References", 50, 55), hints, "bibliography")
         assert score == 0.0
 
     def test_keyword_density(self) -> None:
         hints = _make_hints(keywords=["randomised", "double-blind", "Phase III"])
-        entry = _make_entry("Study Overview", 1, 2)
-        page_texts = {
-            1: "This is a randomised, double-blind Phase III study.",
-            2: "The study is Phase III and randomised.",
-        }
-        score = score_section(entry, hints, page_texts)
-        assert score > 0
+        text = "This is a randomised, double-blind Phase III study."
+        assert score_section(_section("Study Overview", 1, 2), hints, text) > 0
 
     def test_combined_heading_and_keywords(self) -> None:
         hints = _make_hints(
             headings=["Study Design"],
             keywords=["randomised", "double-blind"],
         )
-        entry = _make_entry("Study Design", 3, 4)
-        page_texts = {
-            3: "This is a randomised, double-blind study.",
-            4: "Subjects are randomised 1:1.",
-        }
-        score = score_section(entry, hints, page_texts)
-        # Both heading match and keyword density should contribute
-        assert score >= 5.0
+        text = "This is a randomised, double-blind study. Subjects are randomised 1:1."
+        assert score_section(_section("Study Design", 3, 4), hints, text) >= 5.0
+
+    def test_a_keyword_in_a_neighbouring_section_does_not_count(self) -> None:
+        """The reason scoring takes the section's text and not the whole page.
+
+        Section 1.3.1 of samples/Example protocol 2.pdf shares page 39 with
+        section 1.3.2, which names another study's phase. Scoring 1.3.1 on the
+        page would credit 1.3.1 for 1.3.2's words.
+        """
+        hints = _make_hints(keywords=["open-label"])
+        own_text = "Nonclinical toxicology studies in the mouse."
+        page_text = own_text + " An ongoing, open-label study of the drug."
+
+        assert score_section(_section("1.3.1 Nonclinical Safety", 39), hints, own_text) == 0.0
+        assert score_section(_section("1.3.1 Nonclinical Safety", 39), hints, page_text) > 0.0
 
 
-class TestSelectWindows:
+class TestSelectSections:
     def test_selects_top_k(self) -> None:
-        entries = [
-            _make_entry("A", 1, 3),
-            _make_entry("B", 5, 7),
-            _make_entry("C", 10, 12),
-            _make_entry("D", 15, 17),
+        sections = [
+            _section("A", 1, 3),
+            _section("B", 5, 7),
+            _section("C", 10, 12),
+            _section("D", 15, 17),
         ]
-        scores = [2.0, 5.0, 1.0, 4.0]
+        chosen = select_sections(sections, [2.0, 5.0, 1.0, 4.0], k=2)
 
-        windows = select_windows(entries, scores, k=2, margin=0)
-        assert len(windows) == 2
-        # Should pick B (score=5) and D (score=4)
-        assert (5, 7) in windows
-        assert (15, 17) in windows
+        # B scored 5 and D scored 4, and they come back in document order.
+        assert [s.heading for s in chosen] == ["B", "D"]
 
-    def test_margin_expands_window(self) -> None:
-        entries = [_make_entry("A", 5, 7)]
-        scores = [3.0]
+    def test_chosen_sections_are_returned_in_document_order(self) -> None:
+        sections = [_section("A", 1), _section("B", 2), _section("C", 3)]
+        chosen = select_sections(sections, [1.0, 9.0, 5.0], k=3)
+        assert [s.heading for s in chosen] == ["A", "B", "C"]
 
-        windows = select_windows(entries, scores, k=1, margin=1)
-        assert windows == [(4, 8)]
+    def test_no_page_margin_is_applied(self) -> None:
+        """Replaces the old test_margin_expands_window: the margin is gone."""
+        chosen = select_sections([_section("A", 5, 7)], [3.0], k=1)
+        assert (chosen[0].page_start, chosen[0].page_end) == (5, 7)
 
-    def test_margin_clamps_to_page_1(self) -> None:
-        entries = [_make_entry("A", 1, 3)]
-        scores = [3.0]
-
-        windows = select_windows(entries, scores, k=1, margin=2)
-        assert windows[0][0] == 1
-
-    def test_empty_entries(self) -> None:
-        assert select_windows([], [], k=3) == []
+    def test_empty_sections(self) -> None:
+        assert select_sections([], [], k=3) == []
 
     def test_all_zero_scores(self) -> None:
-        entries = [_make_entry("A", 1, 3)]
-        scores = [0.0]
-        assert select_windows(entries, scores, k=3) == []
+        assert select_sections([_section("A", 1, 3)], [0.0], k=3) == []
 
-
-class TestMergeWindows:
-    def test_overlapping(self) -> None:
-        windows = [(1, 5), (3, 8), (10, 12)]
-        assert merge_windows(windows) == [(1, 8), (10, 12)]
-
-    def test_adjacent(self) -> None:
-        windows = [(1, 3), (4, 6), (7, 9)]
-        assert merge_windows(windows) == [(1, 9)]
-
-    def test_no_overlap(self) -> None:
-        windows = [(1, 3), (6, 8), (11, 13)]
-        assert merge_windows(windows) == [(1, 3), (6, 8), (11, 13)]
-
-    def test_single_window(self) -> None:
-        assert merge_windows([(3, 7)]) == [(3, 7)]
-
-    def test_empty(self) -> None:
-        assert merge_windows([]) == []
-
-    def test_unordered_input(self) -> None:
-        windows = [(10, 12), (1, 5), (3, 8)]
-        assert merge_windows(windows) == [(1, 8), (10, 12)]
+    def test_a_zero_scoring_section_is_never_chosen_to_fill_k(self) -> None:
+        sections = [_section("A", 1), _section("B", 2)]
+        chosen = select_sections(sections, [4.0, 0.0], k=3)
+        assert [s.heading for s in chosen] == ["A"]
 
 
 class TestEstimateTokens:
     def test_estimates(self) -> None:
         page_texts = {1: "a" * 400, 2: "b" * 400, 3: "c" * 400}
-        tokens = estimate_tokens(page_texts, (1, 3))
-        assert tokens == 300  # 1200 chars / 4
+        assert estimate_tokens(page_texts, (1, 3)) == 300  # 1200 chars / 4
 
     def test_missing_pages(self) -> None:
-        page_texts = {1: "a" * 100}
-        tokens = estimate_tokens(page_texts, (1, 3))
-        assert tokens == 25  # only page 1 has content
+        assert estimate_tokens({1: "a" * 100}, (1, 3)) == 25  # only page 1 has content
+
+    def test_text_and_page_estimates_agree(self) -> None:
+        page_texts = {1: "a" * 400, 2: "b" * 404}
+        assert estimate_tokens(page_texts, (1, 2)) == estimate_text_tokens("a" * 400) + (
+            estimate_text_tokens("b" * 404)
+        )

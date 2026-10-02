@@ -133,7 +133,19 @@ class Document(BaseModel):
 class ExtractionTask(BaseModel):
     doc_id: str
     group: str
+    # The first and last page the task's sections touch. `extract/validate.py`
+    # checks each extracted record's page against it, and it narrows a task that
+    # had to be split because its sections did not fit one extraction call.
+    #
+    # When the chosen sections are not next to each other, this spans the gap
+    # between them, so a record can name a page whose text is not in the excerpt.
+    # Quote validation is what actually keeps unchosen text out: the quote must
+    # be a substring of the excerpt, and the excerpt holds only chosen sections.
     page_window: tuple[int, int]
+    # Which of the document's sections this task reads, by `Section.id`, chosen by
+    # PLAN. Empty means "every page in page_window", which is what PLAN produced
+    # before 2026-10-02 and what a task built by hand without sections still means.
+    section_ids: list[str] = Field(default_factory=list)
     budget_tokens: int | None = None
 
 
