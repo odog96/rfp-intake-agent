@@ -7,6 +7,12 @@ produces a provenance-backed variable set for the Delivery Strategy & Budgeting 
 **Read `docs/ARCHITECTURE.md` before writing code. It is the build contract, not background reading.**
 `config/fields.yaml` is the single source of truth for what gets extracted.
 
+**Current work: `docs/PLAN_2026-10-02.md`.** Read it before anything else. It adds three nodes between
+CLASSIFY and PLAN, changes PLAN, EXTRACT and DERIVE, and gives the build order and the test for each
+stage. Where it disagrees with `docs/ARCHITECTURE.md`, the plan is the newer decision. The domain rules
+behind it are in `docs/ANALYST_PROCEDURE_PROTOCOL.md` (a draft awaiting Angus Gray's sign-off; build
+against it anyway).
+
 ## Current status (as of 2026-09-30)
 
 Phases 0–4 of ARCHITECTURE.md §10 are done. Graph topology today:
@@ -53,8 +59,15 @@ recorded inline in its own section rather than only here. The load-bearing ones:
 1. **`study.phase` reads the phase of a different study.** In run `r-listfix-175318` it confirmed
    `phase_1_2` with the scope "Study NEOD001-001 (referenced study)" — the phase of an earlier study
    the protocol mentions. The correct `phase_3` is present but marked `needs_review`. Nothing in the
-   pipeline knows that a value about another study should be discarded; this needs a prompt change,
-   or a rule that a scope naming a different study disqualifies the record.
+   pipeline knows that a value about another study should be discarded. Repeated in run
+   `r-20261001-032936`, from section 1.3.2 "Clinical Experience" (PDF page 39). The fix is stage 4 of
+   `docs/PLAN_2026-10-02.md` (a new MARK_OTHER_STUDY node), not a prompt change in EXTRACT.
+   Two causes found on 2026-10-01 by reading the code: PLAN sends whole pages plus one page of margin,
+   so text from sections it did not choose reaches the model; and the `phase_population` search hints
+   name the headings "Background" and "Rationale".
+1a. **PLAN depends on PDF bookmarks.** A PDF with no bookmarks gets pages 1 to 5 for every field group.
+   `samples/Synthetic_RFP_NEOD001.pdf` has none, so its page 6 (the services requested) is never read.
+   Fixed by stage 1 of `docs/PLAN_2026-10-02.md`.
 2. **`timeline.total_duration` splits by enrolment timing.** Same run: "approximately 3.5-4 years"
    for early enrollers and "1.5-2 years" for late ones, both confirmed, with the study-level 42
    months absent. Correct per-subject, wrong as the study duration a budget needs.
@@ -106,7 +119,8 @@ checks every task's field names against the specification, so neither mistake ca
    `app_v2.py` but not yet live — see the 2026-10-01 entry below. Still unspecified: a past-run
    browser, the 101 extracted fields shown as a table, and the contradictions shown individually.
 4. **Fix the two extraction problems above** — the phase of a referenced study, and the study
-   duration splitting per subject.
+   duration splitting per subject. The first is being fixed by `docs/PLAN_2026-10-02.md`; do that
+   plan's five stages in order before anything else on this list.
 5. **Return `privacy_mode` to `private` and the models to CAII before any customer document.**
    `config/models.yaml` is on `mixed` with Claude Sonnet 4.6 on Bedrock for testing.
 6. Build `audit.json`, the janitor job, and the `rfp_intake.eval` command line.
@@ -343,6 +357,10 @@ Source: `/home/cdsw/how_to_resond.txt`, adapted for this project.
    `this`, `that`, and `the above` all have several possible referents in a system
    with an application, a job, a container, a graph, a node and a model in it.
    Repeating the full name is never too long.
+   **The same applies to any vague reference, not only pronouns for components.**
+   "Both", "these", "those", "the two", "the latter" and "the earlier one" must name what they
+   refer to in the same sentence. Not "both pass" but "the find-sections test and the PLAN test
+   both pass". A reader who has to scroll up to find the referent has been failed.
 7. **Disambiguate overloaded words every time.** "The field schema" (`config/fields.yaml`)
    or "the graph state schema" (`RunState`), never just "schema". "The Cloudera AI
    Application" or "the CML Job", never just "the app". **Parse** means reading text off
