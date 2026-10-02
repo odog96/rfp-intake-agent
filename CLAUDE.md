@@ -18,7 +18,7 @@ against it anyway).
 Phases 0–4 of ARCHITECTURE.md §10 are done, and stages 1 and 2 of `docs/PLAN_2026-10-02.md`. Graph
 topology today:
 `INGEST → CLASSIFY → FIND_SECTIONS → PLAN → EXTRACT → NORMALIZE → RECONCILE → ADJUDICATE → DERIVE → GATE`,
-then RENDER runs after the graph finishes (see the deviations below). 635 tests passing, 1 skipped.
+then RENDER runs after the graph finishes (see the deviations below). 638 tests passing, 1 skipped.
 Pushed to https://github.com/odog96/rfp-intake-agent.git. The push is done from a terminal by
 Oliver, from inside the repository directory — this session's credentials cannot do it.
 
@@ -177,11 +177,17 @@ imported `rfp_intake.sections`. Importing `rfp_intake.plan.scoring` executes `rf
 first, so there is no way for `rfp_intake.sections` to read a constant out of the `plan` package without a
 cycle. `plan/scoring.py` and `plan/__init__.py` re-export all three names, so existing imports still work.
 
-**PLAN writes sections back onto a `Document` that has none.** `_sections_for` calls the same
-`find_sections` and assigns the result to `doc.sections` and `doc.section_source`. Computing them and
-keeping them local handed EXTRACT tasks naming sections the document did not carry, and every excerpt came
-back empty — which is how `tests/graph/test_pipeline_integration.py` failed while the PLAN and EXTRACT
-tests all passed.
+**FIND_SECTIONS is the only producer of sections. PLAN reads them and writes nothing.**
+`plan_extraction` raises `MissingSectionsError` naming the document and the node that did not run, and
+`plan_node` returns `{"tasks": ...}` with no `documents` key. `job/__init__.py` line 89 already catches any
+node exception, writes it into `status.json` with the class name in `detail` and exits non-zero, so the
+failure is loud. An intermediate version of stage 2 had PLAN section such a document itself and write the
+result back; Oliver rejected that on 2026-10-02 as two producers of the same data, which can drift apart.
+Three tests hold the line: `test_plan_extraction_raises_when_a_document_has_no_sections`,
+`test_plan_does_not_write_to_the_document` (compares `doc.model_dump()` either side of the call) and
+`test_plan_node_returns_tasks_only`. Every hand-built document in `tests/plan/test_plan.py` and
+`tests/graph/test_pipeline_integration.py` now goes through the real FIND_SECTIONS first, so those tests
+exercise the order the graph uses.
 
 On the two real sample PDFs, offline: 26 tasks across 9 groups (protocol 17, synthetic RFP 9), down from
 the 37 the old whole-page planner produced; largest task 3,932 estimated tokens, under the 4,000 budget;
@@ -192,13 +198,14 @@ plus sections 1.2 and 1.4 — never 1.3.2.
 Unchanged, deliberately: NORMALIZE, RECONCILE, ADJUDICATE, DERIVE, GATE, every parser, `extraction.json`,
 `report.pdf`, `report.xlsx`, and `privacy_mode`.
 
-**635 tests passing, 1 skipped** — 15 more than the 620 after stage 1. `tests/plan/test_scoring.py` was
+**638 tests passing, 1 skipped** — 18 more than the 620 after stage 1. `tests/plan/test_scoring.py` was
 rewritten against the new signature (the margin test is now `test_no_page_margin_is_applied`),
 `tests/plan/test_plan.py` had `test_fallback_without_outline` replaced by
 `test_a_document_without_an_outline_is_read_whole` and gained `test_tasks_fit_the_token_budget`,
 `tests/extract/test_prompt.py` gained a `TestExcerptFromSections` class of 7 tests, and
 `tests/plan/test_plan_sections_samples.py` is new — 10 tests on the two real PDFs, marked `slow`, no model
-call. No existing test was deleted. **No live model run was made for this stage**, so everything above is
+call, and `tests/plan/test_plan.py` gained the three tests above that keep PLAN read-only. No existing test
+was deleted. **No live model run was made for this stage**, so everything above is
 offline evidence; the next live Bedrock run on the synthetic pair is what would show the effect on
 `study.phase` itself.
 

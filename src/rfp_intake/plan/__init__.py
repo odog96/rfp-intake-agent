@@ -13,6 +13,15 @@ side, with "the first 5 pages" when nothing scored. All three are gone:
 
 The number of extraction calls per (document, group) is unchanged: one, unless
 the chosen sections do not fit in one call.
+
+**FIND_SECTIONS is the only producer of sections, and PLAN never writes to a
+`Document`.** PLAN reads `Document.sections` and raises `MissingSectionsError` if
+a document arrives without any. FIND_SECTIONS cannot produce a document with no
+sections — rule 2 and `whole_document_fallback` both guarantee at least one, and
+its own exception handler assigns one — so an empty list means FIND_SECTIONS did
+not run, which is a wiring mistake and not a condition to paper over. PLAN briefly
+sectioned such a document itself; that made two producers of the same data, which
+could drift apart.
 """
 
 from __future__ import annotations
@@ -25,16 +34,32 @@ from rfp_intake.domain.budget import DEFAULT_TOKEN_BUDGET, estimate_text_tokens
 from rfp_intake.domain.registry import Registry, get_registry
 from rfp_intake.domain.schemas import Document, ExtractionTask, RunState, Section
 from rfp_intake.plan.scoring import score_section, select_sections
-from rfp_intake.sections import find_sections, section_page_texts, section_text
+from rfp_intake.sections import section_page_texts, section_text
 
 logger = structlog.get_logger()
 
 DEFAULT_TOP_K = 3
 
+
+class MissingSectionsError(RuntimeError):
+    """A document reached PLAN with no sections, so FIND_SECTIONS did not run.
+
+    Raised rather than recorded as a `RunError`, because PLAN cannot plan anything
+    for such a document and carrying on would write a report that silently omits
+    every field in it. `job/__init__.py` catches it, writes the failure into
+    `status.json` with this class name in `detail`, and exits non-zero.
+    """
+
 # DEFAULT_TOKEN_BUDGET is re-exported from domain/budget.py, where it lives so
 # that rfp_intake.sections can read it without importing this module — this
 # module imports rfp_intake.sections.
-__all__ = ["DEFAULT_TOKEN_BUDGET", "DEFAULT_TOP_K", "plan_extraction", "plan_node"]
+__all__ = [
+    "DEFAULT_TOKEN_BUDGET",
+    "DEFAULT_TOP_K",
+    "MissingSectionsError",
+    "plan_extraction",
+    "plan_node",
+]
 
 
 def plan_extraction(
@@ -49,6 +74,9 @@ def plan_extraction(
     3. If none scored, send the whole document when it fits one call, otherwise
        the first `DEFAULT_TOP_K` sections.
     4. Pack the chosen sections into as few tasks as the token budget allows.
+
+    Raises `MissingSectionsError` if any document has no sections. Nothing here
+    writes to a `Document`.
     """
     if registry is None:
         registry = get_registry()
@@ -74,25 +102,19 @@ def plan_extraction(
 
 
 def _sections_for(doc: Document) -> list[Section]:
-    """The document's sections, computing them if FIND_SECTIONS did not run.
+    """The document's sections, as FIND_SECTIONS left them. Read-only.
 
-    FIND_SECTIONS fills `Document.sections` in the graph, so the fallback is for
-    a caller that builds a `Document` by hand. It is the same code FIND_SECTIONS
-    runs, so it cannot disagree with it.
-
-    **The computed sections are written back onto the document**, because the
-    tasks PLAN returns name sections by id and EXTRACT looks those ids up on the
-    document. Computing them and keeping them local would hand EXTRACT tasks
-    naming sections the document does not have, and every excerpt would come back
-    empty.
+    PLAN does not produce sections and does not modify the document. A caller
+    building a `Document` by hand calls `rfp_intake.sections.find_sections_node`,
+    or `find_sections` and assigns the result, before calling PLAN.
     """
-    if doc.sections:
-        return list(doc.sections)
-    sections, source = find_sections(doc)
-    doc.sections = sections
-    doc.section_source = source
-    logger.info("plan_sectioned_document_itself", doc_id=doc.id, source=source)
-    return sections
+    if not doc.sections:
+        raise MissingSectionsError(
+            f"Document {doc.id} ({doc.kind}) reached PLAN with no sections. "
+            "FIND_SECTIONS must run before PLAN: it is the only thing that "
+            "produces Document.sections, and PLAN chooses sections by id."
+        )
+    return list(doc.sections)
 
 
 def _plan_group(
@@ -262,7 +284,11 @@ def _task(
 
 
 def plan_node(state: RunState) -> dict[str, Any]:
-    """PLAN graph node — generate extraction tasks. Pure Python."""
+    """PLAN graph node — generate extraction tasks. Pure Python.
+
+    Returns `tasks` only. PLAN reads `Document.sections` and never writes to a
+    document, so there is nothing for it to return under `documents`.
+    """
     registry = get_registry()
     tasks = plan_extraction(state.documents, registry)
 

@@ -4,17 +4,31 @@ Updated for stage 2 of docs/PLAN_2026-10-02.md: PLAN chooses sections, not pages
 widened by a one-page margin, and there is no first-5-pages fallback. The document
 below keeps its `outline`, because FIND_SECTIONS turns an outline into sections, so
 these tests still exercise the bookmarks path end to end.
+
+Every document here is passed through the real `find_sections` first. PLAN reads
+`Document.sections` and raises `MissingSectionsError` without them — FIND_SECTIONS
+is the only producer of sections, and `test_plan_requires_find_sections_to_have_run`
+is what holds that line.
 """
 
 from __future__ import annotations
 
 import os
 
+import pytest
+
 from rfp_intake.domain.schemas import Document, OutlineEntry, RunState
+from rfp_intake.sections import find_sections
+
+
+def _sectioned(doc: Document) -> Document:
+    """The document as FIND_SECTIONS leaves it. PLAN requires sections."""
+    doc.sections, doc.section_source = find_sections(doc)
+    return doc
 
 
 def _make_doc_with_outline() -> Document:
-    return Document(
+    return _sectioned(Document(
         id="doc-001",
         path="/tmp/test.pdf",
         kind="protocol",
@@ -47,7 +61,7 @@ def _make_doc_with_outline() -> Document:
             OutlineEntry(heading="Number of Sites", page_start=13, page_end=13, level=1),
             OutlineEntry(heading="Monitoring", page_start=14, page_end=14, level=1),
         ],
-    )
+    ))
 
 
 class TestPlanExtraction:
@@ -112,14 +126,14 @@ class TestPlanExtraction:
         from rfp_intake.plan import plan_extraction
         registry = get_registry()
 
-        doc = Document(
+        doc = _sectioned(Document(
             id="doc-002",
             path="/tmp/no-outline.pdf",
             kind="rfp",
             pages=30,
             page_texts={i: f"Page {i} content" for i in range(1, 31)},
             outline=[],
-        )
+        ))
 
         tasks = plan_extraction([doc], registry)
         assert len(tasks) >= 9  # at least one per group
@@ -139,9 +153,11 @@ class TestPlanExtraction:
         registry = get_registry()
 
         doc = _make_doc_with_outline()
-        # Make one chosen section far too long for a single extraction call.
-        doc.page_texts[3] = "randomised parallel group trial. " * 900
+        # Make one chosen section far too long for a single extraction call, then
+        # re-section, so the section offsets match the text they were cut from.
+        doc.page_texts[3] = "Study Design \n" + "randomised parallel group trial. " * 900
         doc.page_texts[4] = "double-blind 1:1 allocation. " * 900
+        _sectioned(doc)
 
         tasks = plan_extraction([doc], registry)
         design = [t for t in tasks if t.group == "study_design"]
@@ -154,6 +170,65 @@ class TestPlanExtraction:
             assert (task.budget_tokens or 0) <= DEFAULT_TOKEN_BUDGET or pages_in_task == 1
         # The split tasks still name the section they came from.
         assert all(task.section_ids for task in design)
+
+
+class TestPlanRequiresSections:
+    """FIND_SECTIONS is the only producer of sections; PLAN refuses to improvise."""
+
+    def test_plan_extraction_raises_when_a_document_has_no_sections(
+        self, fields_yaml_path
+    ) -> None:  # type: ignore[no-untyped-def]
+        os.environ["RFP_INTAKE_FIELDS_YAML_PATH"] = str(fields_yaml_path)
+        from rfp_intake.domain.registry import get_registry
+        get_registry.cache_clear()
+
+        from rfp_intake.plan import MissingSectionsError, plan_extraction
+        registry = get_registry()
+
+        # The same document, but FIND_SECTIONS never ran on it.
+        doc = Document(
+            id="doc-003",
+            path="/tmp/unsectioned.pdf",
+            kind="protocol",
+            pages=2,
+            page_texts={1: "Synopsis: a Phase III study.", 2: "75 sites in 6 countries."},
+        )
+        assert doc.sections == []
+
+        with pytest.raises(MissingSectionsError) as excinfo:
+            plan_extraction([doc], registry)
+
+        # The message has to name the document and the node that did not run,
+        # because job/__init__.py puts it straight into status.json.
+        assert "doc-003" in str(excinfo.value)
+        assert "FIND_SECTIONS" in str(excinfo.value)
+
+    def test_plan_does_not_write_to_the_document(self, fields_yaml_path) -> None:  # type: ignore[no-untyped-def]
+        """PLAN reads Document.sections and changes nothing on the document."""
+        os.environ["RFP_INTAKE_FIELDS_YAML_PATH"] = str(fields_yaml_path)
+        from rfp_intake.domain.registry import get_registry
+        get_registry.cache_clear()
+
+        from rfp_intake.plan import plan_extraction
+        registry = get_registry()
+
+        doc = _make_doc_with_outline()
+        before = doc.model_dump()
+
+        plan_extraction([doc], registry)
+
+        assert doc.model_dump() == before
+
+    def test_plan_node_returns_tasks_only(self, fields_yaml_path) -> None:  # type: ignore[no-untyped-def]
+        """No "documents" key: PLAN has nothing to write back."""
+        os.environ["RFP_INTAKE_FIELDS_YAML_PATH"] = str(fields_yaml_path)
+        from rfp_intake.domain.registry import get_registry
+        get_registry.cache_clear()
+
+        from rfp_intake.plan import plan_node
+
+        state = RunState(run_id="test-run", documents=[_make_doc_with_outline()])
+        assert set(plan_node(state)) == {"tasks"}
 
 
 class TestPlanNode:

@@ -489,10 +489,13 @@ at fan-in (that is what the `append_or_replace` reducer in §3 is for). A page i
 split by, so one page larger than the budget on its own stays one task and is logged as
 `plan_page_over_budget`.
 
-PLAN sections a document itself, by calling the same `find_sections`, when it is handed one whose
-`sections` are empty, and **writes the result back onto the `Document`** — otherwise the tasks would name
-sections the document does not carry and every excerpt would come back empty. In the graph FIND_SECTIONS
-has always already run; this is for a caller that builds a `Document` by hand.
+**FIND_SECTIONS is the only producer of sections, and PLAN writes nothing.** PLAN reads
+`Document.sections` and raises `MissingSectionsError` when a document arrives without any; `plan_node`
+returns `{"tasks": ...}` and no `documents`. FIND_SECTIONS cannot produce a document with no sections —
+rule 2, `whole_document_fallback` and its own exception handler each guarantee at least one — so an empty
+list means FIND_SECTIONS did not run, which is a wiring mistake. `job/__init__.py` catches the exception,
+writes it into `status.json` with the class name in `detail`, and exits non-zero. PLAN briefly sectioned
+such a document itself; that made two producers of the same data, which could drift apart.
 
 ### 4.4 EXTRACT (the fan-out leaf)
 One structured-output call per task. Bounded schema = only that group's fields. Prompt skeleton:

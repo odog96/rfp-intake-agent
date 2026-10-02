@@ -1,4 +1,9 @@
-"""Integration test — full pipeline INGEST → CLASSIFY → PLAN → EXTRACT → NORMALIZE."""
+"""Integration test — FIND_SECTIONS → PLAN → EXTRACT → NORMALIZE and the rest.
+
+FIND_SECTIONS runs in every test here that calls PLAN, because PLAN reads
+`Document.sections` and raises `MissingSectionsError` without them. FIND_SECTIONS
+is the only thing that produces sections.
+"""
 
 from __future__ import annotations
 
@@ -8,7 +13,11 @@ from rfp_intake.domain.schemas import Document, ExtractionTask, OutlineEntry, Ru
 
 
 def _make_test_doc() -> Document:
-    """A realistic document with outline, page texts, and content that matches mock fixture."""
+    """A realistic document with outline, page texts, and content that matches mock fixture.
+
+    Sections are NOT filled in here — `_sectioned` does that, by running the real
+    FIND_SECTIONS node, so these tests exercise the same order the graph uses.
+    """
     return Document(
         id="doc-int-001",
         path="/tmp/integration_test.pdf",
@@ -40,6 +49,16 @@ def _make_test_doc() -> Document:
     )
 
 
+def _sectioned(run_id: str, doc: Document) -> RunState:
+    """The state as FIND_SECTIONS leaves it, which is what PLAN expects."""
+    from rfp_intake.sections import find_sections_node
+
+    state = RunState(run_id=run_id, documents=[doc])
+    result = find_sections_node(state)
+    assert result["errors"] == []
+    return RunState(run_id=run_id, documents=result["documents"])
+
+
 class TestPipelineIntegration:
     """End-to-end pipeline test using pre-built Document (skips actual PDF parsing)."""
 
@@ -56,7 +75,7 @@ class TestPipelineIntegration:
         from rfp_intake.plan import plan_node
 
         doc = _make_test_doc()
-        state = RunState(run_id="integration-test", documents=[doc])
+        state = _sectioned("integration-test", doc)
 
         # PLAN
         plan_result = plan_node(state)
@@ -67,10 +86,12 @@ class TestPipelineIntegration:
         groups_covered = {t.group for t in tasks}
         assert len(groups_covered) == 9
 
-        # EXTRACT (using tasks from PLAN)
+        # EXTRACT (using tasks from PLAN). The documents are the ones
+        # FIND_SECTIONS wrote sections onto — a task names its sections by id,
+        # so a document without them yields an empty excerpt.
         extract_state = RunState(
             run_id="integration-test",
-            documents=[doc],
+            documents=state.documents,
             tasks=tasks,
         )
         extract_result = extract_node(extract_state)
@@ -111,7 +132,7 @@ class TestPipelineIntegration:
         from rfp_intake.plan import plan_node
 
         doc = _make_test_doc()
-        state = RunState(run_id="test", documents=[doc])
+        state = _sectioned("test", doc)
 
         result = plan_node(state)
         tasks = result["tasks"]
@@ -172,10 +193,12 @@ class TestPipelineIntegration:
         from rfp_intake.reconcile import reconcile_node
 
         doc = _make_test_doc()
-        state = RunState(run_id="integration-test", documents=[doc])
+        state = _sectioned("integration-test", doc)
 
         tasks = plan_node(state)["tasks"]
-        extract_state = RunState(run_id="integration-test", documents=[doc], tasks=tasks)
+        extract_state = RunState(
+            run_id="integration-test", documents=state.documents, tasks=tasks
+        )
         records = extract_node(extract_state)["records"]
         normalized = normalize_node(RunState(run_id="integration-test", records=records))["records"]
 
