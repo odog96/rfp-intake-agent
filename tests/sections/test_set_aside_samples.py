@@ -25,7 +25,7 @@ import pytest
 
 from rfp_intake.domain.schemas import Document, Section
 from rfp_intake.domain.section_policy import SectionsPolicy, load_sections_policy
-from rfp_intake.sections import find_sections
+from rfp_intake.sections import find_sections, section_text
 from rfp_intake.sections.set_aside import set_aside_sections
 from tests.sections.test_find_sections_samples import PROTOCOL, _document
 
@@ -101,6 +101,49 @@ class TestTheStageThreeAcceptanceTest:
         total = len(kept) + len(dropped)
         assert total == len(protocol.sections)
         assert len(kept) > total * 0.5, f"only {len(kept)} of {total} sections survived"
+
+    @pytest.mark.parametrize(
+        ("phrase", "heading"),
+        [
+            # Oliver named these three on 2026-10-02 as the sentences that must
+            # survive stage 3, so they are asserted as text rather than as
+            # headings: a future edit to `config/sections.yaml` could keep a
+            # section with the right name and still lose the sentence, because
+            # the nesting rule takes children.
+            ("No interim analyses are planned for this study", "10.7 Interim Analysis"),
+            (
+                "strictly limited to the unblinded pharmacy staff",
+                "6.2 Shipping, Storage, and Handling of NEOD001",
+            ),
+            ("A matching placebo will not be provided", "6.3 Placebo"),
+        ],
+    )
+    def test_the_sentences_that_must_survive_do(
+        self, protocol: Document, policy: SectionsPolicy, phrase: str, heading: str
+    ) -> None:
+        """Each sentence is still readable, and still in the section it came from.
+
+        Each one is a cost driver the budget needs and nothing else in the
+        protocol states: whether a second analysis has to be staffed and
+        unblinded, whether unblinded pharmacy staff are needed at every site,
+        and whether a placebo has to be manufactured and distributed.
+
+        The heading is asserted as well as the text, because the same words
+        appearing somewhere else — the contents page lists "10.7 Interim
+        Analysis" — would satisfy a text-only check while the section itself had
+        gone.
+        """
+        kept, _ = set_aside_sections(protocol, policy)
+        wanted = " ".join(phrase.split()).lower()
+        holding = [
+            section
+            for section in kept
+            if wanted in " ".join(section_text(protocol, section).split()).lower()
+        ]
+        assert holding, f"{phrase!r} is not in any kept section"
+        assert heading in [section.heading for section in holding], (
+            f"{phrase!r} survived, but in {[s.heading for s in holding]} rather than {heading!r}"
+        )
 
     def test_nothing_is_lost_or_counted_twice(
         self, protocol: Document, policy: SectionsPolicy

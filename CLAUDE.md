@@ -18,7 +18,7 @@ against it anyway).
 Phases 0–4 of ARCHITECTURE.md §10 are done, and stages 1, 2 and 3 of `docs/PLAN_2026-10-02.md`. Graph
 topology today:
 `INGEST → CLASSIFY → FIND_SECTIONS → SET_ASIDE_SECTIONS → PLAN → EXTRACT → NORMALIZE → RECONCILE → ADJUDICATE → DERIVE → GATE`,
-then RENDER runs after the graph finishes (see the deviations below). 759 tests passing, 1 skipped.
+then RENDER runs after the graph finishes (see the deviations below). 762 tests passing, 1 skipped.
 Pushed to https://github.com/odog96/rfp-intake-agent.git. The push is done from a terminal by
 Oliver, from inside the repository directory — this session's credentials cannot do it.
 
@@ -195,9 +195,27 @@ took it. No reducer, deliberately: SET_ASIDE_SECTIONS is the only producer and r
 came back empty because its section was set aside; `report.pdf` does not show it.
 
 Both Streamlit pages now show eleven stages: `("SET_ASIDE_SECTIONS", "Setting aside sections not
-needed")` was inserted into `_STEPS` in `app.py` and `app_v2.py`. `launch_app.py` is untouched.
+needed")` was inserted into `_STEPS` in `app.py` and `app_v2.py`.
 
-**759 tests passing, 1 skipped** — 121 more than the 638 after stage 2, in four new files.
+**`launch_app.py` serves `app_v2.py`, the stage-card page, and that is now settled.** Oliver decided
+this on 2026-10-02, when asked whether the default should go back to `app.py`. `docs/PLAN_2026-10-02.md`
+section 5 had listed the switch as a separate decision; this is that decision, taken. `app.py` is kept
+working and unchanged, so rolling back is setting `RFP_INTAKE_APP_FILE=app.py` in Project Settings →
+Advanced → Environment Variables and restarting the Cloudera AI Application — not editing code. The
+2026-10-01 entry below says `launch_app.py:36` still starts `app.py`; that sentence is history, and this
+line supersedes it.
+
+**Three sentences in `samples/Example protocol 2.pdf` were checked by hand after the stage was built**,
+because Oliver named them as the ones that must survive. All three are in the kept text, each still in
+its own section: "No interim analyses are planned for this study" in 10.7 Interim Analysis (page 98),
+"strictly limited to the unblinded pharmacy staff" in 6.2 Shipping, Storage, and Handling of NEOD001
+(page 53), and "A matching placebo will not be provided" in 6.3 Placebo (page 53). Nothing in
+`config/sections.yaml` needed fixing. They are now
+`test_the_sentences_that_must_survive_do` in `tests/sections/test_set_aside_samples.py`, asserted as
+text *and* section heading, because the contents page lists "10.7 Interim Analysis" too — a text-only
+check would pass on the contents page while the section itself had gone.
+
+**762 tests passing, 1 skipped** — 124 more than the 638 after stage 2, in four new files.
 `tests/domain/test_section_policy.py` covers the loader, the matching rules and the shipped file's own
 contents, including the three deliberately absent entries. `tests/sections/test_set_aside.py` is fast
 unit tests on hand-built documents, with the never-set-aside headings tested against a *hostile* policy

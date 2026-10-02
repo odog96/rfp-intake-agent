@@ -43,11 +43,11 @@ def _find_project_root() -> Path:
 
 project_root = _find_project_root()
 
-# Which page the Application serves. app_v2.py is the current one: it draws the
-# pipeline's nine stages as cards. app.py is the previous page, kept working and
-# unchanged, so rolling back is setting this variable rather than editing code —
-# in Project Settings → Advanced → Environment Variables, then restarting the
-# Application.
+# Which page the Application serves. app_v2.py is the current one, by Oliver's
+# decision on 2026-10-02: it draws the pipeline's eleven stages as cards. app.py
+# is the previous page, kept working and unchanged, so rolling back is setting
+# this variable rather than editing code — in Project Settings → Advanced →
+# Environment Variables, then restarting the Application.
 #
 # Not declared in .project-metadata.yaml on purpose. An AMP prompts for every
 # variable it declares, and a customer deploying this project should not be asked
