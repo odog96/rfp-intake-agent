@@ -539,12 +539,26 @@ because each is a rule someone would otherwise undo in good faith:
   document — the title alone carries the phase, the blinding, the control, the number of arms and the
   population (`docs/ANALYST_PROCEDURE_PROTOCOL.md` section 2).
 
-**Introduction, background and rationale are deliberately absent from `set_aside`**, though section 4 of
-the analyst procedure lists all three. `study.phase` is wrong today because of section 1.3.2, which sits
-inside the background and describes a different study, and MARK_OTHER_STUDY (stage 4) is the node built
-to find it. Dropping the background first would make stage 4's live test pass without stage 4 doing
-anything. They go on the list once a live run has shown MARK_OTHER_STUDY fixing `study.phase` on its
-own.
+**`background on` was added on 2026-10-02, as stage 5 item 1; the bare words `background`,
+`introduction` and `rationale` are still deliberately absent.** Section 4 of the analyst procedure lists
+all three, and the narrow phrase is the only one safe to list. `rationale` would match
+"1.2 Rationale for Clinical Study", which is where the sample protocol states the comparison being
+made, and `introduction` would take the whole of section 1 with it under the nesting rule.
+
+The narrow entry waited for stage 4 on purpose. `study.phase` was wrong because of section 1.3.2, which
+sits inside the background and describes a different study, and MARK_OTHER_STUDY (§4.2c) is the node
+built to find it. Dropping the background first would have made stage 4's live test pass without
+MARK_OTHER_STUDY doing anything. Stage 4 has now passed twice on its own — runs
+`r-20261002-213531-stage4` and `r-20261002-222824-stage4b` — so the entry is safe.
+
+**1.3.2 Clinical Experience survives for an incidental reason, and a test says so.** It is nested under
+1.3 and would go with it, but `keep_if_contains` rescues it on the phrase "interim analysis" — and that
+phrase sits in one of the very sentences MARK_OTHER_STUDY then removes. The rescue is real, because
+stage 3 runs before stage 4, but a protocol that worded its interim analysis differently would lose the
+section, and the section is not meant to go whole: MARK_OTHER_STUDY cuts the five sentences about study
+NEOD001-001 and the rest is this study's text.
+`tests/sections/test_set_aside_samples.py::TestTheBackgroundAndNonclinicalSections` asserts the survival
+and records why, so the day it stops being true a test fails instead of a number going missing.
 
 ### 4.2c MARK_OTHER_STUDY
 Added 2026-10-02 as stage 4 of `docs/PLAN_2026-10-02.md`. Code in `other_study/`
@@ -744,8 +758,13 @@ offline, without the tool. Both values, both quotes, both page citations, the pr
 and a recommended resolution with its reasoning. "Values disagree" is not an acceptable explanation in MVP.
 
 ### 4.8 DERIVE
-Computed fields get their own node so they are never confused with extracted ones. Currently one:
-`visits.intensity_rating` — Angus asks for a low/moderate/high/not-specified judgement. Implement as a
+Computed fields get their own node so they are never confused with extracted ones. There are two, both
+in `derive/rubric.py` and both registered in `DERIVE_RUBRICS` (`derive/__init__.py`). A derived field
+with no registered rubric degrades to `not_specified` and logs an error rather than crashing the run;
+`tests/domain/test_registry.py` asserts that every derived field in `config/fields.yaml` has one, because
+that degradation would otherwise show up as a missing number in the report and nothing else.
+
+**`visits.intensity_rating`** — Angus asks for a low/moderate/high/not-specified judgement. Implement as a
 **transparent rubric over extracted evidence**, not a vibe call:
 
 ```
@@ -757,6 +776,35 @@ score = Σ weights over present evidence:
 ```
 `ResolvedField.derived_from` lists the field ids that fed it, and the report prints the contributing
 evidence. A DSB reviewer must be able to see *why* it said "high" and disagree with it.
+
+**`blinding.placebo_assumption`**, added 2026-10-02 as stage 5 items 9 and 10. Whether a placebo that
+matches the study drug can be assumed, which decides whether separately paid unblinded staff should be
+priced in. No document states it, so it is worked out from four extracted fields — `blinding.design`,
+`ip.form`, `blinding.placebo_matching` and `blinding.unblinded_staff_stated` — by
+`docs/ANALYST_PROCEDURE_PROTOCOL.md` section 6, in this order:
+
+1. **Open-label** → "not applicable: open-label". Nobody is blinded, so the question does not arise.
+2. **Both stated and in conflict** — the document says the placebo matches *and* says unblinded staff
+   are required → say the documents contradict each other and the sponsor must be asked, with both
+   quotes in the explanation. This is checked *before* rule 3, because rule 3 would otherwise report the
+   matching placebo as settled, which is the one outcome the contradiction rule exists to prevent. It is
+   section 6 rule 6; Angus said one of the two is often a typo [01:39:42].
+3. **The document says** whether the placebo matches → use what it says. The route never overrides a
+   statement.
+4. **Silent, drug injected or infused** → "probably not matching; unblinded handling likely". Liquids
+   are hard to colour-match. `intrathecal` is counted as injected for the same reason.
+5. **Silent, drug oral** → "matching not confirmed; oral drug; do not assume unblinded monitoring".
+6. **Silent, and the route decides nothing** (topical, inhaled, ophthalmic, `other`, not stated) → say
+   so and ask the sponsor. It deliberately does *not* fall through to the oral answer, which reads as
+   "do not price unblinded staff" and would be reassurance nobody had evidence for.
+
+**Why this is a rubric and not a RECONCILE check.** RECONCILE compares values of the *same* field across
+documents (`reconcile/__init__.py`). Rule 2 above is a disagreement between two *different* fields, which
+RECONCILE has no way to see. GATE sends every derived field to `needs_review`, so the answer always
+reaches a person.
+
+The explanation names every input it used and quotes it where there is a quote, because the whole value
+of an assumption a person can overrule is that they can see what it rests on.
 
 ### 4.9 GATE
 Maps confidence and contradiction state to a reviewer-facing status:

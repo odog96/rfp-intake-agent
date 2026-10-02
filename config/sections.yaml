@@ -25,16 +25,24 @@
 #    the next heading at the same or a higher level. So a heading here must be
 #    safe to drop *with its children* — see the `statistical` note below.
 #
-# DELIBERATELY ABSENT: introduction, background, rationale.
-# Section 4 of the analyst procedure does say to ignore them. They are left out
-# anyway, because `study.phase` is wrong today precisely because of section 1.3.2
-# of the sample protocol, which sits inside the background and describes a
-# *different* study. Stage 4 (MARK_OTHER_STUDY) exists to find that text and
-# remove it. If stage 3 dropped the whole background first, stage 4's live test
-# would pass without MARK_OTHER_STUDY doing anything, and we would not know
-# whether it works. Add them here only once stage 4 has passed on its own, which
-# is the same ordering docs/PLAN_2026-10-02.md stage 5 item 1 applies to the
-# `phase_population` search hints.
+# STILL DELIBERATELY ABSENT: bare `background`, `introduction`, `rationale`.
+# Section 4 of the analyst procedure says to ignore all three. Only the narrow
+# phrase `background on` is here (see "Background and introduction" below). The
+# bare words are left out because each one is a prefix of headings that carry
+# cost: `rationale` would match "1.2 Rationale for Clinical Study", which is
+# where the sample protocol states the comparison being made, and `introduction`
+# would take the whole of section 1 with it under the nesting rule, including
+# every subsection below. Narrow the phrase to the heading you mean.
+#
+# WHY `background on` WAITED FOR STAGE 4. `study.phase` was wrong because of
+# section 1.3.2 of the sample protocol, which sits inside the background and
+# describes a *different* study. Stage 4 (MARK_OTHER_STUDY) exists to find that
+# text and remove it. Had stage 3 dropped the whole background first, stage 4's
+# live test would have passed without MARK_OTHER_STUDY doing anything and we
+# would not know whether it works. Stage 4 has now passed twice on its own —
+# runs `r-20261002-213531-stage4` and `r-20261002-222824-stage4b` — so the
+# entry is safe to add. Same ordering as docs/PLAN_2026-10-02.md stage 5 item 1
+# applies to the `phase_population` search hints.
 
 set_aside:
   # Versioning and front matter [01:01:23, 01:01:35, 01:05:16]
@@ -64,6 +72,22 @@ set_aside:
   - eligibility
   - eligibility criteria
   - subject selection
+
+  # Background and introduction [01:35:05]
+  # `background on` and not `background`, because the phrase has to name the
+  # drug or the disease to be the section Angus skips. In the sample protocol it
+  # matches "1.3 Background on NEOD001" (p.36) and takes "Figure 1: Proposed
+  # Mechanism of Action for NEOD001" with it under the nesting rule.
+  #
+  # 1.3.2 Clinical Experience is also nested under 1.3, and it is NOT meant to go
+  # whole: MARK_OTHER_STUDY cuts the five sentences in it that describe study
+  # NEOD001-001 and the rest is this study's text. It survives today because its
+  # body says "interim analysis", which `keep_if_contains` rescues. That rescue
+  # is real but incidental — the phrase sits in a sentence MARK_OTHER_STUDY then
+  # removes, and a protocol that worded it differently would lose the section.
+  # tests/sections/test_set_aside_samples.py asserts the survival and says so, so
+  # the day it stops being true a test fails rather than a number going missing.
+  - background on
 
   # Drug chemistry and animal data [01:35:05, 01:37:07, 01:46:03]
   - nonclinical

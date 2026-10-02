@@ -15,10 +15,12 @@ against it anyway).
 
 ## Current status (as of 2026-10-02)
 
-Phases 0–4 of ARCHITECTURE.md §10 are done, and stages 1, 2, 3 and 4 of `docs/PLAN_2026-10-02.md`. Graph
-topology today:
+Phases 0–4 of ARCHITECTURE.md §10 are done, and stages 1, 2, 3, 4 and 5 of `docs/PLAN_2026-10-02.md` —
+but **stage 5's two live pass criteria both failed**, for reasons in PLAN's scoring and in ADJUDICATE;
+read the stage 5 entry below before trusting `blinding.placebo_matching` or
+`blinding.unblinded_staff_stated`. Graph topology today:
 `INGEST → CLASSIFY → FIND_SECTIONS → SET_ASIDE_SECTIONS → MARK_OTHER_STUDY → PLAN → EXTRACT → NORMALIZE → RECONCILE → ADJUDICATE → DERIVE → GATE`,
-then RENDER runs after the graph finishes (see the deviations below). 806 tests passing, 1 skipped.
+then RENDER runs after the graph finishes (see the deviations below). 847 tests passing, 1 skipped.
 Pushed to https://github.com/odog96/rfp-intake-agent.git. The push is done from a terminal by
 Oliver, from inside the repository directory — this session's credentials cannot do it.
 
@@ -35,7 +37,8 @@ documents only, per rule 5 below. Production is CAII and `privacy_mode: private`
 On the two-document test pair, the current baseline run `r-20261002-222824-stage4b` (2026-10-02) gave
 **27 of the 36 registry fields at least one confirmed row**, in 9m03s, with 9 contradiction clusters and
 22 EXTRACT errors, and caught the planted `timeline.total_duration` disagreement. Quote that first figure
-when comparing runs. Two earlier runs matter for comparison: `r-20261002-213531-stage4`, the first run
+when comparing runs. The stage 5 run `r-20261002-232830-stage5` gave **25 of those same 36**, below the
+floor of 26, with 13 clusters and 19 errors; it is not the baseline because it failed its own criteria. Two earlier runs matter for comparison: `r-20261002-213531-stage4`, the first run
 with MARK_OTHER_STUDY, gave 27 of 36 in 9m10s with 8 clusters and 27 EXTRACT errors but removed three
 sentences about this study; and `r-20261002-200521-stage2` gave 26 of 36 in 5m56s with 12 clusters and
 5 EXTRACT errors. The stage 2 entry below has the stage 2 table, and the stage 4 entries explain why the
@@ -152,11 +155,21 @@ checks every task's field names against the specification, so neither mistake ca
    unspecified: a past-run browser, the extracted variables shown as a table, and the contradictions
    shown individually. `app_v2.py` still has no coverage in the test suite and has never been seen in a
    browser.
-4. **Finish `docs/PLAN_2026-10-02.md`: stage 5, the field registry and DERIVE**, before anything else
-   on this list. Stages 1 to 4 are done and the phase of a referenced study is fixed. Stage 5 starts by
-   removing "Background" and "Rationale" from the `phase_population` search hints, which the plan held
-   back until stage 4 had passed on its own. The study duration splitting per subject is the other
-   extraction problem and is half fixed — see known problem 2 above.
+4. **Decide what to do about ADJUDICATE picking a winner by document instead of by record.** This is
+   what failed both of stage 5's live criteria, and it is a decision for Oliver because
+   `docs/PLAN_2026-10-02.md` section 5 lists ADJUDICATE under "Do not change".
+   `adjudicate/__init__.py::_handle_reconcilable` calls `_find_record`, which returns the **first**
+   record whose `provenance.doc_id` equals `winning_doc_id`. Several records for one field from one
+   document is the ordinary case on a 137-page protocol, so the earliest page wins and the
+   `max(confidence)` fallback never runs. `Contradiction` carries `winning_doc_id` and no way to name a
+   record, so fixing it means changing the model, ADJUDICATE's prompt and GATE's reading of the result.
+   It silently decided `blinding.unblinded_staff_stated`, `visits.schedule_present` and
+   `timeline.total_duration` against their own best evidence in run `r-20261002-232830-stage5`.
+4b. **Add "Placebo" to the `blinding_monitoring` search hints in `config/fields.yaml`.** Section
+   `6.3 Placebo` scores 0.000 for that group — the group's hints name neither the heading nor the word —
+   so the sentence stage 5's criterion A depends on, "A matching placebo will not be provided for this
+   study.", was never in any excerpt EXTRACT read. This one is a config change and is safe; it is listed
+   separately because on its own it will not make criterion A pass while item 4 stands.
 4a. **Find out why EXTRACT dropped 22 records in run `r-20261002-222824-stage4b` where the baseline
    before MARK_OTHER_STUDY dropped 5.** 21 of the 22 are `quote_not_found_in_excerpt`, 8 of them
    `visits.frequency_by_period` on the protocol and 5 `ops.monitoring_visits` on the RFP.
@@ -170,6 +183,89 @@ checks every task's field names against the specification, so neither mistake ca
 5. **Return `privacy_mode` to `private` and the models to CAII before any customer document.**
    `config/models.yaml` is on `mixed` with Claude Sonnet 4.6 on Bedrock for testing.
 6. Build `audit.json`, the janitor job, and the `rfp_intake.eval` command line.
+
+### Done 2026-10-02: Stage 5 — five new fields and the placebo rubric; the live test FAILED
+Stage 5 of `docs/PLAN_2026-10-02.md`, all ten items built, 40 new tests, tree green —
+**and the live Bedrock run did not meet either of the stage's two pass criteria.** Both failures
+are in code the plan told me not to change, so the fix is a decision for Angus, not something I did.
+
+**What was built.** Four new extracted fields in `config/fields.yaml` — `study.primary_objective`
+(copied verbatim from the protocol), `blinding.placebo_matching`, `blinding.unblinded_staff_stated`,
+`visits.schedule_present` — plus a fifth derived field, `blinding.placebo_assumption`, with a rubric in
+`src/rfp_intake/derive/rubric.py` (`compute_placebo_assumption`) registered in `DERIVE_RUBRICS`.
+The rubric follows `docs/ANALYST_PROCEDURE_PROTOCOL.md` section 6, rules 1 to 4, with rule 6's
+contradiction checked before rule 2 so that a stated matching placebo and stated unblinded pharmacy
+staff cannot both be reported as settled. Item 1 of the stage, done first at Angus's instruction,
+added "Background on", "Nonclinical" and "Rationale for Dose Selection" to `config/sections.yaml`
+rather than making MARK_OTHER_STUDY cut the background.
+
+**The placebo check is a rubric and not a RECONCILE check on purpose.** RECONCILE compares values of
+the same field across documents. A stated matching placebo contradicting stated unblinded staff is a
+disagreement between two different fields, which RECONCILE cannot see.
+
+**Test count: 848, not 806.** The 806 recorded for stage 4 was one short — HEAD collects 807 in a
+clean worktree, measured by checking HEAD out into `git worktree` and collecting there. Stage 5 adds 40
+in three blocks (derive 22, registry 10, sections 8) and removes none, which is 847; the 848th is the
+stage 5 run folder itself, because
+`tests/render/test_report_model.py::test_nothing_lost_on_a_real_run` is parametrised over every folder
+in `runs/` holding an `extraction.json` — 20 of 27 after this run, 19 before it, not 17. The earlier
+count of 17 filtered on the name prefix `r-2026` and so dropped `r-demo-rfp-protocol-pair` and
+`r-listfix-175318`. Nothing stopped being collected. Final state `847 passed, 1 skipped`,
+`ruff check .` clean, `mypy` clean.
+
+**The live run: `r-20261002-232830-stage5`**, 23:29:19 to 23:38:30 UTC, about 9m11s, on
+`samples/Synthetic_RFP_NEOD001.pdf` plus `samples/Example protocol 2.pdf`. 99 resolved rows across all
+41 fields; 25 fields have a confirmed row; 19 errors (16 `quote_not_found_in_excerpt`, 3
+`numeric_field_no_digits_not_specified`); 13 contradiction clusters; 57 sections set aside; one removed
+passage of 1,515 characters.
+
+**Criterion A failed.** `blinding.placebo_matching` came back `not_specified`; the plan wanted
+`not_matching_stated`, because protocol section 6.3 Placebo says "A matching placebo will not be
+provided for this study." **Two independent causes, both proven:**
+
+1. *EXTRACT never saw the sentence.* It is in section `6.3 Placebo`, which scores **0.000** against the
+   `blinding_monitoring` group's `search_hints` — neither "Placebo" as a heading nor "placebo" as a
+   keyword is in that group's hints, and the section's own two sentences contain none of the sixteen
+   keywords that are. PLAN keeps the top three sections scoring above zero, so 6.3 was never sent. The
+   blinding task that covers pages 52 to 55 reaches them through sections `5 SUBJECT SCREENING AND
+   RANDOMIZATION` and `6.5.1 Study Drug`, which tile around 6.3 and leave its text out, so the page
+   window is misleading: page 53 is in the window and the sentence is not in the excerpt. Reproduced
+   offline by re-running INGEST, FIND_SECTIONS, SET_ASIDE_SECTIONS and PLAN on the same inputs. There is
+   no page-number offset between the PDF and the provenance — three known quotes matched their cited
+   pages exactly.
+2. *ADJUDICATE then discarded the best record anyway.* See below.
+
+**Criterion B failed, on cause 2 alone.** `blinding.unblinded_staff_stated` came back `not_specified`;
+the plan wanted `true`. All four candidate records are from the one protocol: page 20 `not_specified` at
+confidence 0.9, and pages 52, 54 and 54 all `true` at confidence 1.0, quoting "the Unblinded Pharmacist
+or their designee (henceforth collectively referred to as the Unblinded Pharmacy Staff) will be provided
+access to the treatment assignment." The adjudicator's own explanation said the three later extractions
+were the right ones. The answer was still `not_specified`.
+
+**The defect, which I did not fix: `src/rfp_intake/adjudicate/__init__.py::_handle_reconcilable`
+identifies the winner by document, not by record.** It calls `_find_record`, which returns the *first*
+record whose `provenance.doc_id` matches `winning_doc_id`. When several records for one field come from
+the same document — the ordinary case for a 137-page protocol extracted per group over several excerpts
+— the earliest page silently wins and the `max(confidence)` fallback never runs. `Contradiction` has a
+`winning_doc_id` and no way to name a record, so this is a model change, not a one-line fix. The same
+defect also decided `visits.schedule_present` (page 13 `no` at 0.95 beat page 111 `yes_appendix` at
+0.99) and the second `timeline.total_duration` cluster. **`docs/PLAN_2026-10-02.md` section 5 lists
+ADJUDICATE under "Do not change", so I stopped and reported rather than change it.**
+
+**The rubric itself behaved correctly** on the inputs it was given: `blinding.placebo_assumption` =
+"probably not matching; unblinded handling likely", explained by `ip.form=['infusion_iv'] ("Study drug
+consists of IV NEOD001 or placebo.")`. That is the right practical answer for a budget, but it was
+reached by rule 3's route inference rather than from the document's own sentence.
+
+**SET_ASIDE_SECTIONS worked as item 1 intended.** 1.3 Background on NEOD001 was set aside by
+`matched: background on`; Figure 1 and 1.3.1 Nonclinical Safety went with it as children; 1.4 Rationale
+for Dose Selection was set aside too. The title page, the synopsis and 1.3.2's surviving sentences were
+untouched, which `tests/sections/test_set_aside_samples.py` asserts.
+
+**One number got worse: 25 of the original 36 fields have a confirmed row, against a floor of 26 and
+27 at stage 4b.** `design.parts`, `monitoring.unblinded_rationale` and `timeline.total_duration` lost
+their confirmed rows; `study.population` gained one. The 16 `quote_not_found_in_excerpt` errors are the
+same symptom as deferred item 4a, and item 4a points at SET_ASIDE_SECTIONS, not MARK_OTHER_STUDY.
 
 ### Done 2026-10-02: Stage 4 — MARK_OTHER_STUDY, the text about a different study
 Stage 4 of `docs/PLAN_2026-10-02.md`, and the fix for known problem 1. A twelfth node,
@@ -333,11 +429,16 @@ hints — is the other half of the same fix, so it now matters more than it did.
 `not_a_conflict`, so nothing was broken by it.
 
 **806 tests passing, 1 skipped** — six more than the 800 after the first stage 4 pass, and the six are
-the new `TestThePrompt` cases. Do not read that as the whole arithmetic.
-`tests/render/test_report_model.py` is parametrised per run folder, and it now collects 17 cases from
-the 26 folders in `runs/`, so the new folder should have made seven. It did not, and which older folder
-stopped being collected has not been chased. Recount from the pytest summary line rather than adding to
-this number.
+the new `TestThePrompt` cases.
+
+**The count was one short, and the gap is explained.** Collecting the suite at this commit in a clean
+`git worktree` gives 807, not 806, so the 806 above was miscounted by one; the stage 5 entry records 847
+measured the same way. `tests/render/test_report_model.py::test_nothing_lost_on_a_real_run` is
+parametrised per run folder and takes every folder in `runs/` that has an `extraction.json` — 19 of the
+27 folders, not the 17 counted earlier. The missing two are `r-demo-rfp-protocol-pair` and
+`r-listfix-175318`, which were counted out by a search for folder names beginning `r-2026` rather than by
+anything in the test. Nothing stopped being collected. Recount from the pytest summary line rather than
+adding to this number.
 
 ### Done 2026-10-02: Stage 3 — SET_ASIDE_SECTIONS, the sections an analyst skips
 Stage 3 of `docs/PLAN_2026-10-02.md`. An eleventh node, SET_ASIDE_SECTIONS, sits between FIND_SECTIONS

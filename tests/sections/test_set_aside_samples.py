@@ -155,6 +155,147 @@ class TestTheStageThreeAcceptanceTest:
 
 
 @pytest.mark.slow
+class TestTheBackgroundAndNonclinicalSections:
+    """Stage 5 item 1: the background sections Angus skips, now on `set_aside`.
+
+    `docs/ANALYST_PROCEDURE_PROTOCOL.md` section 4 says to ignore the
+    introduction, the background, the drug's chemistry and the nonclinical
+    (animal) safety data [01:35:05], and the rationale for dose selection
+    [01:37:07]. `config/sections.yaml` held `background on` back until stage 4
+    had passed on its own, so that MARK_OTHER_STUDY's live test could not pass by
+    accident — see the comment on the entry.
+
+    Oliver asked for this test on 2026-10-02 after live run
+    `r-20261002-222824-stage4b` kept 1.3 and Figure 1: MARK_OTHER_STUDY is no
+    longer the thing that removes nonclinical background, SET_ASIDE_SECTIONS is.
+    """
+
+    def test_the_background_section_is_set_aside(
+        self, protocol: Document, policy: SectionsPolicy
+    ) -> None:
+        """1.3 Background on NEOD001 (p.36), matched on its own heading."""
+        _, dropped = set_aside_sections(protocol, policy)
+        gone = {s.heading: s for s in dropped}
+        assert "1.3 Background on NEOD001" in gone
+        assert gone["1.3 Background on NEOD001"].matched == "background on"
+
+    def test_the_mechanism_figure_goes_with_it(
+        self, protocol: Document, policy: SectionsPolicy
+    ) -> None:
+        """Figure 1 is a level-4 child of 1.3 and has no heading phrase of its own.
+
+        It is here because of the nesting rule, which is the only thing that
+        removes it — `matched` is None and `via_parent` names 1.3. A future edit
+        that narrowed the nesting rule would lose this without touching the
+        entry.
+        """
+        _, dropped = set_aside_sections(protocol, policy)
+        gone = {s.heading: s for s in dropped}
+        figure = "Figure 1: Proposed Mechanism of Action for NEOD001"
+        assert figure in gone
+        assert gone[figure].matched is None
+        assert gone[figure].via_parent is not None
+
+    def test_the_nonclinical_safety_section_is_set_aside(
+        self, protocol: Document, policy: SectionsPolicy
+    ) -> None:
+        """1.3.1 Nonclinical Safety. On the list before this change and still gone."""
+        _, dropped = set_aside_sections(protocol, policy)
+        assert "1.3.1 Nonclinical Safety" in {s.heading for s in dropped}
+
+    def test_the_dose_selection_rationale_is_set_aside(
+        self, protocol: Document, policy: SectionsPolicy
+    ) -> None:
+        """1.4 Rationale for Dose Selection, matched on `rationale for dose selection`.
+
+        Asserted on the match and not just the absence, because the bare word
+        `rationale` is deliberately not on the list: it would also take 1.2
+        Rationale for Clinical Study, which states the comparison being made.
+        """
+        _, dropped = set_aside_sections(protocol, policy)
+        gone = {s.heading: s for s in dropped}
+        assert "1.4 Rationale for Dose Selection" in gone
+        assert gone["1.4 Rationale for Dose Selection"].matched == "rationale for dose selection"
+
+    def test_clinical_experience_survives_so_its_other_sentences_can_be_read(
+        self, protocol: Document, policy: SectionsPolicy
+    ) -> None:
+        """1.3.2 Clinical Experience is nested under 1.3 and must NOT go whole.
+
+        MARK_OTHER_STUDY cuts the five sentences in it that describe study
+        NEOD001-001 — the Phase 1/2 study number, the 30 September 2015 data
+        cutoff, the subject counts and the adverse-event list — and what is left
+        is this study's text. Setting the whole section aside would take both.
+
+        **It survives for an incidental reason.** `keep_if_contains` rescues it on
+        the phrase "interim analysis", and that phrase sits in one of the very
+        sentences MARK_OTHER_STUDY then removes. The rescue is real — stage 3
+        runs before stage 4, so the sentence is still there when the policy reads
+        it — but a protocol that worded its interim analysis differently would
+        lose the section. This test is the alarm for that day.
+        """
+        kept, dropped = set_aside_sections(protocol, policy)
+        assert "1.3.2 Clinical Experience" in {s.heading for s in kept}
+        assert "1.3.2 Clinical Experience" not in {s.heading for s in dropped}
+
+    def test_the_sentences_left_in_clinical_experience_are_still_readable(
+        self, protocol: Document, policy: SectionsPolicy
+    ) -> None:
+        """Asserted as text, not as a heading, for the reason the stage 3 test gives.
+
+        This sentence is the last one in 1.3.2, on page 40, and all five of
+        MARK_OTHER_STUDY's spans in run `r-20261002-222824-stage4b` are on page
+        39 — so it is text about this study's drug that survives both stages. A
+        kept section with the right name and the wrong text would satisfy a
+        heading-only check.
+        """
+        kept, _ = set_aside_sections(protocol, policy)
+        wanted = "NEOD001 is safe and well-tolerated in subjects with AL amyloidosis"
+        holding = [
+            section.heading
+            for section in kept
+            if wanted in " ".join(section_text(protocol, section).split())
+        ]
+        assert "1.3.2 Clinical Experience" in holding, (
+            f"the surviving sentence is in {holding} rather than 1.3.2"
+        )
+
+    def test_the_title_page_is_untouched(
+        self, protocol: Document, policy: SectionsPolicy
+    ) -> None:
+        """The level-1 title carries the phase, the blinding, the control and the arms.
+
+        `docs/ANALYST_PROCEDURE_PROTOCOL.md` section 2. It is the single most
+        valuable heading in the document, it contains the word "STANDARD OF
+        CARE", and `study.phase` reads `phase_3` off it, so a background entry
+        that reached it would undo stage 4.
+        """
+        kept, _ = set_aside_sections(protocol, policy)
+        titles = [s.heading for s in kept if s.level == 1 and "PHASE 3" in s.heading]
+        assert titles, "the title page section did not survive"
+        assert "LIGHT CHAIN (AL) AMYLOIDOSIS" in titles[0]
+
+    def test_the_synopsis_and_the_rest_of_section_one_are_untouched(
+        self, protocol: Document, policy: SectionsPolicy
+    ) -> None:
+        """The synopsis, 1 INTRODUCTION, 1.1 and 1.2 all stay.
+
+        `background on` is narrow on purpose. A bare `introduction` would take
+        the whole of section 1 under the nesting rule, and a bare `background`
+        or `rationale` would take 1.2 Rationale for Clinical Study.
+        """
+        kept, _ = set_aside_sections(protocol, policy)
+        survived = {s.heading for s in kept}
+        for heading in (
+            "PROTOCOL SYNOPSIS",
+            "1 INTRODUCTION",
+            "1.1 Light Chain (AL) Amyloidosis",
+            "1.2 Rationale for Clinical Study",
+        ):
+            assert heading in survived, f"{heading!r} was set aside"
+
+
+@pytest.mark.slow
 def test_a_storage_section_naming_unblinded_staff_is_kept(
     protocol: Document, policy: SectionsPolicy
 ) -> None:

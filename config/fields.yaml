@@ -50,8 +50,15 @@ groups:
     label: Study Phase and Population
     plain: How far along the drug's development this study sits, and who takes part in it.
     search_hints:
+      # NOT "Background" or "Rationale". Both were here until 2026-10-02 and both
+      # pointed this group at section 1.3 of the sample protocol, whose subsection
+      # 1.3.2 describes a *different* study — which is how `study.phase` came back
+      # as phase_1_2. MARK_OTHER_STUDY now removes that text and
+      # SET_ASIDE_SECTIONS drops the section, so these two hints were the third
+      # copy of the same mistake. docs/PLAN_2026-10-02.md stage 5 item 1 held them
+      # here until stage 4 had passed on its own, which it has twice.
       headings: ["Synopsis", "Study Phase", "Objectives", "Population", "Study Population",
-                 "Inclusion Criteria", "Indication", "Background", "Rationale", "Title Page"]
+                 "Inclusion Criteria", "Indication", "Title Page"]
       keywords: ["Phase I", "Phase 1", "Phase II", "Phase III", "Phase IV", "Phase 1/2",
                  "indication", "target population", "patients with", "subjects with",
                  "adult", "paediatric", "pediatric", "adolescent", "elderly"]
@@ -214,6 +221,12 @@ fields:
     type: enum
     values: [yes, no, not_specified]
     aliases: ["healthy volunteer", "healthy subject", "HV", "normal healthy volunteer", "NHV"]
+    hint: >
+      "yes" only where the document says healthy people take part. WHEN THE ANSWER IS "no", THE
+      QUOTE MUST BE THE PHRASE THAT NAMES THE PATIENT POPULATION — for example "subjects with light
+      chain (AL) amyloidosis". A protocol almost never says "no healthy volunteers" in so many
+      words, so a "no" with no quote, or a quote that merely fails to mention healthy volunteers, is
+      not evidence of anything. Use "not_specified" where the document names no population at all.
     plain: >
       Whether some participants are healthy people rather than patients who have the disease being
       treated. Healthy-volunteer groups are usually run at different sites.
@@ -249,9 +262,17 @@ fields:
     aliases: ["study population", "target population", "subject population", "patient population",
               "eligible subjects"]
     hint: >
-      The target population in one or two sentences (e.g. "adults 18-75 with moderate to severe
-      ulcerative colitis who have failed conventional therapy"). Do NOT enumerate the full
+      WHO ACTUALLY TAKES PART IN THIS STUDY — not the disease the drug is for. That is
+      study.indication, a separate field. The two are often the same and sometimes are not: a new
+      headache drug has the indication "acute headache", but its first study may give it to healthy
+      people who do not have a headache, so that the drug's side effects are not mistaken for
+      headache symptoms. There the population is "healthy volunteers" and the indication is "acute
+      headache". State the population in one or two sentences (e.g. "adults 18-75 with moderate to
+      severe ulcerative colitis who have failed conventional therapy"). Do NOT enumerate the full
       inclusion/exclusion criteria list — Angus has flagged that as out of scope.
+    plain: >
+      Who takes part in this study. Not the same question as which disease the drug is for: an early
+      study of a headache drug may be run in healthy people who have no headache.
     source_priority: protocol
 
   - id: study.indication
@@ -259,6 +280,30 @@ fields:
     label: Disease type / indication
     type: text
     aliases: ["indication", "disease", "therapeutic area", "condition", "disease under study"]
+    hint: >
+      THE DISEASE THE DRUG IS MEANT TO TREAT — not who takes part in this study. That is
+      study.population, a separate field. A new headache drug has the indication "acute headache"
+      even when its first study is run in healthy people without headaches. State the disease, not
+      the eligibility criteria.
+    plain: >
+      The disease the drug is meant to treat. Not the same question as who takes part in this
+      study — see the population field above.
+    source_priority: protocol
+
+  - id: study.primary_objective
+    group: phase_population
+    label: Primary objective
+    type: text
+    aliases: ["primary objective", "primary aim", "objective", "primary study objective"]
+    hint: >
+      Copy the primary objective VERBATIM, as the document writes it, in one record. Do not
+      summarise it, do not shorten it and do not merge several objectives into one. If the document
+      numbers or labels it ("Primary Objective", "1.1"), take the text under that label only. Where
+      the synopsis and the body state it in different words, prefer the body and note the synopsis
+      wording in `notes`. Secondary and exploratory objectives are out of scope and are set aside.
+    plain: >
+      What this study is mainly trying to find out, in the document's own words. Angus asked for it
+      written out rather than summarised, so that the report can be read beside the protocol.
     source_priority: protocol
 
 # --- Group 3: Interim Analyses ----------------------------------------------
@@ -364,6 +409,31 @@ fields:
     source_priority: protocol
     budget_driver: true
 
+  - id: visits.schedule_present
+    group: visits
+    label: Schedule of activities present
+    type: enum
+    # `"no"` is quoted. Unquoted, YAML reads it as the boolean false, and the
+    # registry would hand the model the enum `yes_body | yes_appendix | false`
+    # beside two string values — see the note on
+    # `blinding.unblinded_staff_stated` below.
+    values: [yes_body, yes_appendix, "no"]
+    aliases: ["schedule of activities", "schedule of events", "schedule of assessments", "SoA",
+              "SoE", "study flow chart", "study calendar", "table of assessments"]
+    hint: >
+      Whether a schedule of activities exists in this document and WHERE. "yes_body" when the table
+      sits in the numbered body of the document; "yes_appendix" when it sits in an appendix or
+      attachment, which is common and is where Angus says to look when the body has none; "no" when
+      the document has no such table at all. A contents-page entry or a cross-reference to a table
+      that is not in this document is not the table: answer "no" and say so in `notes`. The quote
+      must be the table's own heading or caption, not a mention of it elsewhere.
+    plain: >
+      Whether the document contains the grid showing what happens at each appointment, and whether
+      it is in the main text or tucked into an appendix. It is the single most useful table for
+      working out how much a study costs.
+    source_priority: protocol
+    budget_driver: true
+
   - id: visits.intensity_evidence
     group: visits
     label: Evidence of visit intensity
@@ -439,6 +509,62 @@ fields:
     source_priority: protocol
     budget_driver: true
 
+  - id: blinding.placebo_matching
+    group: blinding_monitoring
+    label: Placebo matches the study drug
+    type: enum
+    values: [matching_stated, not_matching_stated, not_specified]
+    aliases: ["matching placebo", "identical placebo", "placebo", "matched placebo",
+              "placebo comparator", "visually identical"]
+    hint: >
+      MATCHING MEANS MATCHING AS SUPPLIED TO THE SITE, in the vial, bottle or carton the site
+      receives. Text saying the prepared infusion looks identical — "the saline bag will look
+      identical to the drug infusion bag" — describes the drug AFTER unblinded pharmacy staff have
+      made it up, and is NOT matching: answer not_specified for that sentence alone, or
+      not_matching_stated if the document also says the supplies do not match. Use
+      matching_stated only where the document says the placebo as supplied matches or is identical.
+      Use not_matching_stated where it says the placebo does not match or will not be provided.
+      Use not_specified where the document is silent. Never infer from the route of administration
+      here — that inference belongs to blinding.placebo_assumption, which is derived.
+    plain: >
+      Whether the dummy treatment arrives at the hospital looking the same as the real drug. If it
+      does not, someone who is allowed to know which is which has to prepare it, and that person has
+      to be paid for separately.
+    source_priority: any
+    budget_driver: true
+
+  - id: blinding.unblinded_staff_stated
+    group: blinding_monitoring
+    label: Unblinded staff stated as required
+    type: enum
+    # `true`/`false` and not `yes`/`no`, for two reasons. YAML reads unquoted
+    # `yes` and `no` as booleans, so the registry turns them into the strings
+    # `true` and `false` whatever is written here. And every other yes-or-no
+    # field in this file already uses `true`/`false` — design.first_in_human,
+    # design.healthy_volunteers, interim.planned, dosing.varies_by_cohort,
+    # monitoring.unblinded_required, monitoring.frequency_requested — so making
+    # this one the exception would be the surprise, not the fix. The
+    # blinding.placebo_assumption rubric reads this value, and
+    # tests/derive/test_rubric.py asserts the registry still offers the value the
+    # rubric looks for, so renaming the enum fails a test instead of quietly
+    # switching the contradiction rule off.
+    values: ["true", "false", not_specified]
+    aliases: ["unblinded pharmacy staff", "unblinded pharmacist", "unblinded staff",
+              "unblinded site staff", "unblinded personnel"]
+    hint: >
+      READ OFF THE PAGE ONLY — no inference. "true" where the document states that unblinded staff
+      are needed, however briefly, for example "access to the study drug should be strictly limited
+      to the unblinded pharmacy staff". "false" only where the document states that no unblinded
+      staff are required. "not_specified" where it does not say, which is the common case. This field is
+      deliberately narrower than monitoring.unblinded_required, which may answer "likely" from a
+      trigger: this one records what the document actually says, so that
+      blinding.placebo_assumption can tell a stated fact from an inference.
+    plain: >
+      Whether the document says in writing that staff who are allowed to know the treatment are
+      needed. A separate question from whether the tool thinks they will be.
+    source_priority: any
+    budget_driver: true
+
   - id: monitoring.unblinded_required
     group: blinding_monitoring
     label: Unblinded monitoring likely required
@@ -472,6 +598,24 @@ fields:
     label: Reason / trigger for unblinded monitoring
     type: text
     source_priority: any
+
+  - id: blinding.placebo_assumption
+    group: blinding_monitoring
+    label: What to assume about the placebo
+    type: text
+    derived: true
+    derived_from: [blinding.design, ip.form, blinding.placebo_matching,
+                   blinding.unblinded_staff_stated]
+    hint: >
+      DERIVED — the rubric in derive/rubric.py applies docs/ANALYST_PROCEDURE_PROTOCOL.md section 6
+      rules 1 to 4 and the rule 6 contradiction, never extracted by the model. The explanation must
+      name the inputs it used.
+    plain: >
+      The tool's reading of whether a dummy treatment that matches the real drug can be assumed, and
+      so whether separately paid unblinded staff should be priced in. No document states this: it is
+      worked out from the blinding, the way the drug is given and what the document says about the
+      placebo, so it is a starting point for a person to accept or overrule.
+    budget_driver: true
 
 # --- Group 8: Operational Metrics and Volumes -------------------------------
   - id: ops.sites_total

@@ -17,7 +17,11 @@ from typing import Any
 
 import structlog
 
-from rfp_intake.derive.rubric import RubricResult, compute_visit_intensity
+from rfp_intake.derive.rubric import (
+    RubricResult,
+    compute_placebo_assumption,
+    compute_visit_intensity,
+)
 from rfp_intake.domain.registry import get_registry
 from rfp_intake.domain.schemas import ResolvedField, RunError, RunState
 
@@ -25,6 +29,7 @@ logger = structlog.get_logger()
 
 DERIVE_RUBRICS: dict[str, Callable[[dict[str, ResolvedField | None]], RubricResult]] = {
     "visits.intensity_rating": compute_visit_intensity,
+    "blinding.placebo_assumption": compute_placebo_assumption,
 }
 
 
