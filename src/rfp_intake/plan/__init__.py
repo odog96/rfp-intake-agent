@@ -9,6 +9,7 @@ import structlog
 from rfp_intake.domain.registry import Registry, get_registry
 from rfp_intake.domain.schemas import Document, ExtractionTask, RunState
 from rfp_intake.plan.scoring import (
+    DEFAULT_TOKEN_BUDGET,
     estimate_tokens,
     merge_windows,
     score_section,
@@ -19,8 +20,11 @@ logger = structlog.get_logger()
 
 DEFAULT_TOP_K = 3
 DEFAULT_MARGIN = 1
-DEFAULT_TOKEN_BUDGET = 4000
 FALLBACK_PAGES = 5
+
+# Re-exported from plan.scoring, where it now lives, so that
+# `from rfp_intake.plan import DEFAULT_TOKEN_BUDGET` keeps working.
+__all__ = ["DEFAULT_TOKEN_BUDGET", "plan_extraction", "plan_node"]
 
 
 def plan_extraction(

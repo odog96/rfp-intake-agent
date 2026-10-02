@@ -113,12 +113,15 @@ def check_job_run_status() -> tuple[str | None, str | None]:
         return None, f"{type(exc).__name__}: {exc}"
 
 
-# The nine pipeline steps, in order, with the words an analyst sees instead of
-# the node name the engine writes. The position in this tuple is what the
-# "step 6 of 9" caption counts, which is why DONE and ERROR are not in it.
+# The pipeline steps, in order, with the words an analyst sees instead of the node
+# name the engine writes. The position in this tuple is what the "step 6 of 10"
+# caption counts, which is why DONE and ERROR are not in it. Every count shown on
+# the page is len(_STEPS), so adding a node here is the whole change — stages 3
+# and 4 of docs/PLAN_2026-10-02.md add two more.
 _STEPS = (
     ("INGEST", "Reading documents"),
     ("CLASSIFY", "Identifying document types"),
+    ("FIND_SECTIONS", "Finding sections"),
     ("PLAN", "Planning the extraction"),
     ("EXTRACT", "Pulling out study details"),
     ("NORMALIZE", "Standardising values"),
@@ -133,7 +136,7 @@ _STEPS = (
 # node added by another workstream changes the wording but never crashes the page.
 _NODE_LABELS = dict(_STEPS)
 # Written by the job before INGEST, while it checks that the model service
-# answers at all. Not one of the nine steps, so it is not in _STEPS.
+# answers at all. Not one of the pipeline steps, so it is not in _STEPS.
 _NODE_LABELS["PREFLIGHT"] = "Checking the model service"
 _NODE_LABELS["DONE"] = "Review complete"
 _NODE_LABELS["ERROR"] = "Run failed"
@@ -159,10 +162,10 @@ def _step_label(node: str | None) -> str:
 
 # --- Stage cards -------------------------------------------------------------
 #
-# Streamlit has no card widget, so the nine stages are one block of HTML written
-# in a single st.html call. One call and not nine: Streamlit wraps every element
-# it draws in its own container, so nine calls would put nine gaps between the
-# cards that no stylesheet of ours could close.
+# Streamlit has no card widget, so the stages are one block of HTML written in a
+# single st.html call. One call and not one per stage: Streamlit wraps every
+# element it draws in its own container, so a call per stage would put a gap
+# between every pair of cards that no stylesheet of ours could close.
 #
 # Everything here is inline. No stylesheet file, no font download, no custom
 # Streamlit component — the Cloudera AI Application is served on 127.0.0.1
@@ -296,8 +299,8 @@ def _stage_states(node: str | None, run_state: str | None) -> list[str]:
     status.json carries a single node name and nothing else per stage, so
     everything before the named stage is finished, everything after it has not
     started, and `_STEP_POSITION` (built from `_STEPS`) is what turns the name
-    into that split. A node name the application does not recognise yields all
-    nine waiting rather than an exception, which is the same choice
+    into that split. A node name the application does not recognise yields every
+    stage waiting rather than an exception, which is the same choice
     `_step_label` makes.
     """
     failed = run_state == "failed"
@@ -306,8 +309,8 @@ def _stage_states(node: str | None, run_state: str | None) -> list[str]:
 
     position = _STEP_POSITION.get(node or "")
     if position is None:
-        # PREFLIGHT, ERROR, or a node from another workstream. Nothing in the
-        # nine can be called finished.
+        # PREFLIGHT, ERROR, or a node from another workstream. No pipeline stage
+        # can be called finished.
         return ["not_run" if failed else "waiting"] * len(_STEPS)
 
     states: list[str] = []
@@ -346,12 +349,12 @@ def _card_html(
 def _stage_cards(
     node: str | None, run_state: str | None, *, error: str | None = None
 ) -> None:
-    """Draw the nine stages as cards, plus the PREFLIGHT card when it applies.
+    """Draw the pipeline stages as cards, plus the PREFLIGHT card when it applies.
 
     PREFLIGHT ("Checking the model service") runs before INGEST and is not one of
-    the nine, so it gets its own card above them and a divider, rather than being
-    numbered as a tenth stage. It is drawn only while it is the current node —
-    once INGEST starts there is nothing useful left to say about it.
+    the stages in `_STEPS`, so it gets its own card above them and a divider,
+    rather than being numbered as one more stage. It is drawn only while it is the
+    current node — once INGEST starts there is nothing useful left to say about it.
     """
     palette = _stage_palette()
     parts = [_STAGE_CSS.substitute(palette)]
@@ -371,11 +374,11 @@ def _stage_cards(
         parts.append("</div>")
         parts.append(
             '<div class="rfp-divider">'
-            f"{'Never started' if run_state == 'failed' else 'Then nine stages'}"
+            f"{'Never started' if run_state == 'failed' else f'Then {len(_STEPS)} stages'}"
             "</div>"
         )
-        # The nine carry no error text; the failure belongs on the card it
-        # happened on, which is PREFLIGHT above.
+        # The pipeline stages carry no error text; the failure belongs on the card
+        # it happened on, which is PREFLIGHT above.
         error = None
 
     states = _stage_states(node, run_state)
@@ -614,7 +617,7 @@ def _failure_view(
     # The cards answer the question the headline cannot: how far it got before it
     # stopped. Drawn only when status.json named a stage — the branches that pass
     # no node (a CML run discarded as ENGINE_SKIPPED, a job that never started)
-    # would otherwise show nine identical "not run" rows, which says nothing.
+    # would otherwise show one identical "not run" row per stage, saying nothing.
     if node:
         _stage_cards(node, "failed", error=error)
 
@@ -715,10 +718,10 @@ def _completion_view(run_path: Path, status: dict) -> None:
         # saying nothing, so the numbers are skipped rather than drawn empty.
         st.write("The run finished but produced no extracted fields.")
 
-    # Collapsed, not open: on a finished run the nine stages are confirmation
-    # that everything ran, which is worth being able to check and not worth
-    # pushing the download buttons down the page for.
-    with st.expander("All nine stages"):
+    # Collapsed, not open: on a finished run the stage cards are confirmation that
+    # everything ran, which is worth being able to check and not worth pushing the
+    # download buttons down the page for.
+    with st.expander(f"All {len(_STEPS)} stages"):
         _stage_cards(status.get("node"), status.get("state"))
 
     _downloads(run_path)
@@ -864,7 +867,7 @@ if not terminal:
             # being the narrower column. Both halves are drawn only when their
             # source exists: status.json carries no `progress` key today, so the
             # field count never appears, and the position is absent during
-            # PREFLIGHT because PREFLIGHT is not one of the nine stages.
+            # PREFLIGHT because PREFLIGHT is not one of the stages in _STEPS.
             meta_parts: list[str] = [f"`{run_id}`"]
             if status:
                 progress = status.get("progress") or {}

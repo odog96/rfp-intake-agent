@@ -85,6 +85,29 @@ class TableData(BaseModel):
     caption: str | None = None
 
 
+class Section(BaseModel):
+    """One span of a document's text, bounded precisely enough to cut a page in two.
+
+    FIND_SECTIONS (PLAN_2026-10-02.md stage 1) produces these; PLAN chooses whole
+    sections instead of whole pages, so a section that starts halfway down a page
+    must be able to say so. A boundary is therefore a (page, character offset into
+    that page's `Document.page_texts` entry) pair, with `end_offset` exclusive.
+
+    A section runs until the next heading of any level, so the spans of one
+    document's sections tile its text without overlapping.
+    """
+
+    id: str
+    heading: str
+    level: int = 1
+    page_start: int
+    page_end: int
+    start_offset: int = 0
+    # Exclusive. None means "to the end of page_end's text", which is what the
+    # last section of a document gets rather than a length nothing re-checks.
+    end_offset: int | None = None
+
+
 class Document(BaseModel):
     id: str
     path: str
@@ -93,6 +116,12 @@ class Document(BaseModel):
     outline: list[OutlineEntry] = Field(default_factory=list)
     tables: list[TableData] = Field(default_factory=list)
     page_texts: dict[int, str] = Field(default_factory=dict)
+    sections: list[Section] = Field(default_factory=list)
+    # Which of FIND_SECTIONS' three rules produced `sections`, for the report and
+    # for debugging. None until FIND_SECTIONS has run.
+    section_source: (
+        Literal["bookmarks", "whole_document", "heading_scan", "whole_document_fallback"] | None
+    ) = None
     version_label: str | None = None
     document_date: str | None = None
     sponsor: str | None = None

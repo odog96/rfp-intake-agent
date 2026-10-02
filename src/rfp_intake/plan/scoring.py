@@ -5,6 +5,13 @@ from __future__ import annotations
 from rfp_intake.domain.registry import SearchHints
 from rfp_intake.domain.schemas import OutlineEntry
 
+# The most text one extraction call is given, estimated as characters / 4.
+# It lives here rather than in plan/__init__.py because FIND_SECTIONS
+# (rfp_intake.sections) needs the same number for its rule 2, and in stage 2 of
+# PLAN_2026-10-02.md plan/__init__.py will import rfp_intake.sections — so the
+# constant has to sit in a module neither of those two imports.
+DEFAULT_TOKEN_BUDGET = 4000
+
 # Scoring weights
 HEADING_EXACT_MATCH = 5.0
 HEADING_PARTIAL_MATCH = 3.0

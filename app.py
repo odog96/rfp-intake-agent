@@ -111,12 +111,15 @@ def check_job_run_status() -> tuple[str | None, str | None]:
         return None, f"{type(exc).__name__}: {exc}"
 
 
-# The nine pipeline steps, in order, with the words an analyst sees instead of
-# the node name the engine writes. The position in this tuple is what the
-# "step 6 of 9" caption counts, which is why DONE and ERROR are not in it.
+# The pipeline steps, in order, with the words an analyst sees instead of the node
+# name the engine writes. The position in this tuple is what the "step 6 of 10"
+# caption counts, which is why DONE and ERROR are not in it. Every count shown on
+# the page is len(_STEPS), so adding a node here is the whole change — stages 3
+# and 4 of docs/PLAN_2026-10-02.md add two more.
 _STEPS = (
     ("INGEST", "Reading documents"),
     ("CLASSIFY", "Identifying document types"),
+    ("FIND_SECTIONS", "Finding sections"),
     ("PLAN", "Planning the extraction"),
     ("EXTRACT", "Pulling out study details"),
     ("NORMALIZE", "Standardising values"),
@@ -131,7 +134,7 @@ _STEPS = (
 # node added by another workstream changes the wording but never crashes the page.
 _NODE_LABELS = dict(_STEPS)
 # Written by the job before INGEST, while it checks that the model service
-# answers at all. Not one of the nine steps, so it is not in _STEPS.
+# answers at all. Not one of the pipeline steps, so it is not in _STEPS.
 _NODE_LABELS["PREFLIGHT"] = "Checking the model service"
 _NODE_LABELS["DONE"] = "Review complete"
 _NODE_LABELS["ERROR"] = "Run failed"

@@ -13,11 +13,12 @@ stage. Where it disagrees with `docs/ARCHITECTURE.md`, the plan is the newer dec
 behind it are in `docs/ANALYST_PROCEDURE_PROTOCOL.md` (a draft awaiting Angus Gray's sign-off; build
 against it anyway).
 
-## Current status (as of 2026-09-30)
+## Current status (as of 2026-10-02)
 
-Phases 0–4 of ARCHITECTURE.md §10 are done. Graph topology today:
-`INGEST → CLASSIFY → PLAN → EXTRACT → NORMALIZE → RECONCILE → ADJUDICATE → DERIVE → GATE`,
-then RENDER runs after the graph finishes (see the deviations below). 591 tests passing, 1 skipped.
+Phases 0–4 of ARCHITECTURE.md §10 are done, and stage 1 of `docs/PLAN_2026-10-02.md`. Graph topology
+today:
+`INGEST → CLASSIFY → FIND_SECTIONS → PLAN → EXTRACT → NORMALIZE → RECONCILE → ADJUDICATE → DERIVE → GATE`,
+then RENDER runs after the graph finishes (see the deviations below). 620 tests passing, 1 skipped.
 Pushed to https://github.com/odog96/rfp-intake-agent.git. The push is done from a terminal by
 Oliver, from inside the repository directory — this session's credentials cannot do it.
 
@@ -67,7 +68,9 @@ recorded inline in its own section rather than only here. The load-bearing ones:
    name the headings "Background" and "Rationale".
 1a. **PLAN depends on PDF bookmarks.** A PDF with no bookmarks gets pages 1 to 5 for every field group.
    `samples/Synthetic_RFP_NEOD001.pdf` has none, so its page 6 (the services requested) is never read.
-   Fixed by stage 1 of `docs/PLAN_2026-10-02.md`.
+   **Half fixed on 2026-10-02.** FIND_SECTIONS now produces one whole-document section for that PDF, so
+   a section covering page 6 exists — but PLAN does not read `Document.sections` yet, so the pipeline
+   still sends pages 1 to 5. Stage 2 of `docs/PLAN_2026-10-02.md` closes the gap.
 2. **`timeline.total_duration` splits by enrolment timing.** Same run: "approximately 3.5-4 years"
    for early enrollers and "1.5-2 years" for late ones, both confirmed, with the study-level 42
    months absent. Correct per-subject, wrong as the study duration a budget needs.
@@ -124,6 +127,61 @@ checks every task's field names against the specification, so neither mistake ca
 5. **Return `privacy_mode` to `private` and the models to CAII before any customer document.**
    `config/models.yaml` is on `mixed` with Claude Sonnet 4.6 on Bedrock for testing.
 6. Build `audit.json`, the janitor job, and the `rfp_intake.eval` command line.
+
+### Done 2026-10-02: Stage 1 — FIND_SECTIONS, a tenth node between CLASSIFY and PLAN
+Stage 1 of `docs/PLAN_2026-10-02.md`. A new node, FIND_SECTIONS, splits every document into sections
+whose boundaries are a (page, character offset) pair rather than a page number. That is the point of it:
+page 39 of `samples/Example protocol 2.pdf` holds the end of section 1.3.1 and the start of section
+1.3.2, and 1.3.2 describes a different study, so no choice made in whole pages can keep one and drop the
+other. Code in `src/rfp_intake/sections/` — `find_sections_node` plus `sections/headings.py`.
+
+Three rules, tried in order and recorded on the document as `Document.section_source`:
+`bookmarks` from `Document.outline`; `whole_document` when a bookmark-less document fits in one
+extraction call; `heading_scan` from the text when it does not, with `whole_document_fallback` if that
+scan finds nothing. The sample protocol lands on `bookmarks`, the synthetic RFP on `whole_document`.
+Sections tile a document's text, so no text is in two sections and none is dropped; text before the
+first heading becomes a section headed "Front matter".
+
+**Bookmark titles are not literal substrings of their page text.** PyMuPDF returns the protocol's
+headings as `"1.3.2 \nClinical Experience"` while the bookmark title is `"1.3.2 Clinical Experience"`,
+so `_locate_heading` matches on whitespace-normalised lowercased text and maps the hit back to a raw
+offset. That finds 174 of the protocol's 176 titles; the 2 it cannot find fall back to the start of
+their page and are logged. A plain substring search finds far fewer.
+
+**Deviation from the plan, deliberate:** stage 1 also suggests using PyMuPDF font size and weight to
+spot a heading in rule 3. That is not done. The same stage says FIND_SECTIONS reads only what INGEST
+produced, and `Document.page_texts` carries no font information, so using font size would mean opening
+the PDF again inside `sections/` — a second PDF reader outside `ingest/parsers/`. Rule 3 is text-only:
+dotted-number headings and lines in capitals, with lines repeated on at least half the pages treated as
+running headers. The reason is recorded in `sections/headings.py`'s docstring, where the next person to
+touch rule 3 will read it. If text-only detection proves too weak on a real bookmark-less protocol, the
+fix is for a parser to record heading candidates, not for this node to open the file.
+
+**`DEFAULT_TOKEN_BUDGET` moved from `plan/__init__.py` to `plan/scoring.py`**, and is re-exported from
+`plan/__init__.py` so existing imports keep working. `sections/` needs the same number for rule 2, and
+in stage 2 `plan/__init__.py` will import `sections/`, so the constant had to sit in a module neither of
+those two imports.
+
+**PLAN, EXTRACT and the prompts are unchanged.** `Document.sections` and `Document.section_source` are
+produced and travel in the graph state, and nothing reads them yet — PLAN still scores `Document.outline`
+and chooses whole pages with a one-page margin and the first-5-pages fallback. That is stage 2's work,
+and it is why known problem 1a above is only half fixed. `extraction.json` does not change either:
+`render/json_renderer.py` writes resolved fields, contradictions and errors, not documents.
+
+**The two Streamlit pages now show ten stages, not nine.** `("FIND_SECTIONS", "Finding sections")` was
+inserted into `_STEPS` in both `app.py` and `app_v2.py`, which is the whole change — the step counter
+already read `len(_STEPS)`. Every hardcoded "nine" is gone from `app_v2.py` (0 occurrences), including
+the two user-visible strings, so the 2026-10-01 entry below should be read as "the stages as cards".
+`launch_app.py:36` still starts `app.py`; that decision is untouched.
+
+**620 tests passing, 1 skipped** — 23 new, all in `tests/sections/`. `test_find_sections.py` is 15 unit
+tests on hand-built documents, one per rule and per edge case (a page cut in two, sections tiling the
+document, a heading that is not on its page, bookmarks out of order, prose starting with a number,
+a repeated running header). `test_find_sections_samples.py` is the plan's own stage 1 acceptance test
+against the two real PDFs, marked `slow` and offline: section 1.3.2 starts part-way down page 39 and
+ends exactly where 1.4 starts part-way down page 40, section 1.3.1's text ends with "…is warranted.",
+and "ongoing, open-label" appears in 1.3.2 and in neither neighbour. `ruff check .` passes. mypy's 138
+errors are all pre-existing and none is in a file this stage touched.
 
 ### Done 2026-10-01: the nine stages as cards, in app_v2.py — built but NOT live
 Oliver said the application felt too minimal and showed a "Document Analytics Research" screenshot as

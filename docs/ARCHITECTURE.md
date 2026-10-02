@@ -159,6 +159,18 @@ free-form model search cannot guarantee.
                         └──────┬───────┘
                                │
                         ┌──────▼───────┐
+                        │FIND_SECTIONS │  split each document into sections with exact
+                        └──────┬───────┘  (page, character offset) boundaries  (pure Python)
+                               │
+                        ┌ ─ ─ ─▼─ ─ ─ ─┐
+                         SET_ASIDE_SECTIONS   drop headings on config/sections.yaml's list
+                        └ ─ ─ ─┬─ ─ ─ ─┘      STAGE 3 of PLAN_2026-10-02.md — not built
+                               │
+                        ┌ ─ ─ ─▼─ ─ ─ ─┐
+                         MARK_OTHER_STUDY     drop passages about a different study (LLM labels
+                        └ ─ ─ ─┬─ ─ ─ ─┘      text only)  STAGE 4 — not built
+                               │
+                        ┌──────▼───────┐
                         │    PLAN      │  build extraction tasks = doc × field_group,
                         └──────┬───────┘  select candidate page windows per task
                                │
@@ -197,6 +209,15 @@ free-form model search cannot guarantee.
                         └──────────────┘  NOT a graph node — pure functions called by
                                           job/__init__.py after the graph finishes. See §4.10.
 ```
+
+**FIND_SECTIONS was added on 2026-10-02**, as stage 1 of `docs/PLAN_2026-10-02.md`. Before it, the
+smallest unit PLAN could choose was a whole page plus one page of margin, so text from a section PLAN
+had not chosen still reached the extraction model — which is how `study.phase` came back as the phase of
+a different study from page 39 of `samples/Example protocol 2.pdf`. A section boundary is now a
+(page number, character offset into that page's text) pair, so a page can be cut in two. The two dashed
+nodes after it, SET_ASIDE_SECTIONS and MARK_OTHER_STUDY, are stages 3 and 4 of the same plan and are not
+built; PLAN today reads `Document.outline` and whole pages, and stage 2 of that plan is what moves it
+onto sections.
 
 **Every edge is a static Python edge or a `Send`.** There are no LLM-chosen routes and no agent delegation.
 In MVP there is exactly one conditional edge: `ADJUDICATE` is skipped when the candidate set is empty.
@@ -297,6 +318,35 @@ state and **every value appeared twice** (a 45-field registry reported 64 resolv
 fields). A node that rewrites returns `Replace(...)` and says so at the return site;
 a fan-in branch returns a plain list. Fixed 2026-08-27.
 
+**`Document` gained `sections` and `section_source` on 2026-10-02** (stage 1 of
+`docs/PLAN_2026-10-02.md`). They travel in the graph state exactly as `outline` and `page_texts` already
+do, and `extraction.json` does not carry them — `render/json_renderer.py` writes resolved fields,
+contradictions and errors, not documents.
+
+```python
+class Section(BaseModel):
+    id: str                       # "<doc_id>:s001", unique within the run
+    heading: str
+    level: int = 1
+    page_start: int
+    page_end: int
+    start_offset: int = 0         # character offset into page_texts[page_start]
+    end_offset: int | None = None # exclusive; None = to the end of page_end
+
+class Document(BaseModel):
+    ...
+    sections: list[Section] = []
+    section_source: Literal[
+        "bookmarks", "whole_document", "heading_scan", "whole_document_fallback"
+    ] | None = None
+```
+
+**A boundary is a (page, character offset) pair, not a page.** That is the whole point of the type: page
+39 of `samples/Example protocol 2.pdf` holds the end of section 1.3.1 and the start of section 1.3.2, so
+no choice made in whole pages can keep one and drop the other. Sections tile a document's text — each runs
+to the start of the next heading at any level — so no text is in two sections and none is dropped. Text
+before the first heading becomes a section headed "Front matter".
+
 **The `scope` field is not optional decoration.** "40 sites" (total) and "12 sites" (Germany) are not a
 contradiction. Without scope, the reconciler generates false positives on every multi-cohort study — and
 multi-part studies are exactly the ones DSB cares most about. Extraction prompts must set scope explicitly.
@@ -338,7 +388,10 @@ run in-process on Cloudera infrastructure and are the only rungs the MVP uses.
 - Page numbers are preserved and 1-indexed. Citations are worthless otherwise.
 - Tables survive as structured rows, not flattened prose. The Schedule of Assessments grid *is* the visit
   frequency and visit intensity evidence — flatten it and Group 5 becomes unextractable.
-- An `outline` of `(heading_text, page_start, page_end, level)` is produced. PLAN depends on it.
+- An `outline` of `(heading_text, page_start, page_end, level)` is produced. FIND_SECTIONS (§4.2a)
+  depends on it, and PLAN depends on FIND_SECTIONS' output. INGEST produces the outline from the PDF's
+  bookmarks, which a PDF need not have: `samples/Synthetic_RFP_NEOD001.pdf` has none, which is why
+  FIND_SECTIONS has two further rules.
 - Quality gate: `chars_per_page`, `alpha_ratio`, table count. Below threshold → escalate a rung, and record
   the escalation in `errors` and in `status.json` so the run is explainable while it is still running.
 
@@ -355,7 +408,48 @@ would silently lose every field it held — a failure with no symptom in the out
 never attempted looks exactly like a field that was absent. Keeping the two separate means misclassification
 degrades *ranking* rather than *recall*, which is a far safer way to be wrong.
 
+### 4.2a FIND_SECTIONS
+Pure Python, no model call, no I/O. Added 2026-10-02 as stage 1 of `docs/PLAN_2026-10-02.md`. Code in
+`sections/` (`find_sections_node`, plus `sections/headings.py` for rule 3).
+
+**Lettered, not numbered**, because renumbering §4.3 to §4.10 would break every reference to them in
+`CLAUDE.md`, in the code comments and in `docs/PLAN_2026-10-02.md`. SET_ASIDE_SECTIONS and
+MARK_OTHER_STUDY become §4.2b and §4.2c when they are built.
+
+**Input:** `state.documents`, as CLASSIFY left them. **Output:** the same documents with `sections` and
+`section_source` filled in. Three rules, tried in order, and the one that fired is recorded on the
+document:
+
+1. `bookmarks` — one section per entry in `Document.outline`. The bookmark's heading is located in its
+   page's text to get the character offset, matching on whitespace-normalised lowercased text because
+   PyMuPDF returns the sample protocol's headings as `"1.3.2 \nClinical Experience"` while the bookmark
+   title is `"1.3.2 Clinical Experience"`. That finds 174 of that document's 176 titles; the 2 that are
+   not found fall back to the start of their page and are logged.
+2. `whole_document` — no bookmarks, and the whole text fits in one extraction call
+   (`DEFAULT_TOKEN_BUDGET`, now in `plan/scoring.py` so `sections/` and `plan/` can both read it without
+   an import cycle). One section covering every page. `samples/Synthetic_RFP_NEOD001.pdf` lands here:
+   0 bookmarks, ~1,900 estimated tokens, 6 pages — so page 6, the services requested, is read at last.
+3. `heading_scan` — no bookmarks and too long for rule 2, so headings are guessed from the text:
+   dotted-number headings, and lines in capitals. Lines repeated on at least half the pages are treated
+   as running headers, not headings. `whole_document_fallback` is recorded when the scan finds nothing,
+   because PLAN must never be handed a document with no sections.
+
+**Rule 3 is text-only.** `docs/PLAN_2026-10-02.md` also suggests font size and weight from PyMuPDF's
+`page.get_text("dict")`. That is deliberately not done: the same stage says FIND_SECTIONS reads only what
+INGEST produced, and `page_texts` carries no font information, so using it would put a second PDF reader
+outside `ingest/parsers/`. If text-only detection proves too weak on a real bookmark-less protocol, the
+right fix is for a parser to record heading candidates, not for this node to open the file.
+
+**Boundaries, not pages.** `sections/section_page_texts()` cuts the first and last page at the section's
+offsets and returns the pages between whole, so a caller can keep the `--- Page N ---` markers the
+extraction prompt and quote validation both depend on.
+
 ### 4.3 PLAN
+**Steps 2 to 4 below are what PLAN does today, and stage 2 of `docs/PLAN_2026-10-02.md` replaces them**
+with scoring over FIND_SECTIONS' sections, no page margin, and no "first 5 pages" fallback. Until then
+PLAN still scores `Document.outline` and chooses whole pages, and `Document.sections` is produced but not
+yet read by any node.
+
 Pure Python. For each `(doc, group)`:
 1. Look up the group's `search_hints` (headings, keywords, regex) in `fields.yaml`.
 2. Score every outline section; take top-k sections plus a configurable page margin.
