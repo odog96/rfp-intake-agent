@@ -31,9 +31,11 @@ from rfp_intake.llm.provider import LLMRole, get_llm
 
 logger = structlog.get_logger()
 
-# The three roles config/models.yaml binds. Probing all three catches a routing
-# where only one role points at a service whose credential has lapsed.
-PROBE_ROLES: tuple[LLMRole, ...] = ("classify", "extract", "adjudicate")
+# Every role config/models.yaml binds. Probing all of them catches a routing where
+# only one role points at a service whose credential has lapsed. `other_study_check`
+# was added by stage 4 of docs/PLAN_2026-10-02.md; a role left out here is a role
+# whose first failure happens deep into a paid run instead of at PREFLIGHT.
+PROBE_ROLES: tuple[LLMRole, ...] = ("classify", "other_study_check", "extract", "adjudicate")
 
 # What the probe sends. Short on purpose: this is a reachability check, and it
 # carries no document text, so it is safe to send to any configured provider

@@ -150,7 +150,8 @@ def build_report_pdf(state: RunState, registry: Registry, *, generated_at: str) 
     story.append(PageBreak())
     story += _evidence_appendix(model, styles)
     story += _reasoning_appendix(model, styles)
-    # The word list sits at the back, after both appendices. It was between the
+    story += _removed_appendix(model, styles)
+    # The word list sits at the back, after every appendix. It was between the
     # schedules and Appendix A until 2026-09-30, where its two pages pushed
     # Appendix A to page 10 — past the eight-page budget for the part a reader is
     # expected to read straight through. A glossary at the back is also where a
@@ -617,4 +618,40 @@ def _reasoning_appendix(model: ReportModel, styles: dict) -> list:  # type: igno
                 for p in x.values
             )
             story.append(Paragraph(f"• {label}: {said}", styles["evidence"]))
+    return story
+
+
+def _removed_appendix(model: ReportModel, styles: dict) -> list:  # type: ignore[type-arg]
+    """Appendix C — the passages MARK_OTHER_STUDY judged to be about another study.
+
+    Returns [] when nothing was removed, so a report for a run with no removals is
+    exactly the report it was before stage 4 of docs/PLAN_2026-10-02.md. Written as
+    a list rather than a table, like Appendix A and Appendix B, because the reason
+    and the extract are sentences and a five-column table would wrap both of them
+    into columns an inch wide.
+    """
+    if not model.removed:
+        return []
+    story: list[object] = [
+        Paragraph("Appendix C — Text read as describing a different study", styles["section"]),
+        Paragraph(
+            "A protocol often describes earlier studies of the same drug. A number taken "
+            "from one of those is a wrong number, so these passages were not read when the "
+            "variables above were extracted. Each says where it is in the documents, so it "
+            "can be checked. The full text of each is in extraction.json.",
+            styles["meta"],
+        ),
+    ]
+    for r in model.removed:
+        story.append(Paragraph(
+            f"<b>{escape(r.heading)}</b> "
+            f"<font color=\"#757575\">— {escape(r.doc_code)} {escape(r.pages)}, "
+            f"{escape(r.verdict)}</font>",
+            styles["evidence"],
+        ))
+        if r.reason:
+            story.append(Paragraph(f"• {escape(r.reason)}", styles["evidence"]))
+        if r.extract:
+            story.append(Paragraph(f'<i>"{escape(r.extract)}"</i>', styles["evidence"]))
+        story.append(Spacer(1, 3))
     return story

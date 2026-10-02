@@ -15,6 +15,7 @@ from rfp_intake.domain.schemas import (
     Contradiction,
     FieldRecord,
     Provenance,
+    RemovedPassage,
     ResolvedField,
     RunState,
 )
@@ -151,7 +152,9 @@ def _headings(pdf: bytes) -> list[str]:
         for page in doc:
             for line in page.get_text().splitlines():
                 line = line.strip()
-                if line in wanted or line.startswith(("Appendix A —", "Appendix B —")):
+                if line in wanted or line.startswith(
+                    ("Appendix A —", "Appendix B —", "Appendix C —")
+                ):
                     out.append(line)
     return out
 
@@ -218,6 +221,9 @@ class TestReportText:
         # "Schedules" is absent here on purpose: _conflict_state holds no variable
         # with enough entries to become a schedule, and _schedules then renders
         # nothing rather than an empty heading.
+        # Appendix C is absent for the same reason: _conflict_state has no removed
+        # passage, and _removed_appendix returns nothing rather than an empty
+        # heading. A run before MARK_OTHER_STUDY existed gets exactly this report.
         assert [h.split(" —")[0] for h in headings] == [
             "All variables",
             "Disagreements between the documents",
@@ -226,6 +232,75 @@ class TestReportText:
             "Appendix B",
             "Words used in this report",
         ]
+
+    def test_appendix_c_appears_after_appendix_b_and_before_the_word_list(
+        self, fields_yaml_path  # type: ignore[no-untyped-def]
+    ) -> None:
+        """Where stage 4's appendix sits, and that it does not displace anything.
+
+        Appendices are what a reader turns to after reading the front; a removal is
+        a judgement to check rather than a number to read, so it goes behind
+        Appendix A (the quotes) and Appendix B (the disagreements), and the word
+        list stays last.
+        """
+        _use_real_registry(fields_yaml_path)
+        state = _conflict_state()
+        state.removed_passages = [
+            RemovedPassage(
+                doc_id="doc-1",
+                section_id="doc-1:s042",
+                heading="1.3.2 Clinical Experience",
+                page_start=39,
+                page_end=40,
+                verdict="other_study",
+                reason="Describes completed study NEOD001-001.",
+                text="Study NEOD001-001 was an ongoing, open-label Phase 1/2 study.",
+            )
+        ]
+        headings = _headings(build_report_pdf(state, _registry(), generated_at="t"))
+
+        assert [h.split(" —")[0] for h in headings] == [
+            "All variables",
+            "Disagreements between the documents",
+            "Flagged for review",
+            "Appendix A",
+            "Appendix B",
+            "Appendix C",
+            "Words used in this report",
+        ]
+
+    def test_appendix_c_names_the_section_the_pages_and_the_reason(
+        self, fields_yaml_path  # type: ignore[no-untyped-def]
+    ) -> None:
+        """What a reviewer needs to overturn the decision: where it was, and why.
+
+        PLAN_2026-10-02.md stage 4 asks for document, section heading, pages and
+        reason. The extract is also printed, so the passage can be recognised
+        without opening the PDF it came from.
+        """
+        _use_real_registry(fields_yaml_path)
+        state = _conflict_state()
+        state.removed_passages = [
+            RemovedPassage(
+                doc_id="doc-1",
+                section_id="doc-1:s042",
+                heading="1.3.2 Clinical Experience",
+                page_start=39,
+                page_end=40,
+                verdict="other_study",
+                reason="Describes completed study NEOD001-001, not this study.",
+                text="Study NEOD001-001 was an ongoing, open-label\nPhase 1/2 study.",
+            )
+        ]
+        text = _pdf_text(build_report_pdf(state, _registry(), generated_at="t"))
+
+        assert "1.3.2 Clinical Experience" in text
+        assert "p.39-40" in text
+        assert "whole section" in text
+        assert "Describes completed study NEOD001-001, not this study." in text
+        # The line break in the stored text is collapsed, because a passage comes
+        # straight out of a PDF page where a sentence breaks wherever the line did.
+        assert "was an ongoing, open-label Phase 1/2 study." in text
 
     def test_schedules_are_printed_before_the_appendices(self, fields_yaml_path) -> None:  # type: ignore[no-untyped-def]
         """A variable with many entries becomes its own table, still ahead of Appendix A.

@@ -46,5 +46,11 @@ def build_extraction_document(state: RunState, registry: Registry) -> dict[str, 
         # a field that came back empty is often explained by a section that was
         # set aside.
         "set_aside_sections": [s.model_dump(mode="json") for s in state.set_aside],
+        # MARK_OTHER_STUDY's removals (PLAN_2026-10-02.md stage 4). Unlike
+        # set_aside_sections these ARE in report.pdf, as Appendix C: a section an
+        # analyst skips anyway is housekeeping, but text a model decided was about
+        # a different study is a judgement someone may want to overturn, and the
+        # removed text itself is here so they can read what went.
+        "removed_passages": [p.model_dump(mode="json") for p in state.removed_passages],
         "errors": [e.model_dump(mode="json") for e in state.errors],
     }

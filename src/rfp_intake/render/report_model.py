@@ -175,6 +175,30 @@ class Evidence:
     notes: str | None
 
 
+@dataclass
+class RemovedText:
+    """One passage MARK_OTHER_STUDY took out, for Appendix C.
+
+    Stage 4 of docs/PLAN_2026-10-02.md. This is in the report, unlike the sections
+    SET_ASIDE_SECTIONS skips, and the difference is who would want to argue with
+    it: skipping the references is housekeeping, while deciding that a passage
+    describes a different study is a judgement a reviewer may want to overturn.
+    They cannot overturn what they cannot see.
+
+    `extract` is the removed text's opening, not all of it — the full text is in
+    `extraction.json` under `removed_passages`. A reviewer needs enough to
+    recognise the passage and find it on the page; reprinting several pages of
+    another study's results would make the report longer than the thing it saved.
+    """
+
+    doc_code: str
+    heading: str
+    pages: str
+    verdict: str
+    reason: str
+    extract: str
+
+
 @dataclass(frozen=True)
 class Term:
     """One line of the report's "Words used in this report" list.
@@ -201,6 +225,10 @@ class ReportModel:
     glossary: list[Term]
     variables_total: int
     variables_found: int
+    # Appendix C. Defaulted, because every other field here is positional and a
+    # report rebuilt by older code — scripts/rerender_report.py against an
+    # extraction.json written before 2026-10-02 — has nothing to put in it.
+    removed: list[RemovedText] = field(default_factory=list)
 
     def all_rows(self) -> list[Row]:
         rows: list[Row] = []
@@ -425,7 +453,44 @@ def build_report_model(state: RunState, registry: Registry) -> ReportModel:
         glossary=[Term(f.label, f.plain) for f in registry.fields if f.plain],
         variables_total=len(registry.fields),
         variables_found=found,
+        removed=_removed(state, docs),
     )
+
+
+# How much of a removed passage Appendix C prints. One or two sentences is enough
+# to recognise which passage went and to find it on the page named beside it; the
+# whole text is in extraction.json.
+REMOVED_EXTRACT_CHARS = 300
+
+
+def _removed(state: RunState, docs: _Docs) -> list[RemovedText]:
+    """Appendix C: what MARK_OTHER_STUDY took out, in document and page order."""
+    ordered = sorted(state.removed_passages, key=lambda p: (p.doc_id, p.page_start, p.heading))
+    return [
+        RemovedText(
+            doc_code=docs.code(p.doc_id),
+            heading=p.heading,
+            pages=(
+                f"p.{p.page_start}"
+                if p.page_start == p.page_end
+                else f"p.{p.page_start}-{p.page_end}"
+            ),
+            verdict="whole section" if p.verdict == "other_study" else "part of the section",
+            reason=p.reason,
+            extract=_shorten(p.text, REMOVED_EXTRACT_CHARS),
+        )
+        for p in ordered
+    ]
+
+
+def _shorten(text: str, limit: int) -> str:
+    """One line of `text`, cut to `limit` characters.
+
+    Line breaks are collapsed because a removed passage comes straight out of a
+    PDF's page text, where a sentence is broken wherever the line ended.
+    """
+    flat = " ".join(text.split())
+    return flat if len(flat) <= limit else flat[: limit - 1].rstrip() + "…"
 
 
 def _rows_for(

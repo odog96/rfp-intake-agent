@@ -84,6 +84,17 @@ roles:
     model: us.anthropic.claude-sonnet-4-6
     allow_external: true
     strategy: native
+  # MARK_OTHER_STUDY (stage 4 of docs/PLAN_2026-10-02.md). Same binding as
+  # classify: this role is a judgement about what a passage is about, not an
+  # extraction, and it is asked once per batch of sections rather than once per
+  # field group. It needs native tool calling for the same reason every other role
+  # here does — the answer is a list of per-section verdicts, and a model that
+  # returns prose instead removes nothing.
+  other_study_check:
+    provider: bedrock
+    model: us.anthropic.claude-sonnet-4-6
+    allow_external: true
+    strategy: native
   extract:
     provider: bedrock
     model: us.anthropic.claude-sonnet-4-6

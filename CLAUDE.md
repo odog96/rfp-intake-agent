@@ -15,10 +15,10 @@ against it anyway).
 
 ## Current status (as of 2026-10-02)
 
-Phases 0–4 of ARCHITECTURE.md §10 are done, and stages 1, 2 and 3 of `docs/PLAN_2026-10-02.md`. Graph
+Phases 0–4 of ARCHITECTURE.md §10 are done, and stages 1, 2, 3 and 4 of `docs/PLAN_2026-10-02.md`. Graph
 topology today:
-`INGEST → CLASSIFY → FIND_SECTIONS → SET_ASIDE_SECTIONS → PLAN → EXTRACT → NORMALIZE → RECONCILE → ADJUDICATE → DERIVE → GATE`,
-then RENDER runs after the graph finishes (see the deviations below). 762 tests passing, 1 skipped.
+`INGEST → CLASSIFY → FIND_SECTIONS → SET_ASIDE_SECTIONS → MARK_OTHER_STUDY → PLAN → EXTRACT → NORMALIZE → RECONCILE → ADJUDICATE → DERIVE → GATE`,
+then RENDER runs after the graph finishes (see the deviations below). 800 tests passing, 1 skipped.
 Pushed to https://github.com/odog96/rfp-intake-agent.git. The push is done from a terminal by
 Oliver, from inside the repository directory — this session's credentials cannot do it.
 
@@ -32,10 +32,12 @@ Claude Sonnet 4.6 on AWS Bedrock (`us.anthropic.claude-sonnet-4-6`), `privacy_mo
 **Testing only** — Bedrock is outside the customer boundary, so synthetic and publicly-registered
 documents only, per rule 5 below. Production is CAII and `privacy_mode: private`.
 
-On the two-document test pair, baseline run `r-20261002-200521-stage2` (2026-10-02) gave **26 of the
-36 registry fields at least one confirmed row**, in 5m56s, with 12 contradiction clusters and 5
-EXTRACT errors, and caught the planted `timeline.total_duration` disagreement. Quote that first figure
-when comparing runs, and see the stage 2 entry below for the full table.
+On the two-document test pair, the current baseline run `r-20261002-213531-stage4` (2026-10-02) gave
+**27 of the 36 registry fields at least one confirmed row**, in 9m10s, with 8 contradiction clusters and
+27 EXTRACT errors, and caught the planted `timeline.total_duration` disagreement. Quote that first figure
+when comparing runs. The previous baseline, `r-20261002-200521-stage2`, gave 26 of 36 in 5m56s with 12
+clusters and 5 EXTRACT errors; the stage 2 entry below has its full table, and the stage 4 entry explains
+why the error count moved and why it is not yet attributed to a stage.
 
 An earlier version of this line claimed "108 confirmed fields", which was never comparable to anything:
 `config/fields.yaml` defines 36 fields, and 108 was a count of field × scope rows under the August
@@ -64,7 +66,13 @@ recorded inline in its own section rather than only here. The load-bearing ones:
   `fields.yaml`'s current enum. See `derive/rubric.py` before recalibrating.
 
 ### Known problems, in the order they hurt
-1. **`study.phase` reads the phase of a different study.** In run `r-listfix-175318` it confirmed
+1. ~~**`study.phase` reads the phase of a different study.**~~ **Fixed on 2026-10-02 by stage 4
+   (MARK_OTHER_STUDY), shown on live run `r-20261002-213531-stage4`**: `study.phase` is one row,
+   `phase_3`, `confirmed`, confidence 1.0, asserted by both documents, and the `phase_1_2` row is gone.
+   Section 1.3.2 "Clinical Experience" was removed as a whole section and is listed in Appendix C of
+   that run's `report.pdf`. The history below is kept because it is the only record of how long this
+   took to find and of the two separate causes.
+   In run `r-listfix-175318` it confirmed
    `phase_1_2` with the scope "Study NEOD001-001 (referenced study)" — the phase of an earlier study
    the protocol mentions. The correct `phase_3` is present but marked `needs_review`. Nothing in the
    pipeline knows that a value about another study should be discarded. Repeated in run
@@ -74,8 +82,11 @@ recorded inline in its own section rather than only here. The load-bearing ones:
    of margin, so text from sections it did not choose reaches the model — **was fixed by stage 2 on
    2026-10-02**: the excerpt now holds only the chosen sections' text, and on the real protocol the
    `phase_population` task whose window is pages 35–41 contains no text from section 1.3.2 on page 39.
-   The second cause stands: the `phase_population` search hints name the headings "Background" and
-   "Rationale". Offline only — this has not yet been shown on a live Bedrock run.
+   The second cause — the `phase_population` search hints name the headings "Background" and
+   "Rationale" — was never removed, and stage 4 fixed the field anyway by taking the text out of the
+   background rather than by steering PLAN away from it. Removing those two hints is step 1 of stage 5
+   of `docs/PLAN_2026-10-02.md`, which the plan deliberately held back until stage 4 had passed on its
+   own. It has now passed on its own.
 1a. ~~**PLAN depends on PDF bookmarks.** A PDF with no bookmarks gets pages 1 to 5 for every field
    group.~~ **Fixed on 2026-10-02** by stages 1 and 2 of `docs/PLAN_2026-10-02.md`. FIND_SECTIONS gives
    `samples/Synthetic_RFP_NEOD001.pdf` one whole-document section, and PLAN now sends sections rather than
@@ -84,7 +95,12 @@ recorded inline in its own section rather than only here. The load-bearing ones:
    `tests/plan/test_plan_sections_samples.py`; not yet shown on a live Bedrock run.
 2. **`timeline.total_duration` splits by enrolment timing.** Same run: "approximately 3.5-4 years"
    for early enrollers and "1.5-2 years" for late ones, both confirmed, with the study-level 42
-   months absent. Correct per-subject, wrong as the study duration a budget needs.
+   months absent. Correct per-subject, wrong as the study duration a budget needs. **Half better as of
+   run `r-20261002-213531-stage4`**: the study-level 42 months is now extracted and is in the
+   high-severity `conflict` against the RFP's 40, which is the disagreement the test pair plants. The
+   per-subject split is still there, as a second cluster on the same field with verdict
+   `not_a_conflict`. Nothing was done to fix this; it is a side effect of stages 1 to 4 reading better
+   text, and the per-subject rows are still what a reader sees alongside the study figure.
 3. **`audit.json` (§6.4) and the janitor job (§6.5) are not built.** Without the janitor, a run whose
    job process dies leaves `status.json` saying "running" forever.
 4. **`python -m rfp_intake.eval` does not exist.** Only the library functions in `eval/` are built.
@@ -129,15 +145,148 @@ checks every task's field names against the specification, so neither mistake ca
    production is the model that was tested. Blocked on CAII access; the token is short-lived and the
    endpoint is served without the two tool-calling flags named above.
 3. **Improve the front end.** A screenshot, `8-27-app-screenshot.jpg`, was mentioned as the starting
-   point. Asked for 2026-08-27. The Results section with downloads is done. Stage cards are done in
-   `app_v2.py` but not yet live — see the 2026-10-01 entry below. Still unspecified: a past-run
-   browser, the 101 extracted fields shown as a table, and the contradictions shown individually.
-4. **Fix the two extraction problems above** — the phase of a referenced study, and the study
-   duration splitting per subject. The first is being fixed by `docs/PLAN_2026-10-02.md`; do that
-   plan's five stages in order before anything else on this list.
+   point. Asked for 2026-08-27. The Results section with downloads is done, and the stage cards in
+   `app_v2.py` are live — `launch_app.py` serves `app_v2.py`, decided by Oliver on 2026-10-02. Still
+   unspecified: a past-run browser, the extracted variables shown as a table, and the contradictions
+   shown individually. `app_v2.py` still has no coverage in the test suite and has never been seen in a
+   browser.
+4. **Finish `docs/PLAN_2026-10-02.md`: stage 5, the field registry and DERIVE**, before anything else
+   on this list. Stages 1 to 4 are done and the phase of a referenced study is fixed. Stage 5 starts by
+   removing "Background" and "Rationale" from the `phase_population` search hints, which the plan held
+   back until stage 4 had passed on its own. The study duration splitting per subject is the other
+   extraction problem and is half fixed — see known problem 2 above.
+4a. **Find out why EXTRACT dropped 27 records in run `r-20261002-213531-stage4` where the previous
+   baseline dropped 5.** All 27 are `quote_not_found_in_excerpt`, 9 of them `visits.frequency_by_period`.
+   The stage 4 entry below lists what is and is not known; the first thing to check is whether a `mixed`
+   removal's `"\n\n"` gap inside PROTOCOL SYNOPSIS breaks quotes for the visits and timelines groups.
 5. **Return `privacy_mode` to `private` and the models to CAII before any customer document.**
    `config/models.yaml` is on `mixed` with Claude Sonnet 4.6 on Bedrock for testing.
 6. Build `audit.json`, the janitor job, and the `rfp_intake.eval` command line.
+
+### Done 2026-10-02: Stage 4 — MARK_OTHER_STUDY, the text about a different study
+Stage 4 of `docs/PLAN_2026-10-02.md`, and the fix for known problem 1. A twelfth node,
+MARK_OTHER_STUDY, sits between SET_ASIDE_SECTIONS and PLAN and removes text that describes a study
+other than the one being budgeted. Code in `src/rfp_intake/other_study/` — `mark_other_study_node` and
+`other_study/prompt.py`. The node contract is `docs/ARCHITECTURE.md` §4.2c.
+
+**This is the one of the three new nodes that calls a model**, under a new role `other_study_check` in
+`config/models.yaml`, bound exactly like `classify`. The reason it needs a model: the passage that
+breaks `study.phase` is section 1.3.2 "Clinical Experience", an ordinary heading in an ordinary place
+inside the background, where the neighbouring sections are about this study and are needed. No list of
+headings can catch it, and matching study numbers in the text does not work either because the protocol
+prints its own number beside the other one.
+
+**Removal happens in `sections/section_page_texts()`**, the single function PLAN's scoring and EXTRACT's
+excerpt both go through to read a section's text, so neither PLAN nor EXTRACT knows MARK_OTHER_STUDY
+exists. `Document.page_texts` is never edited: a `RemovedPassage` carries `TextSpan` offsets into it,
+the same coordinates `Section` already uses. A removed span leaves `"\n\n"` — not nothing, because the
+sentences either side would fuse into one nobody wrote, and not a marker like `[removed]`, because
+EXTRACT validates quotes against this same text and any word injected here becomes quotable.
+
+**Sections are not deleted; their text is.** A section whose text is wholly removed stays on
+`Document.sections`, scores zero in PLAN and is never chosen. Keeping it is what lets `extraction.json`
+and `report.pdf` name the heading each removal came from.
+
+**One model call per batch of sections**, grouped up to `DEFAULT_TOKEN_BUDGET` — roughly ten calls for
+the 137-page sample protocol, the same order of magnitude PLAN already spends. A section longer than the
+whole budget gets its own batch rather than being split, and a section under 200 characters is never
+asked about, on length alone and never on keywords (keyword pre-filtering is what the plan says failed).
+
+**Nothing is removed on the model's word alone.** Three verdicts: `this_study` removes nothing,
+`other_study` removes the whole section's text, and `mixed` removes only the sentences the model copied
+out — each of which must be located in the section's own text by `locate_text`, the same
+whitespace-tolerant search FIND_SECTIONS uses to place a bookmark. **A sentence that cannot be located
+is kept, not removed**, and logged as `other_study_sentence_not_found`, so a paraphrase costs nothing.
+The prompt also says to answer `this_study` when unsure, because keeping a passage costs some tokens
+while removing one wrongly loses a number the budget needs.
+
+**`CLASSIFY` now also extracts the study title**, and `Document` gained `title`. MARK_OTHER_STUDY names
+the study in its prompt from `Document.protocol_id` and `Document.title`, preferring the protocol
+document's values over an RFP's, because a model given two study descriptions and no statement of which
+one is being asked about has no way to answer. No extra model call: the title comes back in the call
+that already classifies the document, and the CLASSIFY prompt says it is the title of the study this
+document is about, not any other study it mentions.
+
+**A document is never emptied**, the same guard SET_ASIDE_SECTIONS has and for the same reason: if every
+section with text came back `other_study`, nothing is removed and a `kind="validation"` `RunError` says
+so (`other_study_would_empty_document`). PLAN would otherwise have nothing to score and every field
+would be reported not found with no hint why.
+
+**Removals are in `report.pdf` as Appendix C, while set-aside sections are not.** Appendix C lists each
+removal with document, heading, pages, whether a whole section or part of one went, the model's
+one-sentence reason and the first 300 characters of the removed text. Skipping the references is
+housekeeping; deciding that a passage describes a different study is a judgement a reviewer may want to
+overturn, and nobody can overturn what they cannot see. The whole text and the character offsets are in
+`extraction.json` under `removed_passages`. Both readers of `extraction.json` —
+`scripts/rerender_report.py` and `tests/render/test_report_model.py:load_run_state` — read that key with
+`.get`, so a run from before 2026-10-02 re-renders exactly as it did before, with no Appendix C.
+
+**Adding a role means editing five places**, which is worth knowing before adding the next one:
+`LLM_ROLES` in `domain/model_routing.py`, `LLMRole` in `llm/provider.py`, `PROBE_ROLES` in
+`llm/health.py`, `Settings.model_other_study_check` in `config/settings.py`, and `_routing_from_settings`
+in `domain/model_routing.py`. `PROBE_ROLES` matters most: a role left out of it is a role whose first
+failure happens deep into a paid run instead of at PREFLIGHT. `Settings` matters because
+`_routing_from_settings` hardcodes the role list for the legacy path taken when `config/models.yaml` is
+absent, so without that entry `get_llm("other_study_check")` would fail only in that configuration.
+
+Both Streamlit pages now show twelve stages: `("MARK_OTHER_STUDY", "Removing text about other studies")`
+was inserted into `_STEPS` in `app.py` and `app_v2.py`, which is the whole change.
+
+**800 tests passing, 1 skipped** — 38 more than the 762 after stage 3, of which 37 are new tests and one
+is `tests/render/test_report_model.py` being parametrised once per folder in `runs/`, where this stage's
+live run is a new folder. `tests/other_study/test_other_study.py` is the new file: the plan's own offline acceptance test (a hand-built section in
+the style of 1.3.2 is removed and recorded, asserted through `section_text` because that is the function
+PLAN and EXTRACT actually read), plus the mixed-sentence rules, what is never removed, batching, the
+study identity, the prompt and the node's error handling. `tests/graph/test_topology.py` gained a test
+that `set_aside_sections → plan` is **gone** as well as that the two new edges exist — without that
+assertion the graph would still run with the old edge in place, MARK_OTHER_STUDY might never be reached,
+and the only sign would be `study.phase` still carrying another study's phase. `tests/render/`
+test files gained Appendix C coverage in all three renderers. `ruff check .` passes and mypy strict is
+clean on the files this stage changed.
+
+**The live run passed all three of the plan's criteria. Run `r-20261002-213531-stage4` is the new
+baseline**, on `samples/Example protocol 2.pdf` plus `samples/Synthetic_RFP_NEOD001.pdf`, 9m10s
+(21:36:25 → 21:45:35 UTC). MARK_OTHER_STUDY itself took 92 seconds, checked 121 sections of the protocol
+and 1 of the synthetic RFP, and removed 6,458 characters in 8 passages.
+
+1. **`study.phase` is now a single row: `phase_3`, `confirmed`, confidence 1.0, asserted by both
+   documents** (protocol page 11 and RFP page 2). The `phase_1_2` row is gone. In the previous baseline
+   `r-20261002-200521-stage2` there were three rows, all `needs_review`, one of them `phase_1_2` from
+   page 40, and `resolved_value` was `None`. **This is known problem 1 fixed**, and fixed by removing
+   the text rather than by a prompt change.
+2. **Appendix C of `report.pdf` names section 1.3.2 "Clinical Experience", Amendment p.39-40, whole
+   section**, with the model's reason: "describes Study NEOD001-001, a different ongoing Phase 1/2
+   open-label dose-escalation study with a data cutoff of 30 September 2015". Page 13 of 14.
+3. **27 of the 36 registry fields have at least one `confirmed` row**, against the 26 the plan set as
+   the floor and the baseline figure. 97 resolved rows, 74 confirmed, 8 contradiction clusters.
+
+The planted `timeline.total_duration` disagreement is still caught — 42 months against 40, verdict
+`conflict`, severity high — and **the study-level 42 months is now present as a value**, which known
+problem 2 records as missing. `interim.planned` is still a high-severity conflict. Both are unchanged
+behaviour, listed here because a run that removes text has to be shown not to have removed these.
+
+**The eight removals, all on the protocol, none on the synthetic RFP.** Three whole sections — 1.3
+Background on NEOD001 and Figure 1 (both nonclinical mouse and cynomolgus monkey work) and 1.3.2
+Clinical Experience — and five single sentences out of PROTOCOL SYNOPSIS, 3.4.1.4.8.5 Pharmacokinetics,
+10.5 Pharmacokinetic Analyses, Appendix 1 and Appendix 2. Three of those five are the same sentence
+about pooling this study's serum concentrations with data from other NEOD001 studies. Read Appendix C of
+`runs/r-20261002-213531-stage4/report.pdf` before deciding whether any of the eight was wrong; nothing
+about them looks wrong to me, but the nonclinical sections are the judgement call — they describe prior
+studies, which is what the prompt asks for, and they are also where a reader might expect the drug's
+mechanism to be described.
+
+**EXTRACT errors went from 5 to 27, and the cause is not established.** All 27 are the same
+`quote_not_found_in_excerpt` that the 5 were, so no new kind of failure appeared, and 9 of the 27 are
+still `visits.frequency_by_period`. Two things to keep straight before blaming MARK_OTHER_STUDY.
+**This is the first live run that includes SET_ASIDE_SECTIONS**, which had no live run of its own, so the
+comparison against `r-20261002-200521-stage2` spans two stages; PLAN produced 32 tasks here against 26
+in the baseline, which is a planning change, not a removal. And **8 of the 27 errors are on the
+synthetic RFP, where not one character was removed**, so removal cannot explain those. The one
+mechanism worth checking first is the removal gap: a `mixed` removal inside PROTOCOL SYNOPSIS leaves
+`"\n\n"` in a section the visits and timelines groups both read, and a quote that spanned the cut can no
+longer be found. That is a hypothesis, not a finding — nothing has been measured. The field-level
+outcome went up, not down (27 fields against 26, 74 confirmed rows against 62), which is why this is
+recorded as the next thing to chase rather than as a regression that blocks the stage.
 
 ### Done 2026-10-02: Stage 3 — SET_ASIDE_SECTIONS, the sections an analyst skips
 Stage 3 of `docs/PLAN_2026-10-02.md`. An eleventh node, SET_ASIDE_SECTIONS, sits between FIND_SECTIONS
@@ -227,8 +376,9 @@ holds `app._STEPS` and `app_v2._STEPS` equal to the graph's node list. `ruff che
 strict is clean on the four source files this stage changed.
 
 **No live Bedrock run was made for this stage**, so the 35% figure is offline evidence from the real
-protocol PDF. The saving it represents has not been measured as tokens or money on a live run, and the
-current baseline is still `r-20261002-200521-stage2`.
+protocol PDF. The saving it represents has not been measured as tokens or money on a live run. The first
+live run that includes SET_ASIDE_SECTIONS is stage 4's, `r-20261002-213531-stage4`, which is why that
+run's EXTRACT error count cannot be compared with the previous baseline and attributed to stage 4 alone.
 
 ### Done 2026-10-02: Stage 2 — PLAN and EXTRACT read sections instead of pages
 Stage 2 of `docs/PLAN_2026-10-02.md`. Stage 1 gave every document sections; nothing read them. Now PLAN

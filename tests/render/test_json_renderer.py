@@ -8,9 +8,11 @@ from rfp_intake.domain.schemas import (
     Contradiction,
     FieldRecord,
     Provenance,
+    RemovedPassage,
     ResolvedField,
     RunState,
     SetAsideSection,
+    TextSpan,
 )
 from rfp_intake.render.json_renderer import build_extraction_document
 
@@ -75,6 +77,62 @@ class TestBuildExtractionDocument:
 
         doc = build_extraction_document(RunState(run_id="r-1"), get_registry())
         assert doc["set_aside_sections"] == []
+
+    def test_removed_passages_are_recorded_in_full(self, fields_yaml_path) -> None:  # type: ignore[no-untyped-def]
+        """MARK_OTHER_STUDY's removals, with the removed text and the offsets.
+
+        report.pdf's Appendix C shortens the text to 300 characters, so this is the
+        only place the whole passage survives — and the only place the spans
+        survive at all. Someone checking whether the right characters were cut out
+        of Document.page_texts has nothing else to read.
+        """
+        _use_real_registry(fields_yaml_path)
+        from rfp_intake.domain.registry import get_registry
+
+        state = RunState(
+            run_id="r-1",
+            removed_passages=[
+                RemovedPassage(
+                    doc_id="d1",
+                    section_id="d1:s042",
+                    heading="1.3.2 Clinical Experience",
+                    page_start=39,
+                    page_end=40,
+                    verdict="other_study",
+                    reason="Describes completed study NEOD001-001, not this study.",
+                    text="Study NEOD001-001 was an ongoing, open-label Phase 1/2 study.",
+                    spans=[TextSpan(page=39, start_offset=1200, end_offset=1261)],
+                )
+            ],
+        )
+        doc = build_extraction_document(state, get_registry())
+        assert doc["removed_passages"] == [
+            {
+                "doc_id": "d1",
+                "section_id": "d1:s042",
+                "heading": "1.3.2 Clinical Experience",
+                "page_start": 39,
+                "page_end": 40,
+                "verdict": "other_study",
+                "reason": "Describes completed study NEOD001-001, not this study.",
+                "text": "Study NEOD001-001 was an ongoing, open-label Phase 1/2 study.",
+                "spans": [{"page": 39, "start_offset": 1200, "end_offset": 1261}],
+            }
+        ]
+
+    def test_removed_passages_is_empty_not_absent_when_nothing_went(
+        self, fields_yaml_path,  # type: ignore[no-untyped-def]
+    ) -> None:
+        """An empty list says MARK_OTHER_STUDY ran and removed nothing.
+
+        A missing key would mean the same thing as a run from before the node
+        existed, and those are different facts.
+        """
+        _use_real_registry(fields_yaml_path)
+        from rfp_intake.domain.registry import get_registry
+
+        doc = build_extraction_document(RunState(run_id="r-1"), get_registry())
+        assert doc["removed_passages"] == []
 
     def test_resolved_field_enriched_with_group_and_label(self, fields_yaml_path) -> None:  # type: ignore[no-untyped-def]
         _use_real_registry(fields_yaml_path)

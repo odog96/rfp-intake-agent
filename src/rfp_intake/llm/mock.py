@@ -64,7 +64,16 @@ class MockChatModel(BaseChatModel):
                 "document_date": "2024-01-15",
                 "sponsor": "Example Pharma",
                 "protocol_id": "TEST-001",
+                "title": "A Test Protocol",
             }
+        elif self.role == "other_study_check":
+            # No verdicts, so nothing is removed. This is the right default for a
+            # role whose job is to take text away: a test that has not said what
+            # the model answers gets a pipeline whose text is untouched, and a
+            # test about removal supplies its own answer. The alternative — a
+            # fixture that removes something — would quietly change the excerpt
+            # every other offline test is built on.
+            return {"sections": []}
         elif self.role == "extract":
             return {
                 "sites_total": [

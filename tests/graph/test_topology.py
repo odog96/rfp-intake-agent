@@ -21,6 +21,7 @@ EXPECTED_ORDER = [
     "classify",
     "find_sections",
     "set_aside_sections",
+    "mark_other_study",
     "plan",
     "extract",
     "normalize",
@@ -55,8 +56,24 @@ class TestTopology:
         """
         edges = _edges(build_graph())
         assert ("find_sections", "set_aside_sections") in edges
-        assert ("set_aside_sections", "plan") in edges
         assert ("find_sections", "plan") not in edges
+
+    def test_mark_other_study_sits_between_set_aside_sections_and_plan(self) -> None:
+        """The one thing stage 4 changes about the pipeline's shape.
+
+        Negatively as well as positively, for the same reason as stage 3 above: if
+        `set_aside_sections -> plan` survived alongside the new pair, the graph
+        would still run, MARK_OTHER_STUDY might never be reached, and the only
+        sign would be `study.phase` still carrying another study's phase.
+
+        The order matters in both directions. After SET_ASIDE_SECTIONS, so no
+        model call is spent on a section an analyst skips anyway; before PLAN, so
+        the removed text is gone before any section is scored or extracted.
+        """
+        edges = _edges(build_graph())
+        assert ("set_aside_sections", "mark_other_study") in edges
+        assert ("mark_other_study", "plan") in edges
+        assert ("set_aside_sections", "plan") not in edges
 
     def test_the_entry_point_is_ingest(self) -> None:
         edges = _edges(build_graph())

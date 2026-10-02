@@ -121,7 +121,12 @@ class TestLoadModelRouting:
         that every externally-bound role carries recorded consent.
         """
         routing = load_model_routing(Path("config/models.yaml"))
-        assert set(routing.roles) == {"classify", "extract", "adjudicate"}
+        assert set(routing.roles) == {
+            "classify",
+            "other_study_check",
+            "extract",
+            "adjudicate",
+        }
         validate_routing(routing)
 
         for role, binding in routing.roles.items():
@@ -149,7 +154,12 @@ class TestLoadModelRouting:
 
     def test_missing_file_falls_back_to_settings(self, tmp_path: Path) -> None:
         routing = load_model_routing(tmp_path / "absent.yaml")
-        assert set(routing.roles) == {"classify", "extract", "adjudicate"}
+        assert set(routing.roles) == {
+            "classify",
+            "other_study_check",
+            "extract",
+            "adjudicate",
+        }
         assert routing.roles["extract"].provider == "mock"
 
 

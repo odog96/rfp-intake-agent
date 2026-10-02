@@ -30,7 +30,7 @@ PrivacyMode = Literal["private", "mixed", "open"]
 #   external      definitionally outside the boundary
 Egress = Literal["none", "unverifiable", "external"]
 
-LLM_ROLES = ("classify", "extract", "adjudicate")
+LLM_ROLES = ("classify", "other_study_check", "extract", "adjudicate")
 
 
 class PrivacyViolationError(Exception):
@@ -187,6 +187,7 @@ def _routing_from_settings() -> ModelRouting:
 
     per_role = {
         "classify": settings.model_classify,
+        "other_study_check": settings.model_other_study_check,
         "extract": settings.model_extract,
         "adjudicate": settings.model_adjudicate,
     }

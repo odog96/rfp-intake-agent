@@ -34,6 +34,10 @@ class Settings(BaseSettings):
     litellm_api_key: str | None = None
 
     model_classify: str = "default"
+    # MARK_OTHER_STUDY's role (stage 4 of docs/PLAN_2026-10-02.md). Only read on
+    # the legacy path where config/models.yaml is absent; the shipped routing is
+    # that file's `other_study_check` role.
+    model_other_study_check: str = "default"
     model_extract: str = "default"
     model_adjudicate: str = "default"
 

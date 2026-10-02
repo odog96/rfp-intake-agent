@@ -87,6 +87,13 @@ def section_page_texts(doc: Document, section: Section) -> dict[int, str]:
 
     The first and last pages are cut at the section's offsets; the pages between
     are whole. A page missing from `Document.page_texts` yields an empty string.
+
+    **Anything in `Document.removed` is cut out** (stage 4 of
+    PLAN_2026-10-02.md). This function is the single place PLAN's scoring and
+    EXTRACT's excerpt both read a section's text, so removing it here is what
+    makes MARK_OTHER_STUDY's decision real for both without either knowing the
+    node exists. `Document.page_texts` is never edited — a removal must not move
+    the offsets every other section's boundaries are expressed in.
     """
     out: dict[int, str] = {}
     for page in range(section.page_start, section.page_end + 1):
@@ -97,8 +104,46 @@ def section_page_texts(doc: Document, section: Section) -> dict[int, str]:
             if page == section.page_end and section.end_offset is not None
             else len(text)
         )
-        out[page] = text[start:end]
+        out[page] = _without_removed(text, page, start, end, doc)
     return out
+
+
+# What a removed passage leaves behind. A blank line rather than nothing, so the
+# sentence before a removal and the sentence after it are not run together into
+# one sentence that was never in the document. It is whitespace rather than a
+# marker like "[removed]" on purpose: EXTRACT validates a quote against this same
+# text, so any word put here would be quotable, and a quote has to be the
+# document's own words or the provenance rule in CLAUDE.md #2 means nothing.
+_REMOVAL_GAP = "\n\n"
+
+
+def _without_removed(text: str, page: int, start: int, end: int, doc: Document) -> str:
+    """`text[start:end]`, with any removed span on this page cut out of it."""
+    cuts = sorted(
+        (
+            (max(start, span.start_offset), min(end, span.end_offset or end))
+            for passage in doc.removed
+            for span in passage.spans
+            if span.page == page
+        ),
+    )
+    if not cuts:
+        return text[start:end]
+
+    kept: list[str] = []
+    position = start
+    for cut_start, cut_end in cuts:
+        if cut_end <= position:
+            # Already inside a cut that reached further — overlapping spans are
+            # not an error, they are two passages the model named separately.
+            continue
+        if cut_start > position:
+            kept.append(text[position:cut_start])
+        kept.append(_REMOVAL_GAP)
+        position = cut_end
+    if position < end:
+        kept.append(text[position:end])
+    return "".join(kept)
 
 
 def section_text(doc: Document, section: Section) -> str:
@@ -189,17 +234,22 @@ def _boundaries_from_outline(doc: Document, first_page: int, last_page: int) -> 
     return boundaries
 
 
-def _locate_heading(text: str, heading: str) -> int | None:
-    """The offset of `heading` in `text`, ignoring how whitespace is broken up.
+def locate_text(text: str, needle: str) -> tuple[int, int] | None:
+    """The raw (start, end) offsets of `needle` in `text`, ignoring whitespace shape.
 
-    PyMuPDF returns the sample protocol's headings as "1.3.2 \\nClinical
-    Experience", so the bookmark title "1.3.2 Clinical Experience" is not a
-    literal substring of its page. Matching on whitespace-normalised, lowercased
-    text and mapping the hit back to a raw offset finds 174 of that document's 176
-    bookmark titles; a plain substring search finds far fewer.
+    `end` is exclusive. PyMuPDF returns the sample protocol's headings as "1.3.2
+    \\nClinical Experience", so the bookmark title "1.3.2 Clinical Experience" is
+    not a literal substring of its page, and a sentence a model copies out of an
+    excerpt comes back with its line breaks turned into spaces. Matching on
+    whitespace-normalised, lowercased text and mapping the hit back to raw offsets
+    finds 174 of the protocol's 176 bookmark titles; a plain substring search
+    finds far fewer.
+
+    Used by FIND_SECTIONS to place a heading and by MARK_OTHER_STUDY to place a
+    sentence the model asked to have removed.
     """
-    needle = " ".join(heading.split()).lower()
-    if not needle or not text:
+    wanted = " ".join(needle.split()).lower()
+    if not wanted or not text:
         return None
 
     normalised: list[str] = []
@@ -217,10 +267,18 @@ def _locate_heading(text: str, heading: str) -> int | None:
             raw_offsets.append(index)
             previous_was_space = False
 
-    position = "".join(normalised).find(needle)
+    position = "".join(normalised).find(wanted)
     if position < 0:
         return None
-    return raw_offsets[position]
+    # The raw offset of the last matched character, plus one, so the range covers
+    # the whole match including any whitespace inside it.
+    return raw_offsets[position], raw_offsets[position + len(wanted) - 1] + 1
+
+
+def _locate_heading(text: str, heading: str) -> int | None:
+    """Where `heading` starts in `text`, or None. See `locate_text`."""
+    found = locate_text(text, heading)
+    return None if found is None else found[0]
 
 
 def _sections_from_boundaries(
@@ -299,6 +357,7 @@ __all__ = [
     "SectionSource",
     "find_sections",
     "find_sections_node",
+    "locate_text",
     "section_page_texts",
     "section_text",
 ]

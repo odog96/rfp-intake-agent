@@ -19,12 +19,14 @@ from rfp_intake.domain.schemas import (
     Document,
     FieldRecord,
     Provenance,
+    RemovedPassage,
     ResolvedField,
     RunState,
 )
 from rfp_intake.normalize.scope import normalize_scope
 from rfp_intake.render.report_model import (
     _STATUS_RANK,
+    REMOVED_EXTRACT_CHARS,
     SCHEDULE_THRESHOLD,
     ReportModel,
     _same_key,
@@ -299,6 +301,81 @@ class TestNothingLost:
         assert any(r.field_id == "retired.field" for r in model.all_rows())
 
 
+class TestRemovedPassages:
+    """Appendix C — what MARK_OTHER_STUDY took out, as the report prints it."""
+
+    def _passage(self, **kw: object) -> RemovedPassage:
+        base: dict[str, object] = dict(
+            doc_id="d-prot",
+            section_id="d-prot:s042",
+            heading="1.3.2 Clinical Experience",
+            page_start=39,
+            page_end=40,
+            verdict="other_study",
+            reason="Describes completed study NEOD001-001, not this study.",
+            text="Study NEOD001-001 was an ongoing, open-label Phase 1/2 study.",
+        )
+        base.update(kw)
+        return RemovedPassage.model_validate(base)
+
+    def test_a_whole_section_is_named_with_its_document_and_page_range(self) -> None:
+        state = RunState(
+            run_id="r-1",
+            documents=[Document(id="d-prot", path="/runs/r-1/inputs/Protocol v3.pdf",
+                                kind="protocol", pages=112)],
+            removed_passages=[self._passage()],
+        )
+        [r] = build_report_model(state, get_registry()).removed
+        assert (r.doc_code, r.heading) == ("Protocol", "1.3.2 Clinical Experience")
+        assert r.pages == "p.39-40"
+        assert r.verdict == "whole section"
+        assert r.reason == "Describes completed study NEOD001-001, not this study."
+
+    def test_one_page_is_printed_as_one_page(self) -> None:
+        state = RunState(run_id="r-1",
+                         removed_passages=[self._passage(page_start=53, page_end=53)])
+        [r] = build_report_model(state, get_registry()).removed
+        assert r.pages == "p.53"
+
+    def test_a_removed_sentence_says_part_of_the_section(self) -> None:
+        """`mixed` means the section stayed and one sentence went. A reader
+        deciding whether to overturn needs to know which of the two happened."""
+        state = RunState(run_id="r-1", removed_passages=[self._passage(verdict="mixed")])
+        [r] = build_report_model(state, get_registry()).removed
+        assert r.verdict == "part of the section"
+
+    def test_line_breaks_in_the_removed_text_are_collapsed(self) -> None:
+        state = RunState(run_id="r-1", removed_passages=[
+            self._passage(text="Study NEOD001-001 was an\nongoing, open-label  Phase 1/2 study."),
+        ])
+        [r] = build_report_model(state, get_registry()).removed
+        assert r.extract == "Study NEOD001-001 was an ongoing, open-label Phase 1/2 study."
+
+    def test_a_long_passage_is_cut_and_marked_as_cut(self) -> None:
+        """The whole passage is in extraction.json; Appendix C prints an opening."""
+        state = RunState(run_id="r-1",
+                         removed_passages=[self._passage(text="word " * 200)])
+        [r] = build_report_model(state, get_registry()).removed
+        assert len(r.extract) == REMOVED_EXTRACT_CHARS
+        assert r.extract.endswith("…")
+
+    def test_passages_are_ordered_by_document_then_page(self) -> None:
+        state = RunState(run_id="r-1", removed_passages=[
+            self._passage(doc_id="d-rfp", page_start=2, page_end=2, heading="1 Background"),
+            self._passage(page_start=60, page_end=60, heading="7.1 Prior Experience"),
+            self._passage(page_start=39, page_end=40),
+        ])
+        removed = build_report_model(state, get_registry()).removed
+        assert [(r.doc_code, r.pages) for r in removed] == [
+            ("d-prot", "p.39-40"), ("d-prot", "p.60"), ("d-rfp", "p.2"),
+        ]
+
+    def test_a_run_with_no_removals_has_no_appendix_c_content(self) -> None:
+        """Every run before 2026-10-02 is this run, and gets its old report."""
+        model = build_report_model(RunState(run_id="r-1"), get_registry())
+        assert model.removed == []
+
+
 class TestDocumentNames:
     def test_named_from_the_run_documents(self) -> None:
         state = RunState(
@@ -370,6 +447,12 @@ def load_run_state(run: Path) -> RunState:
         run_id=d["run_id"],
         resolved=[ResolvedField.model_validate(r) for r in d["resolved_fields"]],
         contradictions=[Contradiction.model_validate(c) for c in d["contradictions"]],
+        # Kept in step with scripts/rerender_report.py's own load_run_state. Both
+        # rebuild a RunState from extraction.json, and a key either forgets is a
+        # section of report.pdf that silently disappears on a re-render.
+        removed_passages=[
+            RemovedPassage.model_validate(r) for r in d.get("removed_passages", [])
+        ],
     )
 
 

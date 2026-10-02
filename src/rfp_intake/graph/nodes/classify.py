@@ -27,7 +27,11 @@ Document types:
 - other: Does not fit the above categories
 
 Also extract metadata if visible: version label, document date (ISO format),
-sponsor name, protocol ID.
+sponsor name, protocol ID, and the study title.
+
+The title is the full title of the study this document is about — the one on the
+title page or in the synopsis — not the title of any other study the document
+mentions.
 """
 
 MAX_CHARS_PER_PAGE = 2000
@@ -42,6 +46,10 @@ class ClassificationResult(BaseModel):
     document_date: str | None = None
     sponsor: str | None = None
     protocol_id: str | None = None
+    # Read by MARK_OTHER_STUDY, which needs to say in its prompt which study is
+    # being costed. A protocol number alone is not enough when the document prints
+    # an earlier study's number beside its own.
+    title: str | None = None
 
 
 def classify_node(state: RunState) -> dict[str, Any]:
@@ -60,6 +68,7 @@ def classify_node(state: RunState) -> dict[str, Any]:
             doc.document_date = result.document_date
             doc.sponsor = result.sponsor
             doc.protocol_id = result.protocol_id
+            doc.title = result.title
             logger.info(
                 "document_classified",
                 run_id=state.run_id,

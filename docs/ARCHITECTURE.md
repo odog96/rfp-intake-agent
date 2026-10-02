@@ -167,9 +167,10 @@ free-form model search cannot guarantee.
                         │  SECTIONS    │  config/sections.yaml  (pure Python)
                         └──────┬───────┘
                                │
-                        ┌ ─ ─ ─▼─ ─ ─ ─┐
-                         MARK_OTHER_STUDY     drop passages about a different study (LLM labels
-                        └ ─ ─ ─┬─ ─ ─ ─┘      text only)  STAGE 4 — not built
+                        ┌──────▼───────┐
+                        │MARK_OTHER_   │  remove text about a different study (the model
+                        │  STUDY       │  labels passages; code cuts them)
+                        └──────┬───────┘
                                │
                         ┌──────▼───────┐
                         │    PLAN      │  build extraction tasks = doc × field_group,
@@ -219,8 +220,10 @@ a different study from page 39 of `samples/Example protocol 2.pdf`. A section bo
 the same plan, also 2026-10-02, moved PLAN and EXTRACT onto those sections**: PLAN scores sections rather
 than `Document.outline` entries, and the excerpt EXTRACT sends holds only the chosen sections' text. The
 **Stage 3, 2026-10-02, added SET_ASIDE_SECTIONS** (§4.2b): the two dozen kinds of section an analyst
-skips entirely come off `Document.sections` before PLAN scores them. The one dashed node left,
-MARK_OTHER_STUDY, is stage 4 of the same plan and is not built.
+skips entirely come off `Document.sections` before PLAN scores them. **Stage 4, 2026-10-02, added
+MARK_OTHER_STUDY** (§4.2c): the one node of the four that calls a model, which labels passages that
+describe a different study so that code can cut their text out before PLAN scores anything. All four
+nodes of `docs/PLAN_2026-10-02.md` between CLASSIFY and PLAN are now built.
 
 **Every edge is a static Python edge or a `Send`.** There are no LLM-chosen routes and no agent delegation.
 In MVP there is exactly one conditional edge: `ADJUDICATE` is skipped when the candidate set is empty.
@@ -445,7 +448,7 @@ Pure Python, no model call, no I/O. Added 2026-10-02 as stage 1 of `docs/PLAN_20
 
 **Lettered, not numbered**, because renumbering §4.3 to §4.10 would break every reference to them in
 `CLAUDE.md`, in the code comments and in `docs/PLAN_2026-10-02.md`. SET_ASIDE_SECTIONS is §4.2b;
-MARK_OTHER_STUDY becomes §4.2c when it is built.
+MARK_OTHER_STUDY is §4.2c.
 
 **Input:** `state.documents`, as CLASSIFY left them. **Output:** the same documents with `sections` and
 `section_source` filled in. Three rules, tried in order, and the one that fired is recorded on the
@@ -540,7 +543,74 @@ because each is a rule someone would otherwise undo in good faith:
 the analyst procedure lists all three. `study.phase` is wrong today because of section 1.3.2, which sits
 inside the background and describes a different study, and MARK_OTHER_STUDY (stage 4) is the node built
 to find it. Dropping the background first would make stage 4's live test pass without stage 4 doing
-anything. They go on the list once stage 4 has passed on its own.
+anything. They go on the list once a live run has shown MARK_OTHER_STUDY fixing `study.phase` on its
+own.
+
+### 4.2c MARK_OTHER_STUDY
+Added 2026-10-02 as stage 4 of `docs/PLAN_2026-10-02.md`. Code in `other_study/`
+(`mark_other_study_node`, plus `other_study/prompt.py`). **The only one of the three nodes added
+between CLASSIFY and PLAN that calls a model**, under the role `other_study_check` in
+`config/models.yaml`.
+
+**Why a model is needed here when FIND_SECTIONS and SET_ASIDE_SECTIONS do not need one.** The passage
+that breaks `study.phase` is section 1.3.2 "Clinical Experience" — an ordinary heading in an ordinary
+place, inside the background, where the surrounding sections are about this study and are needed.
+Nothing about the heading says the text under it describes a different study, so no list of headings
+can catch it. Matching study numbers in the text does not work either: the protocol prints its own
+number beside the other one.
+
+**Input:** `state.documents`, as SET_ASIDE_SECTIONS left them. **Output:** the same documents with
+`Document.removed` filled in, plus one `RemovedPassage` on `RunState.removed_passages` per removal.
+
+**Removal happens in `sections/section_page_texts()`**, the one function PLAN's scoring and EXTRACT's
+excerpt both go through to read a section's text. Neither PLAN nor EXTRACT knows this node exists.
+`Document.page_texts` is never edited — a `RemovedPassage` carries `TextSpan` offsets into it, the same
+coordinates `Section` already uses — so nothing has to re-derive a boundary and the original text is
+still there to quote in the report.
+
+**A removed span leaves `"\n\n"`, not nothing and not a marker.** Not nothing, because the sentence
+before and the sentence after would fuse into one sentence that was never written. Not `[removed]`,
+because EXTRACT validates every quote against this same text, so any word injected here becomes a word
+the model could quote.
+
+**Sections are not deleted; their text is.** A section whose text is entirely removed stays on
+`Document.sections`, scores zero in PLAN and is never chosen. Keeping it is what lets
+`extraction.json` and `report.pdf` name the heading a removal came from.
+
+**One call per batch of sections, not one per section.** Sections are grouped up to
+`DEFAULT_TOKEN_BUDGET` — about ten calls for the 137-page sample protocol, the same order of magnitude
+PLAN already spends. A section longer than the whole budget gets its own batch rather than being
+split, and a section under `MIN_SECTION_CHARS` (200) is never asked about, on length alone and never
+on keywords.
+
+**Three verdicts, and nothing is removed on the model's word alone.**
+
+1. `this_study` — nothing is removed.
+2. `other_study` — the whole section's text is removed.
+3. `mixed` — only the sentences the model copied out are removed, and each must be found in the
+   section's own text by `locate_text`, the same whitespace-tolerant search FIND_SECTIONS uses to place
+   a bookmark. **A sentence that cannot be located is kept, not removed**, and logged as
+   `other_study_sentence_not_found`. A paraphrase therefore costs nothing; only a verbatim copy cuts
+   text. The prompt says so, and it says to answer `this_study` when unsure: keeping a passage costs
+   some tokens, removing one wrongly loses a number the budget needs.
+
+**The study the documents are about is named in the prompt**, from `Document.protocol_id` and
+`Document.title` as CLASSIFY recorded them, preferring the protocol's own values over an RFP's. CLASSIFY
+gained `title` for this; it is asked for in the same call that already classifies the document, so there
+is no extra model call. Without the identity in the prompt the model has two study descriptions and no
+way to tell which one it is being asked about.
+
+**A document is never emptied**, for the same reason as §4.2b: if every section with text was marked
+`other_study`, nothing is removed and a `kind="validation"` `RunError` says so
+(`other_study_would_empty_document`). A model that answered `other_study` to everything would otherwise
+produce a run reporting every field as not found with no hint why.
+
+**Removals are in `report.pdf`, unlike set-aside sections.** Appendix C lists each one with its
+document, heading, pages, whether a whole section or part of one went, the model's one-sentence reason
+and the first 300 characters of the text. Skipping the references is housekeeping; deciding that a
+passage describes a different study is a judgement a reviewer may want to overturn, and nobody can
+overturn what they cannot see. `extraction.json` carries the whole text and the offsets under
+`removed_passages`.
 
 ### 4.3 PLAN
 **Rewritten on 2026-10-02 by stage 2 of `docs/PLAN_2026-10-02.md`.** PLAN chooses sections, not pages.

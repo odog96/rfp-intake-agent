@@ -35,7 +35,12 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 from rfp_intake.domain.registry import get_registry  # noqa: E402
-from rfp_intake.domain.schemas import Contradiction, ResolvedField, RunState  # noqa: E402
+from rfp_intake.domain.schemas import (  # noqa: E402
+    Contradiction,
+    RemovedPassage,
+    ResolvedField,
+    RunState,
+)
 from rfp_intake.render import build_report_pdf  # noqa: E402
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -48,6 +53,13 @@ def load_run_state(run_path: Path) -> tuple[RunState, str]:
         run_id=doc["run_id"],
         resolved=[ResolvedField.model_validate(r) for r in doc["resolved_fields"]],
         contradictions=[Contradiction.model_validate(c) for c in doc["contradictions"]],
+        # .get, because a run from before 2026-10-02 has no such key and this
+        # script's whole point is re-rendering an old run. Appendix C is then
+        # absent, which is correct: nothing was removed, because the node that
+        # removes did not exist.
+        removed_passages=[
+            RemovedPassage.model_validate(r) for r in doc.get("removed_passages", [])
+        ],
     )
     return state, str(doc.get("generated_at", "unknown"))
 

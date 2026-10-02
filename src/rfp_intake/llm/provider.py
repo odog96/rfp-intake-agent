@@ -17,7 +17,7 @@ from rfp_intake.domain.model_routing import (
 
 logger = structlog.get_logger()
 
-LLMRole = Literal["classify", "extract", "adjudicate"]
+LLMRole = Literal["classify", "other_study_check", "extract", "adjudicate"]
 LLMBackend = Literal["caii", "litellm"]
 
 # Providers reachable over an OpenAI-compatible HTTP API — construction differs

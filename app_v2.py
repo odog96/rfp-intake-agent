@@ -114,15 +114,16 @@ def check_job_run_status() -> tuple[str | None, str | None]:
 
 
 # The pipeline steps, in order, with the words an analyst sees instead of the node
-# name the engine writes. The position in this tuple is what the "step 6 of 10"
+# name the engine writes. The position in this tuple is what the "step 6 of 12"
 # caption counts, which is why DONE and ERROR are not in it. Every count shown on
-# the page is len(_STEPS), so adding a node here is the whole change — stage 4 of
-# docs/PLAN_2026-10-02.md adds one more.
+# the page is len(_STEPS), so adding a node here is the whole change.
+# tests/graph/test_topology.py holds this list equal to the graph's own node list.
 _STEPS = (
     ("INGEST", "Reading documents"),
     ("CLASSIFY", "Identifying document types"),
     ("FIND_SECTIONS", "Finding sections"),
     ("SET_ASIDE_SECTIONS", "Setting aside sections not needed"),
+    ("MARK_OTHER_STUDY", "Removing text about other studies"),
     ("PLAN", "Planning the extraction"),
     ("EXTRACT", "Pulling out study details"),
     ("NORMALIZE", "Standardising values"),
