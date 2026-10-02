@@ -32,8 +32,15 @@ Claude Sonnet 4.6 on AWS Bedrock (`us.anthropic.claude-sonnet-4-6`), `privacy_mo
 **Testing only** — Bedrock is outside the customer boundary, so synthetic and publicly-registered
 documents only, per rule 5 below. Production is CAII and `privacy_mode: private`.
 
-On the two-document test pair it produced 108 confirmed fields, 27 contradictions and no errors in
-about twelve minutes, and caught the planted `timeline.total_duration` disagreement. It is the only
+On the two-document test pair, baseline run `r-20261002-200521-stage2` (2026-10-02) gave **26 of the
+36 registry fields at least one confirmed row**, in 5m56s, with 12 contradiction clusters and 5
+EXTRACT errors, and caught the planted `timeline.total_duration` disagreement. Quote that first figure
+when comparing runs, and see the stage 2 entry below for the full table.
+
+An earlier version of this line claimed "108 confirmed fields", which was never comparable to anything:
+`config/fields.yaml` defines 36 fields, and 108 was a count of field × scope rows under the August
+registry (`registry_version` differs). It was quoted as a target on 2026-10-02 and sent a reader
+hunting a 40% regression that had not happened. Compare like with like, or state the unit. It is the only
 model tried that extracts the budget drivers reliably. Claude models needed the Anthropic use-case
 form submitted in the Bedrock console for account 240534893097; everything else in that account
 except `us.meta.llama3-1-70b-instruct-v1:0` is blocked by an AWS service control policy (a
@@ -214,10 +221,44 @@ offline evidence; the next live Bedrock run on the synthetic pair is what would 
 `samples/Synthetic_RFP_NEOD001.pdf`, failed at PREFLIGHT after one second:
 `AccessDeniedException ... Bearer Token has expired`, from the `AWS_BEARER_TOKEN_BEDROCK` environment
 variable in this session. No model call was made and no document text left the customer boundary.
-`runs/r-20261002-152805-stage2/status.json` holds the failure. **Still outstanding, therefore: the
-confirmed-field count against the 108 recorded above, and what `study.phase` comes back as now.** The
-credential has to be renewed by Oliver before that run can happen, and it should be run before stage 3
-changes behaviour again, otherwise one run cannot tell stage 2's effect from stage 3's.
+`runs/r-20261002-152805-stage2/status.json` holds the failure.
+
+**It was then re-run successfully the same day, after the credential was renewed: run
+`r-20261002-200521-stage2` is the current baseline.** Same two documents, completed in 5m56s
+(20:05:33 → 20:11:29 UTC). Compared against `r-20261001-032936`, the last completed run before
+stage 2:
+
+| | 1 Oct (pre-stage-2) | `r-20261002-200521-stage2` |
+| --- | --- | --- |
+| **Fields with ≥1 confirmed row, of 36** | **23** | **26** |
+| EXTRACT errors | 16 | 5 |
+| Wall clock | — | 5m56s |
+| Resolved rows (field × scope) | 104 | 88 |
+| Rows with status `confirmed` | 74 | 62 |
+| Contradiction clusters | 15 | 12 |
+| Distinct registry fields reported | 36 of 36 | 36 of 36 |
+
+Read the **first row only** as the quality measure. Rows are field × scope, so the row counts fall
+when the model stops splitting one field into near-duplicate scopes — `r-20261001-032936` gave one
+field 30 rows, including `Months 1-3 (FACT-GOG NTX assessment visits)` and `Months 1-3 (FACT-GOG NTX)`
+as separate rows for the same thing; the worst field here has 16. Fewer rows was an improvement, not a
+loss, and no field disappeared: both runs report all 36.
+
+All 5 remaining EXTRACT errors are `quote_not_found_in_excerpt`, and 3 of the 5 are
+`visits.frequency_by_period`. That is the next extraction bug to chase.
+
+`study.phase` now comes back **`phase_3`**, asserted independently by both documents
+(`doc-5f5cdcb0` page 11, `doc-791337bf` page 2). **But the stage 1–2 work did not fix it.** Three
+rows survive, all `needs_review`, and one is still `phase_1_2` (confidence 0.8, page 40). ADJUDICATE's
+own note reasons correctly that this is not a conflict because `phase_1_2` describes a *prior* study —
+then does not act on that reasoning: the spurious row stays, and `resolved_value` is `None`. This is
+what stage 4 (MARK_OTHER_STUDY) exists to fix, and the stage 4 test should require the `phase_1_2` row
+to be gone.
+
+The planted `timeline.total_duration` disagreement is still caught: 42 months in the amendment against
+40 in the RFP, verdict `conflict`, severity high. The field also carries a second contradiction cluster
+with verdict `not_a_conflict`; that one is a different group of values from a single document and is
+correct. Two clusters on one field is not a defect.
 
 ### Done 2026-10-02: Stage 1 — FIND_SECTIONS, a tenth node between CLASSIFY and PLAN
 Stage 1 of `docs/PLAN_2026-10-02.md`. A new node, FIND_SECTIONS, splits every document into sections
