@@ -209,6 +209,16 @@ was deleted. **No live model run was made for this stage**, so everything above 
 offline evidence; the next live Bedrock run on the synthetic pair is what would show the effect on
 `study.phase` itself.
 
+**The live Bedrock run was attempted on 2026-10-02 and could not start.** Run
+`r-20261002-152805-stage2`, on `samples/Example protocol 2.pdf` plus
+`samples/Synthetic_RFP_NEOD001.pdf`, failed at PREFLIGHT after one second:
+`AccessDeniedException ... Bearer Token has expired`, from the `AWS_BEARER_TOKEN_BEDROCK` environment
+variable in this session. No model call was made and no document text left the customer boundary.
+`runs/r-20261002-152805-stage2/status.json` holds the failure. **Still outstanding, therefore: the
+confirmed-field count against the 108 recorded above, and what `study.phase` comes back as now.** The
+credential has to be renewed by Oliver before that run can happen, and it should be run before stage 3
+changes behaviour again, otherwise one run cannot tell stage 2's effect from stage 3's.
+
 ### Done 2026-10-02: Stage 1 — FIND_SECTIONS, a tenth node between CLASSIFY and PLAN
 Stage 1 of `docs/PLAN_2026-10-02.md`. A new node, FIND_SECTIONS, splits every document into sections
 whose boundaries are a (page, character offset) pair rather than a page number. That is the point of it:
