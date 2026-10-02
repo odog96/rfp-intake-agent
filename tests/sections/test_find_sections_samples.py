@@ -91,10 +91,22 @@ class TestProtocol:
     def test_the_boundary_inside_page_39_falls_after_the_end_of_section_1_3_1(
         self, protocol: Document
     ) -> None:
+        """Section 1.3.1 ends part-way down page 39, and 1.3.2 starts at that same
+        position, so the page is cut in two with no text lost between the halves."""
         sections, _ = find_sections(protocol)
 
         nonclinical = _one(sections, "1.3.1 Nonclinical Safety")
         clinical = _one(sections, "1.3.2 Clinical Experience")
+
+        # 1.3.1 ends on page 39, not at the end of page 39.
+        assert nonclinical.page_end == 39
+        assert nonclinical.end_offset is not None
+        assert 0 < nonclinical.end_offset < len(protocol.page_texts[39])
+        # 1.3.2 starts at exactly the position 1.3.1 ends at: nothing between them.
+        assert (nonclinical.page_end, nonclinical.end_offset) == (
+            clinical.page_start,
+            clinical.start_offset,
+        )
 
         assert section_text(protocol, nonclinical).rstrip().endswith(
             "as would typically be performed in clinical development, is warranted."
