@@ -108,6 +108,27 @@ class Section(BaseModel):
     end_offset: int | None = None
 
 
+class SetAsideSection(BaseModel):
+    """One section SET_ASIDE_SECTIONS removed, kept so a person can see what went.
+
+    Stage 3 of PLAN_2026-10-02.md. It is deliberately not in `report.pdf` — the
+    report stays short — but it is in `extraction.json`, because a field that
+    comes back empty is often explained by a section that was set aside.
+
+    `matched` is the `config/sections.yaml` entry that matched the heading.
+    `via_parent` is set instead when this section was removed only because the
+    section it nests under was removed; the heading itself was not on the list.
+    """
+
+    doc_id: str
+    section_id: str
+    heading: str
+    page_start: int
+    page_end: int
+    matched: str | None = None
+    via_parent: str | None = None
+
+
 class Document(BaseModel):
     id: str
     path: str
@@ -193,5 +214,11 @@ class RunState(BaseModel):
     records: Annotated[list[FieldRecord], append_or_replace] = Field(default_factory=list)
     contradictions: list[Contradiction] = Field(default_factory=list)
     resolved: list[ResolvedField] = Field(default_factory=list)
+    # Sections SET_ASIDE_SECTIONS removed, for extraction.json. No reducer: the
+    # node is the only thing that writes this and it runs once, so the plain
+    # last-value-wins behaviour is right. An append reducer here would double the
+    # list if the node ever ran twice, which is the bug append_or_replace exists
+    # to document.
+    set_aside: list[SetAsideSection] = Field(default_factory=list)
     report_paths: dict[str, str] = Field(default_factory=dict)
     errors: Annotated[list[RunError], operator.add] = Field(default_factory=list)

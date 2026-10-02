@@ -41,5 +41,10 @@ def build_extraction_document(state: RunState, registry: Registry) -> dict[str, 
         "registry_version": registry.registry_version,
         "resolved_fields": resolved_fields,
         "contradictions": [c.model_dump(mode="json") for c in state.contradictions],
+        # SET_ASIDE_SECTIONS' removals. Deliberately not in report.pdf
+        # (PLAN_2026-10-02.md stage 3 keeps the report short), but here, because
+        # a field that came back empty is often explained by a section that was
+        # set aside.
+        "set_aside_sections": [s.model_dump(mode="json") for s in state.set_aside],
         "errors": [e.model_dump(mode="json") for e in state.errors],
     }

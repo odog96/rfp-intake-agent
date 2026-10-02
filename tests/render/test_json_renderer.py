@@ -10,6 +10,7 @@ from rfp_intake.domain.schemas import (
     Provenance,
     ResolvedField,
     RunState,
+    SetAsideSection,
 )
 from rfp_intake.render.json_renderer import build_extraction_document
 
@@ -29,6 +30,51 @@ class TestBuildExtractionDocument:
         doc = build_extraction_document(state, get_registry())
         assert doc["run_id"] == "r-1"
         assert doc["registry_version"].startswith("v1:")
+
+    def test_set_aside_sections_are_recorded(self, fields_yaml_path) -> None:  # type: ignore[no-untyped-def]
+        """SET_ASIDE_SECTIONS' removals go here and nowhere else.
+
+        PLAN_2026-10-02.md stage 3 keeps them out of report.pdf to keep the
+        report short, so extraction.json is the only place a person can find out
+        that a field came back empty because its section was set aside.
+        """
+        _use_real_registry(fields_yaml_path)
+        from rfp_intake.domain.registry import get_registry
+
+        state = RunState(
+            run_id="r-1",
+            set_aside=[
+                SetAsideSection(
+                    doc_id="d1",
+                    section_id="d1:s010",
+                    heading="2 GLOSSARY OF TERMS",
+                    page_start=30,
+                    page_end=33,
+                    matched="glossary",
+                )
+            ],
+        )
+        doc = build_extraction_document(state, get_registry())
+        assert doc["set_aside_sections"] == [
+            {
+                "doc_id": "d1",
+                "section_id": "d1:s010",
+                "heading": "2 GLOSSARY OF TERMS",
+                "page_start": 30,
+                "page_end": 33,
+                "matched": "glossary",
+                "via_parent": None,
+            }
+        ]
+
+    def test_set_aside_sections_is_empty_not_absent_when_nothing_went(
+        self, fields_yaml_path,  # type: ignore[no-untyped-def]
+    ) -> None:
+        _use_real_registry(fields_yaml_path)
+        from rfp_intake.domain.registry import get_registry
+
+        doc = build_extraction_document(RunState(run_id="r-1"), get_registry())
+        assert doc["set_aside_sections"] == []
 
     def test_resolved_field_enriched_with_group_and_label(self, fields_yaml_path) -> None:  # type: ignore[no-untyped-def]
         _use_real_registry(fields_yaml_path)

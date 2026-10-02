@@ -29,6 +29,12 @@ def precedence_yaml_path() -> Path:
 
 
 @pytest.fixture
+def sections_yaml_path() -> Path:
+    """Path to the real sections.yaml for SET_ASIDE_SECTIONS tests."""
+    return Path(__file__).parent.parent / "config" / "sections.yaml"
+
+
+@pytest.fixture
 def samples_dir() -> Path:
     """Path to the samples directory with test PDFs."""
     return Path(__file__).parent.parent / "samples"

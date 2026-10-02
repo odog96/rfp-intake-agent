@@ -15,17 +15,18 @@ from rfp_intake.normalize import normalize_node
 from rfp_intake.plan import plan_node
 from rfp_intake.reconcile import reconcile_node
 from rfp_intake.sections import find_sections_node
+from rfp_intake.sections.set_aside import set_aside_sections_node
 
 
 def build_graph() -> StateGraph:  # type: ignore[type-arg]
     """Build the extraction pipeline graph.
 
-    Topology: INGEST -> CLASSIFY -> FIND_SECTIONS -> PLAN -> EXTRACT -> NORMALIZE
-              -> RECONCILE -> ADJUDICATE -> DERIVE -> GATE
+    Topology: INGEST -> CLASSIFY -> FIND_SECTIONS -> SET_ASIDE_SECTIONS -> PLAN
+              -> EXTRACT -> NORMALIZE -> RECONCILE -> ADJUDICATE -> DERIVE -> GATE
 
-    FIND_SECTIONS is stage 1 of docs/PLAN_2026-10-02.md. SET_ASIDE_SECTIONS and
-    MARK_OTHER_STUDY, stages 3 and 4 of that plan, go between FIND_SECTIONS and
-    PLAN and are not built yet.
+    FIND_SECTIONS and SET_ASIDE_SECTIONS are stages 1 and 3 of
+    docs/PLAN_2026-10-02.md. MARK_OTHER_STUDY, stage 4, goes between
+    SET_ASIDE_SECTIONS and PLAN and is not built yet.
 
     RENDER (§4.10) is not yet built; GATE is the last node today.
 
@@ -38,6 +39,7 @@ def build_graph() -> StateGraph:  # type: ignore[type-arg]
     graph.add_node("ingest", ingest_node)
     graph.add_node("classify", classify_node)
     graph.add_node("find_sections", find_sections_node)
+    graph.add_node("set_aside_sections", set_aside_sections_node)
     graph.add_node("plan", plan_node)
     graph.add_node("extract", extract_node)
     graph.add_node("normalize", normalize_node)
@@ -49,7 +51,8 @@ def build_graph() -> StateGraph:  # type: ignore[type-arg]
     graph.set_entry_point("ingest")
     graph.add_edge("ingest", "classify")
     graph.add_edge("classify", "find_sections")
-    graph.add_edge("find_sections", "plan")
+    graph.add_edge("find_sections", "set_aside_sections")
+    graph.add_edge("set_aside_sections", "plan")
     graph.add_edge("plan", "extract")
     graph.add_edge("extract", "normalize")
     graph.add_edge("normalize", "reconcile")

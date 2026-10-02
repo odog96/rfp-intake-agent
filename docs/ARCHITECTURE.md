@@ -162,9 +162,10 @@ free-form model search cannot guarantee.
                         │FIND_SECTIONS │  split each document into sections with exact
                         └──────┬───────┘  (page, character offset) boundaries  (pure Python)
                                │
-                        ┌ ─ ─ ─▼─ ─ ─ ─┐
-                         SET_ASIDE_SECTIONS   drop headings on config/sections.yaml's list
-                        └ ─ ─ ─┬─ ─ ─ ─┘      STAGE 3 of PLAN_2026-10-02.md — not built
+                        ┌──────▼───────┐
+                        │SET_ASIDE_    │  drop sections whose heading is on
+                        │  SECTIONS    │  config/sections.yaml  (pure Python)
+                        └──────┬───────┘
                                │
                         ┌ ─ ─ ─▼─ ─ ─ ─┐
                          MARK_OTHER_STUDY     drop passages about a different study (LLM labels
@@ -217,8 +218,9 @@ a different study from page 39 of `samples/Example protocol 2.pdf`. A section bo
 (page number, character offset into that page's text) pair, so a page can be cut in two. **Stage 2 of
 the same plan, also 2026-10-02, moved PLAN and EXTRACT onto those sections**: PLAN scores sections rather
 than `Document.outline` entries, and the excerpt EXTRACT sends holds only the chosen sections' text. The
-two dashed nodes after FIND_SECTIONS, SET_ASIDE_SECTIONS and MARK_OTHER_STUDY, are stages 3 and 4 of the
-same plan and are not built.
+**Stage 3, 2026-10-02, added SET_ASIDE_SECTIONS** (§4.2b): the two dozen kinds of section an analyst
+skips entirely come off `Document.sections` before PLAN scores them. The one dashed node left,
+MARK_OTHER_STUDY, is stage 4 of the same plan and is not built.
 
 **Every edge is a static Python edge or a `Send`.** There are no LLM-chosen routes and no agent delegation.
 In MVP there is exactly one conditional edge: `ADJUDICATE` is skipped when the candidate set is empty.
@@ -307,6 +309,7 @@ class RunState(BaseModel):
     records: Annotated[list[FieldRecord], append_or_replace] = []
     contradictions: list[Contradiction] = []
     resolved: list[ResolvedField] = []
+    set_aside: list[SetAsideSection] = []
     report_paths: dict[str, str] = {}
     errors: Annotated[list[RunError], operator.add] = []
 ```
@@ -323,6 +326,15 @@ a fan-in branch returns a plain list. Fixed 2026-08-27.
 `docs/PLAN_2026-10-02.md`). They travel in the graph state exactly as `outline` and `page_texts` already
 do, and `extraction.json` does not carry them — `render/json_renderer.py` writes resolved fields,
 contradictions and errors, not documents.
+
+**`RunState` gained `set_aside` on 2026-10-02** (stage 3). It holds one `SetAsideSection` per section
+SET_ASIDE_SECTIONS removed — document, section id, heading, pages, and either the
+`config/sections.yaml` entry that matched the heading or the parent section that took it. It has **no
+reducer**, deliberately: SET_ASIDE_SECTIONS is the only producer and runs once, so last-value-wins is
+correct, and an append reducer would double the list if the node ever ran twice. Unlike `sections`, this
+one *is* in `extraction.json`, under `set_aside_sections`. It is not in `report.pdf`, which stage 3
+keeps short — so extraction.json is the only place a reader can find out that a field came back empty
+because its section was set aside.
 
 ```python
 class Section(BaseModel):
@@ -432,8 +444,8 @@ Pure Python, no model call, no I/O. Added 2026-10-02 as stage 1 of `docs/PLAN_20
 `sections/` (`find_sections_node`, plus `sections/headings.py` for rule 3).
 
 **Lettered, not numbered**, because renumbering §4.3 to §4.10 would break every reference to them in
-`CLAUDE.md`, in the code comments and in `docs/PLAN_2026-10-02.md`. SET_ASIDE_SECTIONS and
-MARK_OTHER_STUDY become §4.2b and §4.2c when they are built.
+`CLAUDE.md`, in the code comments and in `docs/PLAN_2026-10-02.md`. SET_ASIDE_SECTIONS is §4.2b;
+MARK_OTHER_STUDY becomes §4.2c when it is built.
 
 **Input:** `state.documents`, as CLASSIFY left them. **Output:** the same documents with `sections` and
 `section_source` filled in. Three rules, tried in order, and the one that fired is recorded on the
@@ -462,6 +474,73 @@ right fix is for a parser to record heading candidates, not for this node to ope
 **Boundaries, not pages.** `sections/section_page_texts()` cuts the first and last page at the section's
 offsets and returns the pages between whole, so a caller can keep the `--- Page N ---` markers the
 extraction prompt and quote validation both depend on.
+
+### 4.2b SET_ASIDE_SECTIONS
+Pure Python, no model call, no I/O. Added 2026-10-02 as stage 3 of `docs/PLAN_2026-10-02.md`. The node
+is `sections/set_aside.py`; the config loader and all the matching rules are
+`domain/section_policy.py`, which is where `config/sections.yaml` is read.
+
+**Input:** `state.documents`, as FIND_SECTIONS left them. **Output:** the same documents with the
+set-aside sections removed from `Document.sections`, plus one `SetAsideSection` on `RunState.set_aside`
+for each removal. Removing them here means PLAN never scores them and no later node has to know the
+policy exists. On `samples/Example protocol 2.pdf` it removes 55 of 176 sections, about 35% of the
+text, and the title page, the synopsis, the Schedule of Events table and section 1.3.2 all survive.
+
+**Why the loader lives in `domain/`, not `sections/`.** Same reason `DEFAULT_TOKEN_BUDGET` moved to
+`domain/budget.py`: `plan/scoring.py` must not import `rfp_intake.sections`, and keeping the policy in
+`domain/` leaves it importable from anywhere without reopening that cycle.
+
+**Four rules, in order.** The config file documents the first three; the fourth is the skip.
+
+1. **Only remove what is positively listed.** An unanticipated heading survives. The opposite design —
+   keep an expected list, drop the rest — would hide exactly the unbudgeted cost this tool exists to
+   find. `CLAUDE.md` rule 4 applies: no heading is hardcoded in Python.
+2. **A listed section takes its children with it**, down to the next heading at the same or a higher
+   level, because "4 SUBJECT SELECTION" means the whole of section 4. One forward pass over
+   `Section.level`; the sections arrive in document order. A child records `via_parent` rather than a
+   `matched` entry, so a removal on the child's own heading is distinguishable from an inherited one.
+3. **`keep_if_contains` overrides both.** Keeping a section nobody needed costs tokens; dropping one
+   that held a cost driver costs a number nobody budgets for, so the asymmetry is deliberate.
+4. **A document with one section is left alone** — FIND_SECTIONS rule 2, the synthetic RFP. There is
+   nothing to set aside and its only section is the whole document.
+
+`FRONT_MATTER_HEADING` and `WHOLE_DOCUMENT_HEADING` are never set aside. FIND_SECTIONS invents both, so
+no list of real section names owns them, and dropping either would discard text on the strength of a
+word this codebase chose itself.
+
+**A document is never emptied.** If every section matched, the document is kept whole and a
+`kind="validation"` `RunError` says so. PLAN would otherwise have nothing to score and the run would
+report every field as not found with no hint why — a policy bug that looks like a silent document.
+
+**Four things `keep_if_contains` got wrong, all found by running it on the real protocol**
+(`tests/sections/test_set_aside_samples.py`, the stage 3 acceptance test). Each is recorded here
+because each is a rule someone would otherwise undo in good faith:
+
+- **A rescue reads the section's body, not its heading** (`strip_heading`). The heading has already had
+  its say. "8 EMERGENCY UNBLINDING OF STUDY DRUG" is on `set_aside` and its own heading contained the
+  rescue phrase, so it rescued itself from its own title — as did `9 ADVERSE EVENTS` and
+  `12.3 Quality Control and Quality Assurance`.
+- **Index sections cannot be rescued at all** (`always_set_aside`). A table of contents, a list of
+  tables and a glossary are made of the document's own headings and definitions, so *every* rescue
+  phrase appears in them by construction: the contents page rescued itself with "Emergency Unblinding",
+  the list of tables with "Schedule of Events", and the glossary with its definition of "case report
+  form". None of those mentions is a fact about the study.
+- **Count phrases need a number beside them** (`keep_if_contains_with_number`, within 60 characters).
+  This is Angus's own qualification — ignore case report form details "unless the text gives a number
+  of case report forms" [02:00:16]. Without it the bare word "eCRF" rescued the adverse-event section,
+  the treatment-compliance section and the glossary, none of which states a count.
+- **`standard of care` is not on `set_aside`**, though
+  `docs/ANALYST_PROCEDURE_PROTOCOL.md` section 4 says to ignore it [01:13:15]. The protocol's title
+  page reads "... NEOD001 PLUS STANDARD OF CARE VS. PLACEBO PLUS STANDARD OF CARE IN SUBJECTS WITH
+  LIGHT CHAIN (AL) AMYLOIDOSIS", so the entry set aside the single most valuable section in the
+  document — the title alone carries the phase, the blinding, the control, the number of arms and the
+  population (`docs/ANALYST_PROCEDURE_PROTOCOL.md` section 2).
+
+**Introduction, background and rationale are deliberately absent from `set_aside`**, though section 4 of
+the analyst procedure lists all three. `study.phase` is wrong today because of section 1.3.2, which sits
+inside the background and describes a different study, and MARK_OTHER_STUDY (stage 4) is the node built
+to find it. Dropping the background first would make stage 4's live test pass without stage 4 doing
+anything. They go on the list once stage 4 has passed on its own.
 
 ### 4.3 PLAN
 **Rewritten on 2026-10-02 by stage 2 of `docs/PLAN_2026-10-02.md`.** PLAN chooses sections, not pages.

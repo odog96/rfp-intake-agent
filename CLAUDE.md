@@ -15,10 +15,10 @@ against it anyway).
 
 ## Current status (as of 2026-10-02)
 
-Phases 0–4 of ARCHITECTURE.md §10 are done, and stages 1 and 2 of `docs/PLAN_2026-10-02.md`. Graph
+Phases 0–4 of ARCHITECTURE.md §10 are done, and stages 1, 2 and 3 of `docs/PLAN_2026-10-02.md`. Graph
 topology today:
-`INGEST → CLASSIFY → FIND_SECTIONS → PLAN → EXTRACT → NORMALIZE → RECONCILE → ADJUDICATE → DERIVE → GATE`,
-then RENDER runs after the graph finishes (see the deviations below). 638 tests passing, 1 skipped.
+`INGEST → CLASSIFY → FIND_SECTIONS → SET_ASIDE_SECTIONS → PLAN → EXTRACT → NORMALIZE → RECONCILE → ADJUDICATE → DERIVE → GATE`,
+then RENDER runs after the graph finishes (see the deviations below). 759 tests passing, 1 skipped.
 Pushed to https://github.com/odog96/rfp-intake-agent.git. The push is done from a terminal by
 Oliver, from inside the repository directory — this session's credentials cannot do it.
 
@@ -138,6 +138,79 @@ checks every task's field names against the specification, so neither mistake ca
 5. **Return `privacy_mode` to `private` and the models to CAII before any customer document.**
    `config/models.yaml` is on `mixed` with Claude Sonnet 4.6 on Bedrock for testing.
 6. Build `audit.json`, the janitor job, and the `rfp_intake.eval` command line.
+
+### Done 2026-10-02: Stage 3 — SET_ASIDE_SECTIONS, the sections an analyst skips
+Stage 3 of `docs/PLAN_2026-10-02.md`. An eleventh node, SET_ASIDE_SECTIONS, sits between FIND_SECTIONS
+and PLAN and removes the sections `docs/ANALYST_PROCEDURE_PROTOCOL.md` section 4 says Angus Gray skips
+when costing a protocol — amendment history, contents, glossary, eligibility criteria, adverse events,
+committees, ethics, consent, publication, references, questionnaire appendices and about fifty more.
+Pure Python, no model call. The node is `src/rfp_intake/sections/set_aside.py`; the loader and all the
+matching rules are `src/rfp_intake/domain/section_policy.py`, reading `config/sections.yaml`.
+
+**On `samples/Example protocol 2.pdf` it keeps 121 of 176 sections and sets aside 55 — 174,016
+characters kept, 95,298 set aside, so 35% of the text no longer reaches PLAN.** The title page, the
+protocol synopsis, "Table 1: Schedule of Events", the study design and section 1.3.2 all survive.
+
+Four rules, in `set_aside.py`'s docstring and in `docs/ARCHITECTURE.md` §4.2b. Only a positively listed
+heading is removed, so an unanticipated section survives; a listed section takes its children with it,
+down to the next heading at the same or a higher level; `keep_if_contains` overrides both; and a
+document with one section is left alone. `FRONT_MATTER_HEADING` and `WHOLE_DOCUMENT_HEADING` are never
+set aside — FIND_SECTIONS invents both, so no list of real section names owns them. If every section
+matched, the document is kept whole and a `validation` `RunError` says so, because PLAN would otherwise
+have nothing to score and the run would report every field as not found with no hint why.
+
+**The acceptance test on the real protocol found four bugs in `config/sections.yaml` that every unit
+test had passed.** This is the part worth reading; each fix is a rule someone would otherwise undo.
+- **A rescue now reads the section's body, not its heading** (`strip_heading`). "8 EMERGENCY UNBLINDING
+  OF STUDY DRUG" is on `set_aside` and its own heading contains the rescue phrase, so it rescued itself
+  from its own title, as did "9 ADVERSE EVENTS" and "12.3 Quality Control and Quality Assurance".
+- **Index sections cannot be rescued at all**, which is the new `always_set_aside` list: table of
+  contents, lists of tables and figures, glossary, abbreviations, definitions. Their text *is* the
+  document's own headings and definitions, so every rescue phrase appears in them by construction — the
+  contents page rescued itself with "Emergency Unblinding", the list of tables with "Schedule of
+  Events", the glossary with its definition of "case report form".
+- **Count phrases need a number within 60 characters**, which is the new `keep_if_contains_with_number`
+  list (case report form, CRF, eCRF, monitoring visit). This is Angus's own qualification — ignore case
+  report form details "unless the text gives a number of case report forms" [02:00:16]. Without it the
+  bare word "eCRF" rescued the adverse-event section, the treatment-compliance section and the glossary,
+  none of which states a count.
+- **`standard of care` was removed from `set_aside` entirely.** The protocol's title page reads "...
+  NEOD001 PLUS STANDARD OF CARE VS. PLACEBO PLUS STANDARD OF CARE IN SUBJECTS WITH LIGHT CHAIN (AL)
+  AMYLOIDOSIS", so that one entry set aside the single most valuable section in the document — the title
+  alone carries the phase, the blinding, the control, the number of arms and the population. Section 4
+  of `docs/ANALYST_PROCEDURE_PROTOCOL.md` does say to ignore standard of care [01:13:15]; it means the
+  discussion, not the words wherever they appear.
+
+**Introduction, background and rationale are deliberately NOT on the list**, though section 4 of the
+analyst procedure names all three. `study.phase` is wrong today because of section 1.3.2, which sits
+inside the background, and stage 4 (MARK_OTHER_STUDY) is the node built to find it. Dropping the
+background now would make stage 4's live test pass without stage 4 doing anything. They go on the list
+once stage 4 has passed on its own. The reason is written into `config/sections.yaml` as well, because
+that file is where someone would add them back.
+
+**`RunState` gained `set_aside`**, one `SetAsideSection` per removal — document, section id, heading,
+pages, and either the `config/sections.yaml` entry that matched the heading or the parent section that
+took it. No reducer, deliberately: SET_ASIDE_SECTIONS is the only producer and runs once. It appears in
+`extraction.json` under `set_aside_sections`, which is the only place a reader can find out that a field
+came back empty because its section was set aside; `report.pdf` does not show it.
+
+Both Streamlit pages now show eleven stages: `("SET_ASIDE_SECTIONS", "Setting aside sections not
+needed")` was inserted into `_STEPS` in `app.py` and `app_v2.py`. `launch_app.py` is untouched.
+
+**759 tests passing, 1 skipped** — 121 more than the 638 after stage 2, in four new files.
+`tests/domain/test_section_policy.py` covers the loader, the matching rules and the shipped file's own
+contents, including the three deliberately absent entries. `tests/sections/test_set_aside.py` is fast
+unit tests on hand-built documents, with the never-set-aside headings tested against a *hostile* policy
+that names them. `tests/sections/test_set_aside_samples.py` is the plan's stage 3 acceptance test on the
+real protocol against the real `config/sections.yaml`, marked `slow`, which is what found the four bugs
+above. `tests/graph/test_topology.py` is new and is the first test of the graph's shape at all — nothing
+asserted the edges before, so a node could be registered, pass every test it owns and never run; it also
+holds `app._STEPS` and `app_v2._STEPS` equal to the graph's node list. `ruff check .` passes and mypy
+strict is clean on the four source files this stage changed.
+
+**No live Bedrock run was made for this stage**, so the 35% figure is offline evidence from the real
+protocol PDF. The saving it represents has not been measured as tokens or money on a live run, and the
+current baseline is still `r-20261002-200521-stage2`.
 
 ### Done 2026-10-02: Stage 2 — PLAN and EXTRACT read sections instead of pages
 Stage 2 of `docs/PLAN_2026-10-02.md`. Stage 1 gave every document sections; nothing read them. Now PLAN

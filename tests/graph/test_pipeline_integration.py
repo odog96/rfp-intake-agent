@@ -50,12 +50,25 @@ def _make_test_doc() -> Document:
 
 
 def _sectioned(run_id: str, doc: Document) -> RunState:
-    """The state as FIND_SECTIONS leaves it, which is what PLAN expects."""
+    """The state as FIND_SECTIONS and SET_ASIDE_SECTIONS leave it, which PLAN expects.
+
+    Both nodes run, in graph order, so these tests see the same sections the
+    pipeline gives PLAN. None of this document's headings are on
+    `config/sections.yaml`, so SET_ASIDE_SECTIONS should take nothing — which
+    the assertion below holds it to, because a document this ordinary losing a
+    section would mean the shipped list is matching far too much.
+    """
     from rfp_intake.sections import find_sections_node
+    from rfp_intake.sections.set_aside import set_aside_sections_node
 
     state = RunState(run_id=run_id, documents=[doc])
     result = find_sections_node(state)
     assert result["errors"] == []
+
+    state = RunState(run_id=run_id, documents=result["documents"])
+    result = set_aside_sections_node(state)
+    assert result["errors"] == []
+    assert result["set_aside"] == []
     return RunState(run_id=run_id, documents=result["documents"])
 
 

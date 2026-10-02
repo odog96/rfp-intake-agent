@@ -56,6 +56,7 @@ class Settings(BaseSettings):
     fields_yaml_path: Path = Path("config/fields.yaml")
     models_yaml_path: Path = Path("config/models.yaml")
     precedence_yaml_path: Path = Path("config/precedence.yaml")
+    sections_yaml_path: Path = Path("config/sections.yaml")
 
     job_name: str = "RFP Pipeline Executor"
 

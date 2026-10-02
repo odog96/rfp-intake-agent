@@ -1,0 +1,257 @@
+# Which protocol sections SET_ASIDE_SECTIONS drops before PLAN chooses what to read.
+#
+# Source of truth for this list: docs/ANALYST_PROCEDURE_PROTOCOL.md section 4,
+# "Sections to ignore entirely", which records where Angus said so with a
+# timestamp into the recording. Section 5 of the same document, "Sections to
+# scan, not skip", is why `keep_if_contains` exists.
+#
+# Three rules govern this file, and all three come from docs/PLAN_2026-10-02.md
+# stage 3:
+#
+# 1. Only remove what is positively on `set_aside`. Never keep an expected list
+#    and drop everything else: an unfamiliar heading must survive, because a
+#    heading nobody anticipated is exactly where an unbudgeted cost hides.
+# 2. Matching is case-insensitive and ignores the section number, so "7.2
+#    Inclusion Criteria" matches the entry `inclusion criteria`. An entry matches
+#    when the heading contains it as a whole phrase, so `ethics` matches "Ethics"
+#    and "Ethics Committee" but not "Bioethics". Some entries are therefore
+#    already covered by a shorter one — `sample size` covers `sample size
+#    calculation`, `ethics` covers `independent ethics committee`. They are kept
+#    anyway, because each line traces to a specific instruction in
+#    docs/ANALYST_PROCEDURE_PROTOCOL.md section 4 and deleting the longer form
+#    would lose that. tests/domain/test_section_policy.py asserts the
+#    redundancy is harmless rather than letting it drift into contradiction.
+# 3. Setting a section aside also sets aside the sections nested under it, until
+#    the next heading at the same or a higher level. So a heading here must be
+#    safe to drop *with its children* — see the `statistical` note below.
+#
+# DELIBERATELY ABSENT: introduction, background, rationale.
+# Section 4 of the analyst procedure does say to ignore them. They are left out
+# anyway, because `study.phase` is wrong today precisely because of section 1.3.2
+# of the sample protocol, which sits inside the background and describes a
+# *different* study. Stage 4 (MARK_OTHER_STUDY) exists to find that text and
+# remove it. If stage 3 dropped the whole background first, stage 4's live test
+# would pass without MARK_OTHER_STUDY doing anything, and we would not know
+# whether it works. Add them here only once stage 4 has passed on its own, which
+# is the same ordering docs/PLAN_2026-10-02.md stage 5 item 1 applies to the
+# `phase_population` search hints.
+
+set_aside:
+  # Versioning and front matter [01:01:23, 01:01:35, 01:05:16]
+  - amendment history
+  - summary of changes
+  - protocol amendment
+  - protocol history
+  - revision history
+
+  # Who wrote it, not what it costs [01:04:41]
+  - sponsor information
+  - sponsor contact
+  - sponsor signature
+  - confidentiality statement
+  - investigator signature
+  - investigator agreement
+
+  # Secondary and exploratory aims [01:05:55, 01:07:57]
+  - secondary objectives
+  - exploratory objectives
+  - secondary endpoints
+  - exploratory endpoints
+
+  # Eligibility [01:11:37]
+  - inclusion criteria
+  - exclusion criteria
+  - eligibility
+  - eligibility criteria
+  - subject selection
+
+  # Drug chemistry and animal data [01:35:05, 01:37:07, 01:46:03]
+  - nonclinical
+  - non-clinical
+  - preclinical
+  - nonclinical safety
+  - physical and chemical properties
+  - dose rationale
+  - rationale for dose selection
+  - dosage form
+  - vial contents
+
+  # Drug handling. On the list because of [01:38:44], but routinely rescued by
+  # `keep_if_contains` below: in the sample protocol the storage section is the
+  # only place that says unblinded pharmacy staff are needed.
+  - packaging and labelling
+  - packaging and labeling
+  - drug storage
+  - storage and handling
+  - shipping and storage
+  - storage conditions
+  - drug accountability
+
+  # Other medicines and how adverse events are managed [01:46:16 to 01:47:47]
+  - concomitant medication
+  - concomitant medications
+  - concomitant therapy
+  - prior and concomitant therapy
+  - prior and concomitant medication
+  - prohibited medication
+  - permitted medication
+  # NOT `standard of care`: the protocol's title page reads "... NEOD001 PLUS
+  # STANDARD OF CARE VS. PLACEBO PLUS STANDARD OF CARE IN SUBJECTS WITH LIGHT
+  # CHAIN (AL) AMYLOIDOSIS", so the entry set aside the single most valuable
+  # section in the document — the title carries the phase, the blinding, the
+  # control, the number of arms and the population
+  # (docs/ANALYST_PROCEDURE_PROTOCOL.md section 2). Angus meant a section
+  # describing what the standard of care consists of [01:13:15]; no heading
+  # phrase found so far says that without also matching the title, so the
+  # section is left in. Caught by tests/sections/test_set_aside_samples.py.
+  - dose modification
+  - dose reduction
+  - dose delay
+  - withholding of study drug
+  - treatment compliance
+  - management of adverse events
+
+  # Safety reporting [01:56:07, 01:56:20, 01:58:40]
+  - adverse event reporting
+  - adverse events
+  - serious adverse events
+  - serious adverse event reporting
+  - pregnancy
+  - pregnancy reporting
+  - urgent safety measures
+  - safety reporting
+  - emergency unblinding
+  - early treatment discontinuation
+  - early termination
+  - study termination
+  - replacement of subjects
+  - withdrawal of subjects
+  - discontinuation criteria
+
+  # Procedure prose. The counts come from the schedule of activities instead
+  # [01:47:53, 01:49:00, 01:55:30]
+  - randomization procedures
+  - randomisation procedures
+  - method of randomization
+  - method of randomisation
+  - order of assessments
+  - laboratory evaluations
+  - laboratory assessments
+  - clinical laboratory tests
+
+  # Statistics. NOTE: "statistical considerations" and "statistical analysis"
+  # are NOT here, by instruction — they must be scanned for interim analyses
+  # [01:19:00, 01:59:05]. Only the sample-size subsection goes, and because the
+  # nesting rule drops children with their parent, listing the parent would take
+  # the interim-analysis text with it [01:59:33].
+  - sample size
+  - sample size calculation
+  - sample size determination
+  - power calculation
+
+  # Committees [02:00:02]
+  - data monitoring committee
+  - data safety monitoring board
+  - clinical events committee
+  - steering committee
+  - independent review committee
+  - committees
+
+  # Administration [02:02:52]
+  - record retention
+  - quality assurance
+  - quality control
+  - subject confidentiality
+  - ethics
+  - ethical considerations
+  - institutional review board
+  - independent ethics committee
+  - informed consent
+  - subject compensation
+  - finance and insurance
+  - insurance
+  - publication
+  - publication policy
+  - references
+  - bibliography
+
+  # Appendix filler [02:06:25]
+  - contraception
+  - contraceptive methods
+  - methods of contraception
+  - diagnostic criteria
+  - questionnaires
+  - sample questionnaire
+
+# Index sections: a table of contents, a list of tables, a glossary. These go
+# whatever their text says, so `keep_if_contains` below does not apply to them.
+#
+# Their text *is* the document's own headings and definitions, so every rescue
+# phrase appears in them by construction. On samples/Example protocol 2.pdf the
+# contents page rescued itself with "Emergency Unblinding", the list of tables
+# with "Schedule of Events" and the glossary with its definition of "case report
+# form" — none of which is a fact about the study. They were on `set_aside`
+# until tests/sections/test_set_aside_samples.py showed all three surviving.
+#
+# Same sources as the entries they replace: [01:05:16] for the contents page and
+# [01:34:28] for the glossary and abbreviations.
+always_set_aside:
+  - table of contents
+  - list of tables
+  - list of figures
+  - glossary
+  - abbreviations
+  - list of abbreviations
+  - definitions
+  - definition of terms
+
+# A section whose heading is on `set_aside` is kept anyway when its text contains
+# one of these phrases. Matching is case-insensitive, and reads the section's
+# body only — not its heading, or "8.1 Emergency Unblinding" would rescue itself
+# from its own title.
+#
+# This is the safety valve for docs/ANALYST_PROCEDURE_PROTOCOL.md section 5: the
+# heading says the section is irrelevant, but one sentence inside it drives cost.
+# Erring towards keeping is correct here — a kept section only costs tokens,
+# while a wrongly dropped one costs a number nobody budgets for.
+keep_if_contains:
+  # Unblinded staff are a direct staffing cost, and the drug-storage section is
+  # sometimes the only place the protocol admits they are needed [01:39:05, 01:40:30]
+  # NOT `unblinding`: emergency unblinding is a procedure Angus ignores
+  # [01:56:07] and it is on `set_aside` above, so the two entries contradicted
+  # each other. `unblinded` is the cost driver — unblinded staff must be paid.
+  - unblinded
+  - blinded pharmacist
+  - pharmacy staff
+
+  # Interim analyses change the statistics workload [01:19:00, 01:59:05]
+  - interim analysis
+  - interim analyses
+
+  # The schedule of activities is the single most important table in the
+  # document and is sometimes in an appendix [02:03:39]
+  - schedule of activities
+  - schedule of events
+  - schedule of assessments
+  - schedule of procedures
+  - study schedule
+  - visit schedule
+
+  - source data verification
+  - source data review
+
+# These rescue a section only when a number appears within 60 characters of the
+# phrase. Angus's own wording: ignore "case report form details, unless the text
+# gives a number of case report forms" [02:00:16]. A count can be budgeted;
+# prose about how to complete a form cannot.
+#
+# Without the number test these four were the most destructive entries in the
+# file. On samples/Example protocol 2.pdf the bare word "eCRF" appears in the
+# adverse-event section, the treatment-compliance section and the glossary, and
+# rescued all three.
+keep_if_contains_with_number:
+  - case report form
+  - crf
+  - ecrf
+  - monitoring visit
+  - monitoring visits
