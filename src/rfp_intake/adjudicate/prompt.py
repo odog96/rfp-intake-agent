@@ -18,10 +18,14 @@ Decide exactly one verdict:
 period are accounted for (e.g. one is a total and one is per-country; one is \
 per-cycle and one is per-course). Expect this to be the most common verdict.
 - reconcilable: both values are true; one is a subset, restatement, or more \
-specific version of the other. Set winning_doc_id to the document whose value \
-should be shown as the field's resolved value.
+specific version of the other. Set winning_record to the NUMBER of the one \
+candidate record below whose value should be shown as the field's resolved \
+value — "3" for the third candidate in the list. Several candidates often come \
+from the same document and say different things, so naming a document is not \
+enough: name the record. If you cannot choose a single record, leave \
+winning_record unset and the highest-confidence record is used.
 - conflict: the values are genuinely incompatible and cannot both be correct. \
-Do not set winning_doc_id for a conflict verdict — a separate deterministic \
+Do not set winning_record for a conflict verdict — a separate deterministic \
 precedence rule decides that, not you.
 
 Your explanation must be complete enough for an analyst to act on without \
@@ -48,7 +52,7 @@ def build_adjudicate_prompt(
         f"Budget driver: {'yes' if field_def.budget_driver else 'no'}",
         f"Domain authority for this field: {authority} — {authority_note}",
         "",
-        "CANDIDATE VALUES FROM DIFFERENT DOCUMENTS:",
+        "CANDIDATE RECORDS, numbered — several may come from the same document:",
     ]
     for i, r in enumerate(contradiction.records, start=1):
         lines.append(

@@ -50,6 +50,14 @@ class Contradiction(BaseModel):
     explanation: str | None = None
     resolved_value: Any | None = None
     winning_doc_id: str | None = None
+    # 1-based position in `records` of the single record the resolved value came
+    # from, numbered exactly as ADJUDICATE's prompt numbers the candidates.
+    # winning_doc_id alone cannot name a record: a 137-page protocol routinely
+    # supplies several records for one field, so "the winning document" picked out
+    # the earliest page rather than the best evidence (CLAUDE.md, stage 5). None
+    # for a candidate not yet judged, and for a `conflict`, where
+    # reconcile/precedence.py decides by document and not by record.
+    winning_record_index: int | None = None
     severity: Literal["high", "medium", "low"] | None = None
 
 

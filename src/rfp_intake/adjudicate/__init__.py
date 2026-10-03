@@ -2,7 +2,9 @@
 candidate, never on the corpus at large. See ARCHITECTURE.md §4.7.
 
 The LLM decides *whether* records genuinely disagree (verdict) and, for
-reconcilable pairs, *which* record to show (winning_doc_id). Which value
+reconcilable pairs, *which* record to show — by the record's number in the
+prompt's candidate list, not by document, because several records for one field
+routinely come from the same document. Which value
 wins a genuine "conflict" is a deterministic code decision — see
 reconcile/precedence.py — not something the model picks, so an analyst can
 trace a resolved value to a named rule instead of a black box.
@@ -36,7 +38,10 @@ logger = structlog.get_logger()
 class AdjudicationResult(BaseModel):
     verdict: Literal["conflict", "reconcilable", "not_a_conflict"]
     explanation: str
-    winning_doc_id: str | None = None
+    # 1-based position in Contradiction.records, numbered as the prompt numbers
+    # the candidates. Replaces the earlier winning_doc_id: a document id cannot
+    # name one of several records from the same document.
+    winning_record: int | None = None
     severity: Literal["high", "medium", "low"] = Field(default="medium")
 
 
@@ -138,13 +143,13 @@ def _handle_not_a_conflict(
 def _handle_reconcilable(
     contradiction: Contradiction, result: AdjudicationResult
 ) -> tuple[Contradiction, list[ResolvedField]]:
-    winner = _find_record(contradiction.records, result.winning_doc_id)
-    if winner is None:
-        winner = max(contradiction.records, key=lambda r: r.confidence)
+    index = _winning_index(contradiction.records, result.winning_record)
+    winner = contradiction.records[index]
 
     contradiction = contradiction.model_copy(update={
         "resolved_value": winner.value,
         "winning_doc_id": winner.provenance.doc_id,
+        "winning_record_index": index + 1,
     })
     rf = ResolvedField(
         field_id=contradiction.field_id,
@@ -188,7 +193,36 @@ def _handle_conflict(
     return contradiction, [rf]
 
 
+def _winning_index(records: list[FieldRecord], winning_record: int | None) -> int:
+    """Index in `records` of the record ADJUDICATE chose, by its prompt number.
+
+    Falls back to the highest-confidence record when the model named no record or
+    named one that is not in the list — earlier ties going to the earlier record,
+    so the choice is deterministic. `records` is never empty: RECONCILE only
+    raises a candidate for two or more records.
+    """
+    if winning_record is not None and 1 <= winning_record <= len(records):
+        return winning_record - 1
+    if winning_record is not None:
+        logger.warning(
+            "adjudicate_winning_record_out_of_range",
+            winning_record=winning_record,
+            record_count=len(records),
+        )
+    return max(range(len(records)), key=lambda i: records[i].confidence)
+
+
 def _find_record(records: list[FieldRecord], doc_id: str | None) -> FieldRecord | None:
+    """The best record from one document — used for a `conflict`, where
+    reconcile/precedence.py names a document rather than a record.
+
+    Highest confidence wins, not document order: a protocol supplies several
+    records for one field, and taking the first meant the earliest page's quote
+    was printed against a value decided by precedence.
+    """
     if doc_id is None:
         return None
-    return next((r for r in records if r.provenance.doc_id == doc_id), None)
+    matches = [r for r in records if r.provenance.doc_id == doc_id]
+    if not matches:
+        return None
+    return max(matches, key=lambda r: r.confidence)
