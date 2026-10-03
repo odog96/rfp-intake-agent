@@ -15,12 +15,14 @@ against it anyway).
 
 ## Current status (as of 2026-10-02)
 
-Phases 0–4 of ARCHITECTURE.md §10 are done, and stages 1, 2, 3, 4 and 5 of `docs/PLAN_2026-10-02.md` —
-but **stage 5's two live pass criteria both failed**, for reasons in PLAN's scoring and in ADJUDICATE;
-read the stage 5 entry below before trusting `blinding.placebo_matching` or
-`blinding.unblinded_staff_stated`. Graph topology today:
+Phases 0–4 of ARCHITECTURE.md §10 are done, and stages 1, 2, 3, 4 and 5 of `docs/PLAN_2026-10-02.md`.
+**Stage 5's two live criteria failed on 2026-10-02 and still fail after the 2026-10-03 fix**, though for
+a different and now measured reason: the ADJUDICATE half of the problem is fixed and proven on a live
+run, and what remains is PLAN keeping only three sections per field group. Read the 2026-10-03 entry
+below before trusting `blinding.placebo_matching` or `blinding.unblinded_staff_stated`. Graph topology
+today:
 `INGEST → CLASSIFY → FIND_SECTIONS → SET_ASIDE_SECTIONS → MARK_OTHER_STUDY → PLAN → EXTRACT → NORMALIZE → RECONCILE → ADJUDICATE → DERIVE → GATE`,
-then RENDER runs after the graph finishes (see the deviations below). 847 tests passing, 1 skipped.
+then RENDER runs after the graph finishes (see the deviations below). 855 tests passing, 1 skipped.
 Pushed to https://github.com/odog96/rfp-intake-agent.git. The push is done from a terminal by
 Oliver, from inside the repository directory — this session's credentials cannot do it.
 
@@ -38,7 +40,10 @@ On the two-document test pair, the current baseline run `r-20261002-222824-stage
 **27 of the 36 registry fields at least one confirmed row**, in 9m03s, with 9 contradiction clusters and
 22 EXTRACT errors, and caught the planted `timeline.total_duration` disagreement. Quote that first figure
 when comparing runs. The stage 5 run `r-20261002-232830-stage5` gave **25 of those same 36**, below the
-floor of 26, with 13 clusters and 19 errors; it is not the baseline because it failed its own criteria. Two earlier runs matter for comparison: `r-20261002-213531-stage4`, the first run
+floor of 26, with 13 clusters and 19 errors; it is not the baseline because it failed its own criteria.
+The stage 5b run `r-20261003-001602-stage5b` (2026-10-03, the ADJUDICATE fix) gave **26 of those same
+36**, with 92 rows, 11 clusters and 21 errors; it is not the baseline either, for the same reason — see
+the 2026-10-03 entry. Two earlier runs matter for comparison: `r-20261002-213531-stage4`, the first run
 with MARK_OTHER_STUDY, gave 27 of 36 in 9m10s with 8 clusters and 27 EXTRACT errors but removed three
 sentences about this study; and `r-20261002-200521-stage2` gave 26 of 36 in 5m56s with 12 clusters and
 5 EXTRACT errors. The stage 2 entry below has the stage 2 table, and the stage 4 entries explain why the
@@ -155,21 +160,52 @@ checks every task's field names against the specification, so neither mistake ca
    unspecified: a past-run browser, the extracted variables shown as a table, and the contradictions
    shown individually. `app_v2.py` still has no coverage in the test suite and has never been seen in a
    browser.
-4. **Decide what to do about ADJUDICATE picking a winner by document instead of by record.** This is
-   what failed both of stage 5's live criteria, and it is a decision for Oliver because
-   `docs/PLAN_2026-10-02.md` section 5 lists ADJUDICATE under "Do not change".
-   `adjudicate/__init__.py::_handle_reconcilable` calls `_find_record`, which returns the **first**
-   record whose `provenance.doc_id` equals `winning_doc_id`. Several records for one field from one
-   document is the ordinary case on a 137-page protocol, so the earliest page wins and the
-   `max(confidence)` fallback never runs. `Contradiction` carries `winning_doc_id` and no way to name a
-   record, so fixing it means changing the model, ADJUDICATE's prompt and GATE's reading of the result.
-   It silently decided `blinding.unblinded_staff_stated`, `visits.schedule_present` and
-   `timeline.total_duration` against their own best evidence in run `r-20261002-232830-stage5`.
-4b. **Add "Placebo" to the `blinding_monitoring` search hints in `config/fields.yaml`.** Section
-   `6.3 Placebo` scores 0.000 for that group — the group's hints name neither the heading nor the word —
-   so the sentence stage 5's criterion A depends on, "A matching placebo will not be provided for this
-   study.", was never in any excerpt EXTRACT read. This one is a config change and is safe; it is listed
-   separately because on its own it will not make criterion A pass while item 4 stands.
+4. ~~**Decide what to do about ADJUDICATE picking a winner by document instead of by record.**~~
+   **Done 2026-10-03, with Oliver's approval overriding `docs/PLAN_2026-10-02.md` section 5. See the
+   2026-10-03 entry below.** ADJUDICATE now names a record by its number in its own prompt. Proven on
+   live run `r-20261003-001602-stage5b`, where `visits.schedule_present` resolves to `yes_appendix` from
+   record 3 of 5.
+4b. ~~**Add "Placebo" to the `blinding_monitoring` search hints in `config/fields.yaml`.**~~ **Done
+   2026-10-03, and it is not safe after all** — it was listed here as "a config change and is safe", and
+   that was wrong. With the then-current `DEFAULT_TOP_K` at 3 (the constant is gone; see item 4c) a hint
+   added to a group evicts a section that group was
+   already reading. Measured on the real protocol: the placebo sentence came in and the "Unblinded
+   Pharmacist" sentence went out. This is now item 4c.
+4c. ~~**Raise the number of sections PLAN keeps for the `blinding_monitoring` group, or make the heading
+   match stricter.**~~ **Done 2026-10-03 by the first option, as a per-group `top_k` in
+   `config/fields.yaml` — Oliver chose both the option and the mechanism. See the second 2026-10-03 entry
+   below.** `blinding_monitoring` is now `top_k: 7`; every other group keeps the default 3. The measurement
+   that follows is kept because it is the evidence for the value, and because the near-exact heading match
+   named below is still an open option if this group's hints change again.
+   The state it describes: `DEFAULT_TOP_K` was 3 for every group, and this protocol spreads
+   the blinding evidence over at least five sections — the title page, `5 SUBJECT SCREENING AND
+   RANDOMIZATION` (IXRS randomisation), `6.2 Shipping, Storage, and Handling` (unblinded pharmacy
+   staff), `6.3 Placebo` and `6.5.1 Study Drug` (the Unblinded Pharmacist sentence). Three is not enough
+   and no hint change can make it enough. Measured offline on 2026-10-03 by running INGEST,
+   FIND_SECTIONS, SET_ASIDE_SECTIONS and PLAN on `samples/Example protocol 2.pdf` twice, with and
+   without the new hints:
+
+   | blinding_monitoring sections chosen | before the hint change | after it |
+   | --- | --- | --- |
+   | title page p1–3 | no | **yes** |
+   | PROTOCOL SYNOPSIS p11–26 (two tasks) | yes | yes |
+   | `5 SUBJECT SCREENING AND RANDOMIZATION` p52–53 | **yes** | no |
+   | `6.5.1 Study Drug` p54–55 | **yes** | no |
+   | `6.3 Placebo` p53 | no | **yes** |
+
+   "A matching placebo will not be provided" is reachable only after the change; "Unblinded Pharmacist or
+   their designee" only before it; "strictly limited to the unblinded pharmacy staff" (section 6.2) in
+   neither. The second smallest fix is to require a near-exact heading match in `plan/scoring.py:46-52`,
+   which would stop the title page — "A PHASE 3, RANDOMIZED, DOUBLE-BLIND, PLACEBO-CONTROLLED…" — from
+   scoring 5.22 on a partial match against the one-word heading hint "Placebo". **Whichever is chosen,
+   add a test that section 5 stays reachable for this group**; nothing asserted that, which is why the
+   eviction was invisible until it was measured. That test now exists:
+   `test_the_unblinded_staff_sentences_reach_the_blinding_group`, three parametrised cases.
+   One line of the table above was wrong and is corrected in the entry below: "strictly limited to the
+   unblinded pharmacy staff" is in section 6.2 on page 53 and was reachable in neither configuration
+   **because the protocol capitalises it** — "Access to the study drug should be strictly limited to the
+   Unblinded Pharmacy Staff." The offline probe that produced the table matched case-sensitively against a
+   needle copied from a lower-case hint.
 4a. **Find out why EXTRACT dropped 22 records in run `r-20261002-222824-stage4b` where the baseline
    before MARK_OTHER_STUDY dropped 5.** 21 of the 22 are `quote_not_found_in_excerpt`, 8 of them
    `visits.frequency_by_period` on the protocol and 5 `ops.monitoring_visits` on the RFP.
@@ -183,6 +219,278 @@ checks every task's field names against the specification, so neither mistake ca
 5. **Return `privacy_mode` to `private` and the models to CAII before any customer document.**
    `config/models.yaml` is on `mixed` with Claude Sonnet 4.6 on Bedrock for testing.
 6. Build `audit.json`, the janitor job, and the `rfp_intake.eval` command line.
+
+### Done 2026-10-03: ADJUDICATE picks a record, not a document — approved, built, and one live run
+
+**Oliver approved changing ADJUDICATE on 2026-10-03, and that approval overrides
+`docs/PLAN_2026-10-02.md` section 5, which lists ADJUDICATE under "Do not change".** This paragraph is
+the record of that decision, which Oliver asked for in the same instruction. The override is specific to
+picking the winning record; everything else section 5 holds back is still held back. The two changes
+Oliver asked for were: add "Placebo" to the `blinding_monitoring` headings and "placebo" and "matching"
+to its keywords in `config/fields.yaml`; and make ADJUDICATE pick the winning **record** rather than the
+winning **document**, using the record numbers its prompt already shows, falling back to highest
+confidence.
+
+**What changed in ADJUDICATE.** `AdjudicationResult.winning_doc_id` is replaced by
+`winning_record: int | None`, the 1-based number of a candidate in the list the prompt already numbers
+with `enumerate(..., start=1)`. `_handle_reconcilable` resolves it through a new `_winning_index`, which
+takes the named record when `1 <= winning_record <= len(records)` and otherwise falls back to the
+highest-confidence record, earlier record winning a tie, so the outcome is deterministic. 0 and negative
+numbers are rejected rather than used as Python indices, which would silently pick a record.
+`Contradiction` gained `winning_record_index`, so `extraction.json` now records which record a
+`reconcilable` value came from; `winning_doc_id` is still written beside it and still carries the
+`conflict` path's answer. The prompt now says to name a record and not a document, and its candidate
+header reads "CANDIDATE RECORDS, numbered — several may come from the same document".
+
+**One change beyond what Oliver asked for, made deliberately: `_find_record` now returns the
+highest-confidence record from the winning document rather than the first one.** `_find_record` is only
+reached on the `conflict` path, where `reconcile/precedence.py` names a document and not a record, so the
+record-number change does not touch it — but taking the first match is the same defect in the same
+function family, and it printed the earliest page's quote against a value precedence had chosen. Nothing
+else in the pipeline depends on `_find_record` returning the first match.
+
+**The claim in the old to-do item 4 that this needed "changing the model, ADJUDICATE's prompt and GATE's
+reading of the result" was wrong about GATE.** GATE does not read `winning_doc_id` or
+`winning_record_index` at all — `gate/__init__.py` reads the verdict, the confidence and whether the
+field is a `budget_driver`. No GATE change was made or needed.
+
+**The record-level fix works, and a live run proves it.** In `r-20261003-001602-stage5b`,
+`visits.schedule_present` resolves to `yes_appendix` at confidence 0.99 with `winning_record_index: 3` of
+5 records. The same field in `r-20261002-232830-stage5` resolved to `no` from page 13 at 0.95, beating
+page 111's `yes_appendix` at 0.99 purely because page 13 came first in the same document. This is the
+defect, fixed, on real documents.
+
+**The live run `r-20261003-001602-stage5b` met one of Oliver's four criteria.** 00:29:55 → 00:39:02 UTC
+on 2026-10-03, about 9m07s, same two documents. 92 resolved rows, 11 contradiction clusters, 21 EXTRACT
+errors, 26 of the original 36 fields with a confirmed row.
+1. `blinding.placebo_matching` is `not_matching_stated` — **failed.** It is `None`, `needs_review`.
+2. `blinding.unblinded_staff_stated` is `yes` — **failed.** It is `not_specified`, confirmed at 0.85.
+   (Note that this field has no value `yes`: `config/fields.yaml` gives it `"true"`, `"false"` and
+   `not_specified`, because `yes` and `no` are YAML booleans and every other yes-or-no field in the file
+   uses `true`/`false`. The criterion was read as asking for the affirmative, `"true"`.)
+3. `study.phase` is still one confirmed Phase 3 — **passed.** One row, `phase_3`, confirmed, confidence
+   1.0.
+4. At least 27 of the 36 original fields confirmed — **failed at 26**, up from stage 5's 25 and one below
+   stage 4b's 27.
+
+**Criterion A failed for a new reason, and it is the more interesting one: the two test documents
+genuinely disagree about the placebo.** The hint change did its job — protocol page 53's "A matching
+placebo will not be provided for this study." was extracted at confidence 1.00, where stage 5 never saw
+it. But the synthetic RFP page 3 says "Placebo:  Matching placebo for NEOD001" at confidence 1.00.
+ADJUDICATE correctly returned `conflict`, and `reconcile/precedence.py` declined to choose under
+`no_silent_resolution`, so the field is `None` and flagged. **That is the pipeline behaving correctly on
+contradictory inputs, not a defect.** Criterion A as written cannot pass while the RFP says the opposite
+of the protocol: either `samples/Synthetic_RFP_NEOD001.pdf` is wrong and should be corrected, or the
+criterion should be "a high-severity conflict naming both sentences".
+
+**Criterion B failed because of the approved `config/fields.yaml` change itself.** The ADJUDICATE fix
+could not help, because there was nothing left to adjudicate: `blinding.unblinded_staff_stated` has one
+record in this run, against four in stage 5, and no contradiction cluster at all. Adding "Placebo" to the
+group's headings pushed `5 SUBJECT SCREENING AND RANDOMIZATION` and `6.5.1 Study Drug` out of the top
+three sections PLAN keeps, and pages 52 and 54 — where "the Unblinded Pharmacist or their designee" is
+written — went with them. The one surviving record answers `not_specified` while quoting the placebo
+sentence from page 53, which is EXTRACT attaching the wrong sentence to the field; it is confirmed at
+0.85 because nothing contradicted it, so **this field is now confidently wrong rather than flagged,
+which is worse than stage 5's answer.** The measurement is in to-do item 4c above. The 2026-10-02 to-do
+item 4b called this config change "safe"; that was wrong, and item 4b above now says so.
+
+**Tests: 855 passing, 1 skipped**, `ruff check .` clean, `mypy` clean on the three changed source files
+(the 2 pre-existing mypy errors in `llm/mock.py` lines 25 and 43 are untouched). Eight new tests, all in
+`tests/adjudicate/test_adjudicate_node.py` and `tests/plan/test_plan_sections_samples.py`:
+`TestHandleReconcilable` is rewritten to six cases covering the chosen record, a later record from the
+same document (the stage 5 `blinding.unblinded_staff_stated` case, as a regression test), the
+no-record and out-of-range fallbacks, the 0-and-negative guard, and the tie going to the earlier record;
+`test_the_quote_is_the_best_record_from_the_winning_document` covers the `_find_record` change; and
+`TestThePrompt` asserts the prompt asks for `winning_record` and never for `winning_doc_id`.
+`tests/plan/test_plan_sections_samples.py::test_the_placebo_sentence_reaches_the_blinding_group` asserts
+the config change on the real protocol PDF, offline. `llm/mock.py`'s adjudicate fixture was updated to
+`winning_record`, so the suite stays network-free. Pre-change run folders still re-render:
+`scripts/rerender_report.py r-20260827-180418` ran clean, because `winning_record_index` defaults to
+`None`.
+
+**Two things found while doing this that are not defects in this change.**
+First, **the earlier claim that two fields lost their confirmed value between `r-20261002-222824-stage4b`
+and `r-20261002-232830-stage5` was wrong — three lost one and one gained one**, which the stage 5 entry
+below states correctly; "two" is only true if you count the two of the three that are budget drivers.
+The cause of each was checked and **none of the three was ADJUDICATE's doing**, so this fix was never
+going to recover them: `design.parts` lost it because EXTRACT wrote a differently worded scope label that
+`normalize/scope.py` folded into the protocol's `arm:NEOD001` bucket, and `gate/__init__.py:94` forbids a
+budget driver holding more than one value from confirming; `monitoring.unblinded_rationale` lost it
+because EXTRACT returned a different passage from the same RFP page 4 and rated itself 0.75 against
+`CONFIDENCE_CONFIRMED` 0.80; and `timeline.total_duration` lost it because the two confirmed
+protocol-page-47 records are simply absent, with no validation error, no set-aside section and no removed
+passage covering page 47. Run-to-run variation in EXTRACT is the whole of the first two.
+Second, **the golden set in `eval/golden/` is stale and gives no signal between runs.** It expects Phase
+1, multi-part, first-in-human and 120 subjects; the two sample documents are a Phase 3, two-arm,
+260-subject trial that is not first-in-human. Scoring a run against it today measures the fixture, not
+the pipeline.
+
+### Done 2026-10-03 (second change): per-group `top_k`, a corrected placebo criterion, and the credential question
+
+Six things Oliver asked for on 2026-10-03, after reading the stage 5b report above. The first four are
+changes; the fifth is a correction to how accuracy may be quoted; the sixth was a question whose answer
+turned out to be "your assumption is wrong", and is written up last.
+
+**1. The number of sections PLAN keeps is now a per-group setting in `config/fields.yaml`, not a constant
+in Python.** `DEFAULT_TOP_K` is gone from `plan/__init__.py`. `GroupDef` in `domain/registry.py` gained
+`top_k: int = Field(default=3, ge=1)`, `_plan_group` reads `registry.get_group(group_id).top_k`, and
+`_nothing_scored` takes it as an argument. The default lives in one place, the `GroupDef` field, so the
+registry is the only thing that says how many sections a group gets — this is non-negotiable rule 4
+applied to a number that was behaving like a hardcoded field. The `config/fields.yaml` header block now
+documents the five group keys, which it never did.
+
+**`blinding_monitoring` is `top_k: 7`, and 7 is measured rather than chosen.** Ranked by score for this
+group on `samples/Example protocol 2.pdf`, after SET_ASIDE_SECTIONS: (1) title page, (2) `6.3 Placebo`
+p53, (3) PROTOCOL SYNOPSIS, (4) `5 SUBJECT SCREENING AND RANDOMIZATION` p52–53, (5) `6.5.1 Study Drug`
+p54–55, (6) `3.1 Study Design` p42–43, (7) `6.2 Shipping, Storage, and Handling` p53. Oliver asked for
+"high enough that pages 52, 53 and 54 are all read". **5 satisfies that literally and is still not
+enough**, because page 53's text is divided among four sections and PLAN chooses sections, not pages: at
+5 the group reads parts of page 53 but not section 6.2's part of it. 7 is the smallest value that reaches
+all three sentences the two failing criteria depend on. It costs this group a 45,601-character excerpt
+against 34,760 at 3 on the protocol, a 31% increase for one of nine groups — and **no extra model calls**:
+PLAN still makes 33 tasks across the two documents, 5 of them for this group, because the four extra
+sections pack into the tasks that already existed under the token budget. Measured both ways on 2026-10-03.
+
+**2. The placebo criterion is now "a high-severity conflict naming both sentences".** Oliver's reason, in
+his words, is that "the two documents genuinely disagree", which is what the stage 5b run showed. The
+assertion is `TestThePlaceboDisagreement` in `tests/adjudicate/test_adjudicate_node.py`: given the two
+real records, the outcome is verdict `conflict`, severity `high`, both sentences still on the
+contradiction's records, resolved value `None`, status `needs_review` and `winning_record_index` `None`.
+The precondition — that EXTRACT is shown both sentences — is asserted separately and offline on both
+PDFs, protocol and synthetic RFP.
+
+**Severity is not enforced in code, and this change did not start enforcing it.** The `config/fields.yaml`
+header says a `budget_driver` disagreement "is severity=high and forces needs_review". The second half is
+enforced, in `gate/__init__.py`. The first half is not: `adjudicate/__init__.py:111` copies
+`result.severity` straight from the model, and the only thing asking for `high` is a sentence in
+`adjudicate/prompt.py`. So a budget driver can be adjudicated `low` and nothing corrects it. The test
+above supplies `severity="high"` as the model's answer rather than deriving it, which is honest about
+what is checked. **Not fixed here** — it changes how the report orders disagreements, and that is a
+separate decision.
+
+**3. The `blinding.unblinded_staff_stated` hint is tightened, and not in the words Oliver used.** He asked
+that `not_specified` be used "only when the document explicitly says no unblinded staff are needed". That
+sentence is the definition of `false` in this field's enum, so taking it literally would make
+`not_specified` and `false` the same answer and leave nothing for a document that is simply silent —
+against non-negotiable rule 3 (`not_found` ≠ `not_specified` ≠ `0`), and it would break the
+`blinding.placebo_assumption` rubric, which reads this field precisely to tell a stated fact from silence.
+What the hint now says instead, which fixes the failure actually observed: answer only from a sentence
+about who may know the allocation or who handles unblinded drug; use `not_specified` **only** where the
+text given does discuss blinding, randomisation or drug handling and still never says who may be
+unblinded; where nothing in the excerpt is about unblinded staff, return status `not_found` and no value;
+and never quote a sentence that does not mention staff, unblinding or drug handling in support of
+`not_specified`. The last clause is the stage 5b failure written as a prohibition — the model answered
+`not_specified` while quoting the placebo sentence, and GATE confirmed it at 0.85.
+
+**4. The confirmed-fields floor is 26.** Four live runs, in order, gave **26, 27, 25, 26** — stage 2's
+baseline `r-20261002-200521-stage2` 26, stage 4b `r-20261002-222824-stage4b` 27, stage 5
+`r-20261002-232830-stage5` 25, stage 5b `r-20261003-001602-stage5b` 26. The spread is 2 fields across
+four runs whose differences were not meant to touch most of them, so a floor of
+27 — which stage 5b was judged against and failed by one — was set at the top of the observed range and
+would fail about half of all runs that changed nothing. 26 is the bottom of the range excluding stage 5's
+25, which had a known cause. `docs/PLAN_2026-10-02.md:224` already said 26; this records why it stays
+there and that stage 5's 27 was the anomaly. **A run below 26 is a real regression and should stop the
+work.** Rows are not fields: count fields holding at least one `confirmed` row.
+
+**5. The golden set in `eval/golden/` describes a different study and must be rebuilt before any accuracy
+figure is quoted from it.** It expects Phase 1, multi-part, first-in-human and 120 subjects. The two
+sample documents are a Phase 3, two-arm, 260-subject trial that is not first-in-human. Every number
+`rfp_intake.eval` produces against it today measures the fixture, not the pipeline. **No accuracy,
+precision, recall or severity figure may be quoted from `eval/golden/` — to Angus, to Oliver, in a report
+or in this file — until the fixture is rebuilt from the two sample documents.** Until then the only
+honest measures of a run are the ones used above: fields with a confirmed row, contradiction clusters,
+EXTRACT errors, and named field-by-field comparisons between runs. Rebuilding it is not in any stage of
+`docs/PLAN_2026-10-02.md` and needs to be scheduled.
+
+**A test was passing for the wrong reason, found by accident and now fixed.**
+`tests/plan/test_plan_sections_samples.py` built its documents by running FIND_SECTIONS and stopping,
+but the graph runs SET_ASIDE_SECTIONS between FIND_SECTIONS and PLAN — so every test in that file scored
+a section list production never sees. With set-aside applied, 57 of the protocol's 176 sections go and the
+ranking changes, which is why `top_k: 7` measured on the real pipeline looked wrong against the test.
+Correcting the fixture broke `test_the_other_studys_phase_is_not_sent_to_the_phase_group`, and the break
+is the real finding: **SET_ASIDE_SECTIONS does not drop section 1.3.2 "Clinical Experience", and once the
+57 sections are gone 1.3.2 rises into `phase_population`'s top three, so PLAN does choose it.** PLAN is
+not what protects `study.phase` from the referenced study's phase; MARK_OTHER_STUDY is, by putting the
+passage in `Document.removed`, which `section_page_texts` cuts out of both PLAN's scoring and EXTRACT's
+excerpt. The test is renamed `test_the_other_studys_phase_is_kept_out_by_mark_other_study_not_by_plan`
+and now asserts both halves — that PLAN chooses the section, and that removing the passage the way that
+node does takes the text out — so the claim it makes is one that holds in production. The protection was
+never missing; what was missing was any test that located it correctly.
+
+**6. The credential question: the assumption is wrong, and there is a worse problem behind it.** Oliver
+asked whether the project works only with `AWS_BEARER_TOKEN_BEDROCK` and fails with the standard
+`AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` that Angus uses. It does not. **Standard AWS access keys
+already work and always have**, and the code that decides is `llm/provider.py` `_build_bedrock`, which
+passes a model and a region and no credential at all:
+
+```python
+# Credentials come from the standard AWS chain (env, profile, instance role).
+# Deliberately not re-plumbed through Settings — one credential source.
+model: BaseChatModel = ChatBedrockConverse(
+    model=binding.model, region_name=settings.bedrock_region
+)
+```
+
+Nothing in `src/rfp_intake/` reads `AWS_BEARER_TOKEN_BEDROCK`, by grep. botocore reads it, at
+`botocore/utils.py:3616` and `botocore/client.py:619` (`_evaluate_client_specific_token`), per Bedrock
+operation. Measured with dummy values, the request intercepted at `before-send` so nothing was sent, and
+only the first word of the Authorization header read: access keys alone → `AWS4-HMAC-SHA256`; bearer
+alone → `Bearer`; **both set → `Bearer`**; neither → sigv4, which then fails. So botocore already
+implements exactly the preference Oliver asked for, and **the requested change to credential selection
+was not made, because the behaviour it would add is the behaviour that already exists.** Writing it into
+`llm/` would be a second credential source for the same decision, which is what the comment above warns
+against.
+
+**The real problem is the third line of that measurement: a bearer token silently beats standard access
+keys, and no run said which kind it used.** A stale `AWS_BEARER_TOKEN_BEDROCK` left in a CML project's
+environment makes Angus's correct access keys look rejected, and the analyst-facing failure is
+`credential_rejected` either way — the same message runs r-20260831-150720 .. r-20260901-140857 produced
+when the bearer token expired. So the reporting half was built: `llm/credentials.py`
+(`bedrock_credential_report`) names which of the four cases applies, and PREFLIGHT logs it as
+`model_service_credential` before the probe, warning rather than informing when a credential is being
+shadowed or when there is none at all. A Bedrock probe failure also carries the sentence in its operator
+`detail`. **It reports the names of environment variables that are set and never any part of a value**,
+asserted by a test that rejects every 8-character fragment of each dummy secret from every field of the
+report. Both changes are inside `llm/`, as Oliver required.
+
+**7. The live run `r-20261003-143058-topk7` cleared the floor: 27 of the original 36 confirmed.** 14:31:08
+to 14:41:39 UTC, 10m31s, on `samples/Example protocol 2.pdf` and `samples/Synthetic_RFP_NEOD001.pdf`,
+`state: completed`, no run-level error. Measured by `scripts/check_run_acceptance.py`, written for this
+run because the count had been read off reports by eye; it reproduces the 26 recorded above for
+`r-20261003-001602-stage5b`, so the two numbers are comparable. That script holds the only list of the
+five stage-5 field names anywhere outside `config/fields.yaml`; it is a diagnostic that feeds nothing in
+the pipeline, so non-negotiable rule 4 stands, and its docstring says why the set cannot be derived (the
+registry carries no stage marker).
+
+Field by field: `study.phase` is one confirmed `phase_3`, unchanged. `blinding.placebo_matching` is a
+**high-severity `conflict`, 4 records, `winning_record_index: None`, value `None`, `needs_review`** —
+the criterion of item 2 above, met on live evidence, and the explanation names both sentences: "A
+matching placebo will not be provided for this study" (amendment p.53) against "Matching placebo for
+NEOD001" (RFP p.3). `blinding.unblinded_staff_stated` is **`true`** — note the registry's values are
+`true`/`false`/`not_specified`, not the `yes`/`no` of docs/PLAN_2026-10-02.md stage 5 item 6, so `true`
+is this field's spelling of Oliver's "yes".
+
+**`top_k: 7` did what it was raised to do, and the run cannot prove it did it alone.** The field's cited
+pages went from `[53]` in `r-20261003-001602-stage5b` to **`[4, 19, 52, 53, 54]`** here, so pages 52 and
+54 were read for the first time. But item 1 (`top_k`) and item 3 (the hint) both bear on this one field
+and both changed before this run, and the earlier run already saw page 53 and still answered
+`not_specified`. So the new pages and the tightened hint are confounded: this run shows the pair works
+and attributes the fix to neither. Separating them needs a run with `top_k: 7` and the old hint, which
+has not been done.
+
+**It is `needs_review`, not `confirmed`, and that is the designed behaviour, not a regression.**
+`blinding.unblinded_staff_stated` is a `budget_driver` and drew a contradiction (8 records, verdict
+`reconcilable`, winner 2), and `gate/__init__.py` sends any budget driver with a contradiction to
+`needs_review` whatever its confidence. The previous run had this field **`confirmed` at 0.85 with the
+wrong value**; this run has the right value flagged for a human. That is the better of the two outcomes
+and the reason the floor is counted over the original 36 rather than this field alone.
+
+**Unchanged and pre-existing: 21 `EXTRACT` validation errors, all `quote_not_found_in_excerpt`** (for
+example `doc-0119597c:visits:visits.frequency_by_period`) — the same count as `r-20261003-001602-stage5b`,
+so nothing here made it worse and nothing here fixed it. Contradictions went 11 → 12. `report.pdf` and
+`report.xlsx` both rendered. PREFLIGHT logged `model_service_credential credential_kind=bearer_token
+env_vars_set=['AWS_BEARER_TOKEN_BEDROCK'] shadowed=[]`, which is item 6 working on a real environment
+with no part of a value printed.
 
 ### Done 2026-10-02: Stage 5 — five new fields and the placebo rubric; the live test FAILED
 Stage 5 of `docs/PLAN_2026-10-02.md`, all ten items built, 40 new tests, tree green —
@@ -543,11 +851,13 @@ is where the phase of a different study comes from.
 hints, text)` replaces the bookmark-entry scorer, with the four weights unchanged (`HEADING_EXACT_MATCH`
 5.0, `HEADING_PARTIAL_MATCH` 3.0, `KEYWORD_DENSITY_WEIGHT` 2.0, `MAX_KEYWORD_DENSITY_SCORE` 4.0). It is
 given the **section's own text**, not its pages, because scoring 1.3.1 on page 39 credited 1.3.1 for
-1.3.2's words. `select_sections` takes the top `DEFAULT_TOP_K` (3) scoring above zero and returns them in
-document order; a zero-scoring section is never chosen to fill k. `select_windows` and `merge_windows` are
+1.3.2's words. `select_sections` takes the top k scoring above zero and returns them in
+document order; a zero-scoring section is never chosen to fill k. k was the module constant
+`DEFAULT_TOP_K` (3) until 2026-10-03 and is now each group's own `top_k` in `config/fields.yaml`.
+`select_windows` and `merge_windows` are
 deleted along with the one-page margin they applied, and so is the "first 5 pages" fallback. When nothing
-scores, PLAN sends every section if the whole document fits one call and otherwise the first three, logged
-as `plan_no_section_scored`.
+scores, PLAN sends every section if the whole document fits one call and otherwise the group's first
+`top_k`, logged as `plan_no_section_scored`.
 
 `ExtractionTask` (`src/rfp_intake/domain/schemas.py`) gained `section_ids`. `page_window` stays, because
 `src/rfp_intake/extract/validate.py` checks each record's page against it and the prompt prints it. **A

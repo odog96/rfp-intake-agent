@@ -38,7 +38,9 @@ from rfp_intake.sections import section_page_texts, section_text
 
 logger = structlog.get_logger()
 
-DEFAULT_TOP_K = 3
+# How many sections to keep is NOT a constant here. It is `top_k` on each group in
+# config/fields.yaml, defaulted in `domain/registry.py`, because it differs by
+# group: see `_plan_group`.
 
 
 class MissingSectionsError(RuntimeError):
@@ -55,7 +57,6 @@ class MissingSectionsError(RuntimeError):
 # module imports rfp_intake.sections.
 __all__ = [
     "DEFAULT_TOKEN_BUDGET",
-    "DEFAULT_TOP_K",
     "MissingSectionsError",
     "plan_extraction",
     "plan_node",
@@ -70,9 +71,10 @@ def plan_extraction(
 
     For each document and each field group:
     1. Score the document's sections by the group's `search_hints`.
-    2. Keep the top `DEFAULT_TOP_K` sections that scored above zero.
+    2. Keep the top `top_k` sections that scored above zero, where `top_k` is the
+       group's own setting in `config/fields.yaml` (3 unless it says otherwise).
     3. If none scored, send the whole document when it fits one call, otherwise
-       the first `DEFAULT_TOP_K` sections.
+       the group's first `top_k` sections.
     4. Pack the chosen sections into as few tasks as the token budget allows.
 
     Raises `MissingSectionsError` if any document has no sections. Nothing here
@@ -124,14 +126,22 @@ def _plan_group(
     group_id: str,
     registry: Registry,
 ) -> list[ExtractionTask]:
-    """Plan the extraction tasks for one (document, field group) pair."""
-    hints = registry.get_group(group_id).search_hints
+    """Plan the extraction tasks for one (document, field group) pair.
+
+    `top_k` comes from the group, not from this module. A group's evidence is as
+    scattered as its subject matter: `blinding_monitoring` is answered by four
+    sections of the sample protocol lying on three pages, so a single number for
+    all nine groups either starves that group or sends the other eight more text
+    than they need.
+    """
+    group_def = registry.get_group(group_id)
+    hints = group_def.search_hints
 
     scores = [score_section(section, hints, texts[section.id]) for section in sections]
-    chosen = select_sections(sections, scores, k=DEFAULT_TOP_K)
+    chosen = select_sections(sections, scores, k=group_def.top_k)
 
     if not chosen:
-        chosen = _nothing_scored(doc, sections, texts, group_id)
+        chosen = _nothing_scored(doc, sections, texts, group_id, group_def.top_k)
 
     return _tasks_for(doc, chosen, texts, group_id)
 
@@ -141,12 +151,13 @@ def _nothing_scored(
     sections: list[Section],
     texts: dict[str, str],
     group_id: str,
+    top_k: int,
 ) -> list[Section]:
     """Which sections to read when no section matched the group's hints.
 
     The whole document if it fits in one extraction call — which is the case for
     a document FIND_SECTIONS gave a single section, and is what stage 2 of
-    `docs/PLAN_2026-10-02.md` asks for. Otherwise the first `DEFAULT_TOP_K`
+    `docs/PLAN_2026-10-02.md` asks for. Otherwise the group's first `top_k`
     sections, because sending every section of a 137-page protocol to every field
     group would be a fan-out that queues against our own endpoint.
     """
@@ -160,9 +171,9 @@ def _nothing_scored(
         group=group_id,
         sections=len(sections),
         estimated_tokens=total,
-        using_first=DEFAULT_TOP_K,
+        using_first=top_k,
     )
-    return sections[:DEFAULT_TOP_K]
+    return sections[:top_k]
 
 
 def _tasks_for(

@@ -27,6 +27,7 @@ from pydantic import BaseModel
 
 from rfp_intake.config.settings import get_settings
 from rfp_intake.domain.model_routing import get_model_routing
+from rfp_intake.llm.credentials import bedrock_credential_report
 from rfp_intake.llm.provider import LLMRole, get_llm
 
 logger = structlog.get_logger()
@@ -243,11 +244,39 @@ def probe_model_service(roles: tuple[LLMRole, ...] = PROBE_ROLES) -> ServiceFail
             continue
         seen.add((binding.provider, binding.model))
 
+        _report_credential(binding.provider)
         failure = _probe_one(role, binding.provider, binding.model)
         if failure is not None:
             return failure
 
     return None
+
+
+def _report_credential(provider: str) -> None:
+    """Say which kind of AWS credential a Bedrock probe is about to use.
+
+    PREFLIGHT's job is to make a credential problem visible before a paid run, and
+    which *kind* of credential was used is the one piece it could not say. Runs
+    r-20260831-150720 .. r-20260901-140857 failed on an expired bearer token, and
+    a bearer token silently takes precedence over standard access keys, so a stale
+    one makes correct access keys look rejected. See `llm/credentials.py`.
+
+    Logged, not raised: an unexpected environment is not a reason to stop a run
+    that may be about to work. Variable names only — never a value.
+    """
+    if provider != "bedrock":
+        return
+
+    report = bedrock_credential_report()
+    log = logger.warning if (report.shadowed or report.kind == "ambient") else logger.info
+    log(
+        "model_service_credential",
+        provider=provider,
+        credential_kind=report.kind,
+        shadowed=report.shadowed,
+        env_vars_set=report.present,
+        summary=report.summary,
+    )
 
 
 def _probe_one(role: LLMRole, provider: str, model: str) -> ServiceFailure | None:
@@ -256,6 +285,14 @@ def _probe_one(role: LLMRole, provider: str, model: str) -> ServiceFailure | Non
         get_llm(role).invoke([HumanMessage(content=PROBE_PROMPT)])
     except Exception as exc:  # noqa: BLE001 - every failure shape is a failed probe
         failure = describe_failure(exc, provider=provider, role=role, model=model)
+        if provider == "bedrock":
+            # Which credential kind was refused belongs with the provider's own
+            # words, in the operator's detail — not in the analyst's two sentences.
+            failure = failure.model_copy(
+                update={
+                    "detail": f"{failure.detail} [{bedrock_credential_report().summary}]"
+                }
+            )
         logger.warning(
             "model_service_probe_failed",
             role=role,

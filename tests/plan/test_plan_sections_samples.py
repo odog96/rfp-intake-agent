@@ -12,13 +12,14 @@ The three things stage 2 asks to be shown:
 from __future__ import annotations
 
 import os
+import re
 from functools import lru_cache
 from pathlib import Path
 
 import pytest
 
 from rfp_intake.domain.registry import get_registry
-from rfp_intake.domain.schemas import Document, ExtractionTask
+from rfp_intake.domain.schemas import Document, ExtractionTask, RemovedPassage, TextSpan
 from rfp_intake.extract.prompt import build_excerpt, build_extract_prompt
 from rfp_intake.plan import plan_extraction
 from rfp_intake.sections import find_sections, section_text
@@ -31,10 +32,32 @@ LEAK_PROBE_CHARS = 300
 MIN_SECTION_CHARS_TO_PROBE = 400
 
 
+def _flat(text: str) -> str:
+    """Collapse whitespace and case, for matching a sentence in extracted PDF text.
+
+    Two things defeat a literal `in` test against PDF text, and both produced a
+    false result while measuring the eviction in CLAUDE.md item 4c. A sentence
+    that spans a line break arrives with a newline and the next line's
+    indentation inside it. And this protocol defines "Unblinded Pharmacy Staff"
+    as a capitalised term, so a needle copied from a lower-case hint does not
+    match the document that plainly contains it.
+    """
+    return re.sub(r"\s+", " ", text).lower()
+
+
 @lru_cache(maxsize=4)
 def _document(pdf: Path, doc_id: str, kind: str) -> Document:
-    """Parsed and sectioned once per session, as FIND_SECTIONS leaves it."""
+    """Parsed and sectioned once per session, as PLAN actually receives it.
+
+    SET_ASIDE_SECTIONS runs between FIND_SECTIONS and PLAN in the graph, so the
+    sections PLAN scores are the kept ones. Until 2026-10-03 this fixture stopped
+    after FIND_SECTIONS and every test here scored a section list production never
+    sees — which ranked this protocol's sections differently and made the
+    `top_k: 7` measured on the real pipeline look wrong.
+    """
+    from rfp_intake.domain.section_policy import get_sections_policy
     from rfp_intake.ingest.parsers.rung1 import Rung1Parser
+    from rfp_intake.sections.set_aside import set_aside_sections
 
     parser = Rung1Parser()
     pages = parser._extract_text(pdf)  # noqa: SLF001 - the real parser's text, without its tables
@@ -47,6 +70,7 @@ def _document(pdf: Path, doc_id: str, kind: str) -> Document:
         outline=parser._extract_outline(pdf),  # noqa: SLF001
     )
     doc.sections, doc.section_source = find_sections(doc)
+    doc.sections, _dropped = set_aside_sections(doc, get_sections_policy())
     return doc
 
 
@@ -87,6 +111,29 @@ class TestSyntheticRfp:
         for task in tasks:
             assert "--- Page 6 ---" in build_excerpt(task, synthetic_rfp)
 
+    def test_the_opposing_placebo_sentence_reaches_the_blinding_group(
+        self, synthetic_rfp: Document, registry
+    ) -> None:  # type: ignore[no-untyped-def]
+        """The other half of the placebo disagreement.
+
+        This RFP asks for "Matching placebo for NEOD001"; the protocol says a
+        matching placebo will not be provided. Stage 5 criterion A expected
+        blinding.placebo_matching to come back not_matching_stated, which was the
+        wrong thing to ask for: the two documents genuinely disagree and the right
+        output is a contradiction, not a value. That is asserted in
+        tests/adjudicate/test_adjudicate_node.py; what this test holds is the
+        precondition for it, that EXTRACT is shown both sentences.
+        """
+        tasks = [
+            t
+            for t in plan_extraction([synthetic_rfp], registry)
+            if t.group == "blinding_monitoring"
+        ]
+        assert tasks, "the blinding_monitoring group has at least one task"
+
+        excerpts = [_flat(build_excerpt(task, synthetic_rfp)) for task in tasks]
+        assert any(_flat("Matching placebo") in e for e in excerpts)
+
     def test_the_whole_document_is_one_task_per_group(
         self, synthetic_rfp: Document, registry
     ) -> None:  # type: ignore[no-untyped-def]
@@ -122,29 +169,154 @@ class TestProtocol:
                     f"the unchosen section {section.heading.strip()!r}"
                 )
 
-    def test_the_other_studys_phase_is_not_sent_to_the_phase_group(
+    def test_the_other_studys_phase_is_kept_out_by_mark_other_study_not_by_plan(
         self, protocol: Document, registry
     ) -> None:  # type: ignore[no-untyped-def]
         """Known problem 1: study.phase read the phase of a referenced study.
 
-        Section 1.3.2 "Clinical Experience" describes study NEOD001-001. PLAN no
-        longer chooses it for the phase_population group, and the one-page margin
-        that used to drag it in with its neighbour on page 39 is gone, so its text
-        does not reach that group's extraction call at all.
+        Section 1.3.2 "Clinical Experience" describes study NEOD001-001 as
+        "ongoing, open-label". Until 2026-10-03 this test asserted that PLAN does
+        not choose that section for the phase_population group — and it passed,
+        because this file's fixture stopped at FIND_SECTIONS. With
+        SET_ASIDE_SECTIONS applied, as the graph applies it before PLAN, 57 of the
+        protocol's 176 sections go and 1.3.2 rises into this group's top three. So
+        PLAN *does* choose it, and PLAN is not what protects `study.phase`.
 
-        This is not the whole of known problem 1. Another section can still
-        mention another study, which is what the MARK_OTHER_STUDY node in stage 4
-        of docs/PLAN_2026-10-02.md is for.
+        What protects it is MARK_OTHER_STUDY, which runs between SET_ASIDE_SECTIONS
+        and PLAN and puts the passage in `Document.removed`; `section_page_texts`
+        cuts anything there out of both PLAN's scoring and EXTRACT's excerpt. That
+        is asserted here directly, by removing the passage the way that node does,
+        because it is an LLM call and cannot run offline.
+
+        Both halves are asserted. If a future change makes PLAN stop choosing
+        1.3.2, the first assertion fails and says so rather than quietly leaving
+        this test checking nothing.
         """
-        tasks = [
+        before = [
             t
             for t in plan_extraction([protocol], registry)
             if t.group == "phase_population"
         ]
-        assert tasks, "the phase_population group has at least one task"
+        assert before, "the phase_population group has at least one task"
+        assert any("ongoing, open-label" in build_excerpt(t, protocol) for t in before), (
+            "PLAN no longer chooses section 1.3.2 for phase_population. That is an "
+            "improvement, but this test is written to prove MARK_OTHER_STUDY is "
+            "what removes the text — rewrite it rather than deleting the assertion."
+        )
 
-        for task in tasks:
-            assert "ongoing, open-label" not in build_excerpt(task, protocol)
+        clinical_experience = next(
+            s for s in protocol.sections if s.heading.strip().startswith("1.3.2")
+        )
+        removed = protocol.model_copy(deep=True)
+        removed.removed = [
+            RemovedPassage(
+                doc_id=removed.id,
+                section_id=clinical_experience.id,
+                heading=clinical_experience.heading,
+                page_start=clinical_experience.page_start,
+                page_end=clinical_experience.page_end,
+                verdict="other_study",
+                reason="describes study NEOD001-001, not this one",
+                text=section_text(protocol, clinical_experience),
+                spans=[
+                    TextSpan(
+                        page=page,
+                        start_offset=(
+                            clinical_experience.start_offset
+                            if page == clinical_experience.page_start
+                            else 0
+                        ),
+                        end_offset=(
+                            clinical_experience.end_offset
+                            if page == clinical_experience.page_end
+                            else None
+                        ),
+                    )
+                    for page in range(
+                        clinical_experience.page_start, clinical_experience.page_end + 1
+                    )
+                ],
+            )
+        ]
+
+        after = [
+            t for t in plan_extraction([removed], registry) if t.group == "phase_population"
+        ]
+        for task in after:
+            assert "ongoing, open-label" not in build_excerpt(task, removed)
+
+    def test_the_placebo_sentence_reaches_the_blinding_group(
+        self, protocol: Document, registry
+    ) -> None:  # type: ignore[no-untyped-def]
+        """Criterion A of stage 5 failed because EXTRACT never saw this sentence.
+
+        Section "6.3 Placebo" scored 0.000 for the blinding_monitoring group — the
+        group's search_hints named neither "Placebo" as a heading nor "placebo" as a
+        keyword, and the section's own two sentences contain none of the sixteen
+        keywords that were there. PLAN keeps the top `top_k` sections scoring above
+        zero, so 6.3 was never sent, and blinding.placebo_matching came back
+        not_specified. "Placebo", "placebo" and "matching" are now in that group's
+        hints in config/fields.yaml.
+        """
+        sentence = "A matching placebo will not be provided"
+        tasks = [
+            t
+            for t in plan_extraction([protocol], registry)
+            if t.group == "blinding_monitoring"
+        ]
+        assert tasks, "the blinding_monitoring group has at least one task"
+
+        excerpts = [build_excerpt(task, protocol) for task in tasks]
+        assert any(sentence in e for e in excerpts), (
+            "no blinding_monitoring excerpt contains the placebo sentence; "
+            f"{len(tasks)} task(s), windows {[t.page_window for t in tasks]}"
+        )
+
+    @pytest.mark.parametrize(
+        ("sentence", "section"),
+        [
+            ("Unblinded Pharmacist or their designee", "5 SUBJECT SCREENING AND RANDOMIZATION"),
+            (
+                "Access to the study drug should be strictly limited to the "
+                "Unblinded Pharmacy Staff.",
+                "6.2 Shipping, Storage",
+            ),
+            (
+                "The Unblinded Pharmacy Staff will obtain the treatment assignment",
+                "6.5.1 Study Drug",
+            ),
+        ],
+    )
+    def test_the_unblinded_staff_sentences_reach_the_blinding_group(
+        self, protocol: Document, registry, sentence: str, section: str
+    ) -> None:  # type: ignore[no-untyped-def]
+        """The eviction CLAUDE.md item 4c records, now closed by `top_k: 7`.
+
+        Adding the heading "Placebo" to this group on 2026-10-02 raised section
+        "6.3 Placebo" into the top three and pushed these two sections out of it.
+        blinding.unblinded_staff_stated fell from four records to one, that one
+        answered not_specified, and GATE confirmed it at 0.85 — a wrong answer with
+        nothing flagging it, which is worse than the needs_review it replaced.
+
+        Both sentences are on pages 52 to 54 and sit in sections ranked 4th and 7th
+        for this group, which is where the group's `top_k: 7` comes from. A hint
+        added to this group in future can evict them again without failing any
+        other test, so this one is parametrised per sentence to say which went.
+        """
+        tasks = [
+            t
+            for t in plan_extraction([protocol], registry)
+            if t.group == "blinding_monitoring"
+        ]
+        assert tasks, "the blinding_monitoring group has at least one task"
+
+        excerpts = [_flat(build_excerpt(task, protocol)) for task in tasks]
+        assert any(_flat(sentence) in e for e in excerpts), (
+            f"no blinding_monitoring excerpt contains {sentence!r} from section "
+            f"{section!r}; {len(tasks)} task(s), windows "
+            f"{[t.page_window for t in tasks]}. Has a search hint evicted it, or "
+            "has top_k been lowered?"
+        )
 
     def test_a_task_window_can_span_a_gap_but_its_excerpt_does_not(
         self, protocol: Document, registry

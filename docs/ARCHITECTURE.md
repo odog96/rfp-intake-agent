@@ -282,6 +282,10 @@ class Contradiction(BaseModel):
     explanation: str | None = None
     resolved_value: object | None = None
     winning_doc_id: str | None = None
+    # 1-based position in `records` the resolved value came from, numbered as §4.7's
+    # prompt numbers the candidates. Added 2026-10-02: a document id cannot name one
+    # of several records from the same document. None for a `conflict` verdict.
+    winning_record_index: int | None = None
     severity: Literal["high", "medium", "low"] | None = None   # high = changes the budget
 
 class ResolvedField(BaseModel):
@@ -637,10 +641,14 @@ Pure Python, no model call. For each `(doc, group)`:
    `headings`, the **section's own text** against `keywords`. Scoring the section's text rather than its
    pages is load-bearing: section 1.3.1 shares page 39 of `samples/Example protocol 2.pdf` with section
    1.3.2, and scoring by page credited 1.3.1 for 1.3.2's words.
-3. Take the top k (`DEFAULT_TOP_K = 3`) sections scoring above zero, in document order
-   (`plan/scoring.py:select_sections`). **A zero-scoring section is never chosen to fill k.**
+3. Take the top k sections scoring above zero, in document order
+   (`plan/scoring.py:select_sections`). **A zero-scoring section is never chosen to fill k.** k is the
+   group's own `top_k` in `fields.yaml`, defaulted to 3 by `GroupDef` in `domain/registry.py` — it is per
+   group because how widely a group's evidence is scattered is a property of the group, and raising one
+   number for all nine would send the other eight more text than they need. `blinding_monitoring` is the
+   only group above the default, at 7; CLAUDE.md's second 2026-10-03 entry has the measurement.
 4. If nothing scored: send every section when the whole document fits one extraction call, otherwise the
-   first `DEFAULT_TOP_K` sections, logged as `plan_no_section_scored`. A document that FIND_SECTIONS rule 2
+   group's first `top_k` sections, logged as `plan_no_section_scored`. A document that FIND_SECTIONS rule 2
    made one section is therefore sent whole to every group — which is what finally reads page 6 of
    `samples/Synthetic_RFP_NEOD001.pdf`.
 5. Emit `ExtractionTask(doc_id, group, page_window, section_ids, budget_tokens)`, where `page_window` is
@@ -746,7 +754,13 @@ severity. Three verdicts:
 - `not_a_conflict` — different scope, different unit, different study period. **Expect this to be the most
   common verdict.** A detector that cannot say "these don't actually disagree" floods DSB with noise and
   gets switched off.
-- `reconcilable` — both true, one is a subset or restatement. Explain and pick.
+- `reconcilable` — both true, one is a subset or restatement. Explain and pick. **The model picks a
+  record, by its number in the prompt's candidate list, not a document** (`winning_record`, recorded as
+  `Contradiction.winning_record_index`). Corrected 2026-10-02 with Oliver's approval: picking a document
+  made ADJUDICATE take the first record carrying that document's id, so where one document supplied
+  several records — the ordinary case on a 137-page protocol — the earliest page won and the
+  highest-confidence fallback never ran. Where the model names no record, or a number not in the list,
+  the highest-confidence record is used.
 - `conflict` — genuinely incompatible. Surface it loudly, do not auto-resolve, force `needs_review`.
 
 `severity: high` when the field feeds a budget driver (site count, subject count, visit count, monitoring

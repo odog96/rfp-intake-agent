@@ -30,6 +30,18 @@
 #   budget_driver  true => directly moves the budget. Any disagreement is severity=high
 #                  and forces needs_review. These are the fields the tool exists for.
 #   derived        true => computed in DERIVE from other fields, never extracted directly
+#
+# GROUP KEYS
+#   id             fan-out unit; one LLM call per (document × group)
+#   label          group heading in the report
+#   plain          one line of plain English under that heading (never sent to a model)
+#   search_hints   headings/keywords PLAN scores each section against, and
+#                  requires_tables
+#   top_k          how many of the highest-scoring sections PLAN keeps for this
+#                  group. Default 3. Raise it only for a group whose evidence is
+#                  genuinely spread across more sections than that, and say in a
+#                  comment which sections and which run measured it — every extra
+#                  section is sent to the model on every run of every document.
 # =============================================================================
 
 version: 1
@@ -121,12 +133,31 @@ groups:
       Who is allowed to know which treatment a participant was given, and whether keeping that
       secret forces a second, separately staffed monitor onto the study.
     search_hints:
+      # "Placebo" as a heading and "placebo"/"matching" as keywords are what make protocol
+      # section "6.3 Placebo" reachable. Before 2026-10-02 that section scored 0.000 for this
+      # group, so PLAN never sent it and EXTRACT never saw "A matching placebo will not be
+      # provided for this study." — the one sentence blinding.placebo_matching depends on.
       headings: ["Blinding", "Randomisation and Blinding", "Unblinding", "Treatment Allocation",
-                 "IP Accountability", "Pharmacy Manual", "Drug Accountability", "Monitoring Plan"]
+                 "IP Accountability", "Pharmacy Manual", "Drug Accountability", "Monitoring Plan",
+                 "Placebo"]
       keywords: ["open-label", "single-blind", "double-blind", "triple-blind", "blinded",
                  "unblinded", "unblinded monitor", "unblinded pharmacist", "unblinded site staff",
                  "emergency unblinding", "IWRS", "IXRS", "randomisation code", "drug preparation",
-                 "treatment allocation", "IP accountability"]
+                 "treatment allocation", "IP accountability", "placebo", "matching"]
+    # 7, not the default 3, measured on samples/Example protocol 2.pdf on 2026-10-03.
+    # This group's evidence is four sections lying on three pages, and at 3 the
+    # heading "Placebo" added above won the top three and *evicted* two of them —
+    # blinding.unblinded_staff_stated fell from four records to one and GATE
+    # confirmed the wrong answer at 0.85, which is worse than the needs_review it
+    # replaced. Ranked by score, the sections this group needs are:
+    #   2. 6.3 Placebo                     p53     "A matching placebo will not be provided"
+    #   4. 5 SUBJECT SCREENING AND RANDOM. p52-53  "Unblinded Pharmacist or their designee"
+    #   7. 6.2 Shipping, Storage, Handling p53     "limited to the unblinded pharmacy staff"
+    # with the title page (1) and PROTOCOL SYNOPSIS (3) scoring above them and
+    # 6.5.1 Study Drug (5) between. 7 is the smallest value that reaches all three
+    # sentences; it costs this group a 45,601-character excerpt against 34,760 at 3.
+    # Lowering it back to 3 will fail tests/plan/test_plan_sections_samples.py.
+    top_k: 7
 
   - id: operational_metrics
     label: Operational Metrics and Volumes
@@ -551,13 +582,29 @@ fields:
     values: ["true", "false", not_specified]
     aliases: ["unblinded pharmacy staff", "unblinded pharmacist", "unblinded staff",
               "unblinded site staff", "unblinded personnel"]
+    # The three answers below are not interchangeable and the difference is the
+    # whole point of the field. Until 2026-10-03 the hint ended "not_specified
+    # where it does not say, which is the common case", and on the live run
+    # r-20261003-001602-stage5b the model answered not_specified while quoting the
+    # placebo sentence — a sentence that says nothing at all about staff. GATE
+    # confirmed it at 0.85. A wrong answer nobody flags is worse than no answer,
+    # so not_specified now has to be earned and silence has to be reported as
+    # silence (status not_found), per non-negotiable rule 3 in CLAUDE.md.
     hint: >
-      READ OFF THE PAGE ONLY — no inference. "true" where the document states that unblinded staff
-      are needed, however briefly, for example "access to the study drug should be strictly limited
-      to the unblinded pharmacy staff". "false" only where the document states that no unblinded
-      staff are required. "not_specified" where it does not say, which is the common case. This field is
-      deliberately narrower than monitoring.unblinded_required, which may answer "likely" from a
-      trigger: this one records what the document actually says, so that
+      READ OFF THE PAGE ONLY — no inference. Answer from a sentence about who may know the
+      treatment allocation or who handles unblinded drug; a sentence about anything else is not
+      evidence for this field.
+      "true" where the document states that unblinded staff are needed, however briefly, for
+      example "access to the study drug should be strictly limited to the unblinded pharmacy
+      staff" or "the Unblinded Pharmacist or their designee will prepare the dose".
+      "false" only where the document states that no unblinded staff are required.
+      "not_specified" ONLY where the text you were given does discuss blinding, randomisation or
+      study-drug handling and still never says who may be unblinded. Do not answer
+      "not_specified" to mean "this excerpt is not about that": if nothing you were given is
+      about unblinded staff, return status "not_found" and no value. Never quote a sentence that
+      does not mention staff, unblinding or drug handling in support of "not_specified".
+      This field is deliberately narrower than monitoring.unblinded_required, which may answer
+      "likely" from a trigger: this one records what the document actually says, so that
       blinding.placebo_assumption can tell a stated fact from an inference.
     plain: >
       Whether the document says in writing that staff who are allowed to know the treatment are

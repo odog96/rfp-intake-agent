@@ -26,6 +26,15 @@ class GroupDef(BaseModel):
     # printed under the group's heading in report.pdf. See FieldDef.plain.
     plain: str | None = None
     search_hints: SearchHints = Field(default_factory=SearchHints)
+    # How many of this group's highest-scoring sections PLAN keeps. Per group and
+    # not one constant for the whole registry, because how widely a group's
+    # evidence is scattered is a property of the group: most groups are answered
+    # by one or two sections, while blinding_monitoring needs four sections of the
+    # sample protocol that sit on three different pages. Three was a module
+    # constant in plan/__init__.py until 2026-10-03, and raising it there would
+    # have raised it for all nine groups and sent every group more text than it
+    # needs. See CLAUDE.md item 4c for the measurement behind the value.
+    top_k: int = Field(default=3, ge=1)
 
 
 class ObjectFieldSchema(BaseModel):
