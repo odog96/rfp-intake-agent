@@ -8,7 +8,7 @@ software engineer. Do not change any file. Report only.
 
 Inputs: a run id. Read `runs/<run_id>/report.pdf` (extract its text page by page with PyMuPDF from
 Python). Also read `docs/ANALYST_PROCEDURE_PROTOCOL.md`, and the "Done 2026-09-18" and "Done 2026-09-30"
-entries in `CLAUDE.md`, which record what Angus asked for.
+entries in `docs/JOURNAL.md`, which record what Angus asked for.
 
 Check:
 1. **Length.** Pages before Appendix A, and total pages. Compare with the most recent earlier report in

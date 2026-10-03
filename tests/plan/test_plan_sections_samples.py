@@ -36,7 +36,7 @@ def _flat(text: str) -> str:
     """Collapse whitespace and case, for matching a sentence in extracted PDF text.
 
     Two things defeat a literal `in` test against PDF text, and both produced a
-    false result while measuring the eviction in CLAUDE.md item 4c. A sentence
+    false result while measuring the eviction in CLAUDE.md to-do item 6. A sentence
     that spans a line break arrives with a newline and the next line's
     indentation inside it. And this protocol defines "Unblinded Pharmacy Staff"
     as a capitalised term, so a needle copied from a lower-case hint does not
@@ -100,7 +100,7 @@ def synthetic_rfp(samples_dir: Path) -> Document:
 @pytest.mark.slow
 class TestSyntheticRfp:
     def test_every_task_includes_page_6(self, synthetic_rfp: Document, registry) -> None:  # type: ignore[no-untyped-def]
-        """Known problem 1a in CLAUDE.md, now closed.
+        """Known problem 2 in CLAUDE.md, now closed.
 
         This PDF has no bookmarks, so PLAN used to give every field group pages 1
         to 5 and page 6 — the services requested — was never read by anything.
@@ -290,7 +290,7 @@ class TestProtocol:
     def test_the_unblinded_staff_sentences_reach_the_blinding_group(
         self, protocol: Document, registry, sentence: str, section: str
     ) -> None:  # type: ignore[no-untyped-def]
-        """The eviction CLAUDE.md item 4c records, now closed by `top_k: 7`.
+        """The eviction CLAUDE.md to-do item 6 records, now closed by `top_k: 7`.
 
         Adding the heading "Placebo" to this group on 2026-10-02 raised section
         "6.3 Placebo" into the top three and pushed these two sections out of it.
