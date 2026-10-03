@@ -36,10 +36,19 @@ Two things keep that from biting:
    in both places produces one message, not two:
 
 ```json
+"statusLine": {
+  "type": "command",
+  "command": "python3 /home/cdsw/rfp-intake-agent/.claude/statusline.py",
+  "padding": 0
+},
 "hooks": {
   "PreToolUse": [
     {"matcher": "Bash", "hooks": [{"type": "command",
       "command": "python3 /home/cdsw/rfp-intake-agent/.claude/hooks/gate_commit.py", "timeout": 20}]}
+  ],
+  "PostToolUse": [
+    {"matcher": "Bash", "hooks": [{"type": "command",
+      "command": "python3 /home/cdsw/rfp-intake-agent/.claude/hooks/record_tests.py", "timeout": 20}]}
   ],
   "SubagentStop": [
     {"matcher": "pipeline-rules-reviewer|plan-conformance-reviewer", "hooks": [{"type": "command",
@@ -47,6 +56,33 @@ Two things keep that from biting:
   ]
 }
 ```
+
+## The status line
+
+`../statusline.py` prints one line under the prompt:
+
+```
+main +3↑ · r-20261003-143058-topk7 27 of 36 fields · 870 tests · gate on · Opus
+```
+
+- Branch, and commits ahead of `origin/main` that are not pushed, plus `dirty` for uncommitted work.
+- The newest run, and its confirmed fields straight from `scripts/check_run_acceptance.py` — the
+  same number the acceptance checks print, cached against the run's `extraction.json` and
+  recomputed when that file changes. About 0.6s on the first draw after a new run, 0.1s after.
+- The newest run is dated from the timestamp in its id, or from the directory for a hand-named run
+  such as `r-listfix-175318`. Sorting the names does not work: a letter sorts above a digit, so
+  `r-listfix-175318` would otherwise beat every dated run.
+- `870 tests`, or `3 failing` in red. This comes from `record_tests.py`, which keeps the summary
+  line a real `pytest` command printed. The field is simply absent until something records one.
+  `.pytest_cache` cannot be used for this: after a green run it still listed 896 node ids against
+  871 tests and eight failures that now pass.
+- **`gate on` or `GATE OFF` in red** — whether the gate can actually run in this session. This is
+  the part that makes the fail-open case visible instead of silent. It reads `gate on` when the
+  hook is in `~/.claude/settings.json`, `gate on (this session only)` when it is only in this
+  repository and the session started here, and `GATE OFF` otherwise.
+- The model.
+
+Outside this repository it prints the directory name and the model, and nothing else.
 
 ## Skipping the gate
 

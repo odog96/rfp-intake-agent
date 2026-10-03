@@ -352,6 +352,14 @@ python -m rfp_intake.job <run_id> # run pipeline for a single RFP package
 python -m rfp_intake.eval         # golden-set scoring
 ```
 
+## The commit gate and /stage
+Start every session in this repository (`cc` does it). `.claude/` only loads when the session
+started here, so a session started in `/home/cdsw` cannot see the four reviewers or the gate.
+A commit touching `src/rfp_intake/` or `config/` is blocked until `pipeline-rules-reviewer` and
+`plan-conformance-reviewer` have both run in that session, after the last edit to those files;
+docs, tests and notes are not gated. `GATE_OFF=1` at the front of the command skips it and is
+logged — Oliver's call, not Claude's. `/stage N` builds one stage; details in `.claude/hooks/README.md`.
+
 ## Running the pipeline
 ```bash
 mkdir -p runs/<run_id>/inputs
