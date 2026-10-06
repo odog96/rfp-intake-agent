@@ -29,14 +29,14 @@ environment_variables:
       needs model access granted for that model in the Bedrock console, which
       is a separate approval and can take a day. Leave empty for a production
       deployment on Cloudera AI Inference.
-    required: false
+    required: True
 
   RFP_INTAKE_BEDROCK_REGION:
     default: "us-east-1"
     description: >-
       The AWS region the Bedrock calls go to. Ignored unless
       config/models.yaml routes a step to Bedrock.
-    required: false
+    required: True
 
   RFP_INTAKE_CAII_API_KEY:
     default: ""
