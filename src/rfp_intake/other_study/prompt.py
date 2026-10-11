@@ -15,6 +15,50 @@ and the model read "mentions another study" as "is about another study". The
 prompt now says to judge a sentence by its subject, and carries those sentences
 as worked examples of what to keep. The sentences are listed in this plan's
 stage 4 test so a later run cannot lose the check.
+
+**The alongside test, added 2026-10-07 (change 6 of that day's review).** Angus
+Gray said (call transcript 00:04–00:10) that text about a study the sponsor is
+running alongside this one must stay: a sister study, an extension study, or
+another study in the same programme that IQVIA is also budgeting. "Study A has
+80% site overlap with Study B" is used to apply a cost saving across the two
+studies, and removing it loses the saving. The prompt below now removes a
+passage only when it is about an EARLIER or COMPLETED study, and keeps a passage
+about a study run alongside this one, a follow-on or extension study, or a study
+sharing sites, staff or patients with this one. Nothing new is extracted from
+those passages — a variable for programme details belongs to the two-studies
+work, which is deferred.
+
+**Tightened after live run `r-20261008-review2-run1`.** The first version of the
+alongside test lost section 1.3.2 "Clinical Experience": the protocol calls the
+earlier Phase 1/2 study NEOD001-001 "an ongoing, open-label study", the model
+read "ongoing" as "alongside", kept the sentence, and Phase 1/2 reached the
+Study phase row as a second value. The prompt now says that being ongoing does
+not make a study alongside this one, and that a passage counts as alongside only
+when it states a link to how THIS study will be run — a shared site, member of
+staff, pharmacy, laboratory, vendor, committee or patient, a roll-over, or a
+programme costed together. Reporting what another study found is not such a link.
+
+**Tightened again after live run `r-20261008-review2-run2`.** That run still kept
+the section's first sentence — "The safety and tolerability of NEOD001 are being
+investigated in an ongoing, open-label, dose escalation Phase 1/2 study (Study
+NEOD001-001)…" — with the reason "an ongoing companion study that may be running
+alongside this one", so `study.phase` carried Phase 1/2 again. The rules alone
+were not enough, so the prompt now carries that sentence and two others from the
+same section as worked examples of text to REMOVE, says that another study's own
+design is not a link to this one, and says that a section whose every sentence is
+about other studies is `other_study` rather than `mixed`.
+
+**Two of those worked examples were then corrected**, after
+`tests/other_study/test_other_study_real_document.py` compared them against the
+real section 1.3.2 instead of against a hand-written copy of it. One ended
+"…treated in the Escalation Phase of the study." where the document goes on "…and
+42 subjects were enrolled and treated in the Expansion Phase.", so the example
+was a shortened sentence in a prompt that forbids shortening. The other wrote
+"Investigator's Brochure" with a straight apostrophe where the document has a
+typographic one, and `sections.locate_text` folds whitespace and case but not
+punctuation — a model copying that example would have had its sentence rejected
+as unverified and the passage KEPT. Both now match the document
+character-for-character, and the test fails if either drifts again.
 """
 
 from __future__ import annotations
@@ -36,17 +80,60 @@ DIFFERENT study.
 THIS STUDY is identified as:
 {identity}
 
-A passage describes a DIFFERENT study when the passage is itself about that \
-other study — when it:
-- describes a study that is ongoing or already completed,
-- gives a study number other than this study's,
-- gives a phase or a design different from this study's,
+Remove a passage ONLY when it is about an EARLIER or COMPLETED study — a study \
+that has already been run. A passage is about an earlier or completed study \
+when it:
+- describes a study that finished before this one, or that is reported in the \
+past tense,
 - reports results, enrolment counts or a data cutoff date that have already \
-happened.
+happened,
+- gives a study number other than this study's AND reports what that study \
+found,
+- gives a phase or a design different from this study's AND reports what that \
+study found,
+- is a "clinical experience", "prior experience", "previous studies" or \
+"background" passage reporting what has been seen with the drug so far.
+
+"ONGOING" DOES NOT MAKE A STUDY ALONGSIDE THIS ONE. An earlier study of the \
+same drug is often still recruiting when this protocol is written, and a \
+passage reporting what that study has found so far is still earlier-study \
+text. Remove it.
 
 Prior drug experience, nonclinical work and published literature are about \
-different studies when the passage is reporting what those studies did or \
-found, even when they are about the same drug.
+earlier studies when the passage is reporting what those studies did or \
+found, even when they are about the same drug and even when that work is still \
+running.
+
+KEEP every passage about a study that is being run ALONGSIDE this one. The team \
+is costing this study next to the sponsor's other current work, and a shared \
+site, a shared member of staff or a shared patient is a saving the budget has to \
+show. So keep a passage when it:
+- describes a companion, sister, parallel or partner study the sponsor is \
+running at the same time as this one,
+- describes a follow-on, extension, rollover, open-label extension or \
+continuation study that patients from this study move into,
+- describes another study in the same programme, platform or master protocol as \
+this one,
+- says that this study shares, or will share, sites, investigators, staff, \
+pharmacies, patients, laboratories, vendors or committees with another study, \
+including a figure for how much is shared.
+
+A passage is ALONGSIDE this one ONLY when it states a link to how THIS study \
+will be run: a shared site, member of staff, pharmacy, laboratory, vendor, \
+committee or patient, patients moving from this study into another study, or a \
+programme whose studies are being costed together. A passage that only reports \
+what another study did or found states no such link, however recently that \
+study ran and whatever it is called.
+
+A passage like "This study will share approximately 80% of its sites with the \
+companion study NEOD001-CL003" is KEPT. It names another study, but it states \
+something about how this study will be run, and the overlap is exactly what the \
+budget needs. The same goes for a sentence naming an extension study this \
+study's patients will roll into.
+
+When a passage states a link of that kind and you cannot tell whether the other \
+study is alongside this one or unrelated, KEEP it. Where no such link is stated \
+and the passage reports what the other study did or found, remove it.
 
 JUDGE A SENTENCE BY WHAT IT IS ABOUT, NOT BY WHAT IT MENTIONS. A sentence \
 belongs to THIS study whenever this study is its subject, however many other \
@@ -72,21 +159,52 @@ which is the lowest validated determination for this commercially available \
 test." — this study's own threshold.
 - "Source: Palladini 2014." and "Modified from Table 2 in Comenzo 2012." — a \
 citation for this study's own table.
+- "This study will share approximately 80% of its sites with the companion \
+study NEOD001-CL003." — a study run alongside this one, and a saving the budget \
+has to show.
+
+These real sentences must all be REMOVED. Each names another study and none of \
+them says anything about how this study will be run:
+- "The safety and tolerability of NEOD001 are being investigated in an ongoing, \
+open-label, dose escalation Phase 1/2 study (Study NEOD001-001) of the IV \
+administration of single-agent NEOD001 in subjects with AL amyloidosis in the \
+US." — this gives another study's own design and nothing else. "Ongoing" and \
+"the same drug" do not make it alongside this one, and the Phase 1/2 in it is \
+not this study's phase. Remove it.
+- "As of an interim analysis with a data cutoff date of 30 September 2015, 27 \
+subjects were enrolled and treated in the Escalation Phase of the study and 42 \
+subjects were enrolled and treated in the Expansion Phase." — another study's \
+enrolment.
+- "Further details can be found in the latest edition of the NEOD001 \
+Investigator’s Brochure." — a pointer to the earlier work, carrying nothing \
+this study needs.
+
+ANOTHER STUDY'S OWN DESIGN IS NOT A LINK TO THIS ONE. A phase, a blinding, a \
+dose-escalation scheme, a population, a country or a sample size given for \
+another study is that study's design. It belongs to that study, and a reader \
+who keeps it will read it as this study's own.
+
+WHERE EVERY SENTENCE IN A SECTION IS ABOUT OTHER STUDIES, ANSWER other_study, \
+NOT mixed. A "Clinical Experience", "Prior Experience" or "Background" section \
+that opens by naming the earlier study and then reports its results is \
+other_study as a whole. Answer `mixed` only when the section has sentences \
+about THIS study in it that must be kept.
 
 Answer for each section with one of:
-- this_study: every part of the section is about this study.
-- other_study: the section as a whole is about a different study.
-- mixed: the section is mostly about this study but contains specific sentences \
-about a different study.
+- this_study: every part of the section is to be kept — it is about this study, \
+or about a study being run alongside this one.
+- other_study: the section as a whole is about an earlier or completed study.
+- mixed: the section is mostly to be kept but contains specific sentences about \
+an earlier or completed study.
 
 For `mixed`, and ONLY for `mixed`, also return those sentences in \
 `other_study_sentences`, copied character-for-character from the section text. \
 Each is checked against the text and a sentence that does not match is kept, not \
 removed. Copy whole sentences. Do not paraphrase and do not shorten.
 
-Return a sentence only when that sentence, read on its own, is about the other \
-study. If the sentence would still be true and still be needed for this study \
-with the other study's name taken out of it, do not return it.
+Return a sentence only when that sentence, read on its own, is about an earlier \
+or completed study. If the sentence would still be true and still be needed for \
+this study with the other study's name taken out of it, do not return it.
 
 Give a `reason` of one sentence for every section, including `this_study`.
 

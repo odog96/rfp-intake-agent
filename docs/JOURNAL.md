@@ -4,6 +4,289 @@ Every `### Done` entry that was in `CLAUDE.md`, moved here unedited on 2026-10-0
 entries were 74% of `CLAUDE.md` and were loaded into every session. Newest first. Nothing in this
 file is current state: `CLAUDE.md` holds current state, and where the two disagree, `CLAUDE.md` wins.
 
+### Done 2026-10-08: the seven changes Oliver and Angus agreed after reviewing report `r-20261007-140411`
+
+Oliver Zarate and Angus Gray (IQVIA Delivery Strategy & Budgeting) reviewed the report from run
+`r-20261007-140411` on 2026-10-07 and agreed seven changes. Nothing else was in scope. Two things
+Angus asked for were deliberately **not** started and are still deferred: grouping related
+information into fewer rows, which Oliver is putting to Angus as a proposal first, and supporting two
+studies in one RFP, which waits until the single-study report is accepted.
+
+Three full live runs were made, in this order, each on the same two documents as the 2026-10-07
+report — `samples/Example protocol 2.pdf` (the 137-page protocol amendment) and
+`samples/Synthetic_RFP_NEOD001.pdf` (the 6-page synthetic RFP):
+
+| run | what it showed |
+| --- | --- |
+| `r-20261008-review2-run1` | three problems: the five new monitoring-visit fields all failed `quote_not_found_in_excerpt`; MARK_OTHER_STUDY read "ongoing" as "alongside" and let Phase 1/2 back into `study.phase`; and 56 false failures from the check script's own regex |
+| `r-20261008-review2-run2` | the visit-type quotes were right but the values dropped the hours; MARK_OTHER_STUDY still kept section 1.3.2's first sentence |
+| `r-20261008-review2-run3` | checks 1 to 9 all pass. 40 of the 43 registry fields found, 115 resolved rows, 12 contradiction clusters, 16 EXTRACT errors, 9m09s |
+
+**What each change was, and where it lives.**
+
+1. *A `reconcilable` verdict is not a disagreement.* `gate.DISMISSED_VERDICTS` is now
+   `("not_a_conflict", "reconcilable")` and `render/report_model.py` imports it rather than keeping
+   its own copy; `NEEDS_DECISION` there is `("conflict",)`. A reconcilable variable shows the value
+   ADJUDICATE chose and takes its status from the existing GATE rules, so a budget driver still goes
+   to Flagged for review. `Total number of patients / subjects` (260 against 236) moved from
+   Disagreements to Flagged for review rather than being dropped. This overturns the old
+   `_disagreements` docstring in `render/pdf_renderer.py`, which is rewritten.
+2. *"Not specified" is not a competing answer.* `reconcile/_competing_records` splits a scope's
+   records into those that answered and those that said nothing; a `not_specified` record no longer
+   competes where any real answer exists. Where every record says nothing, the variable still
+   resolves to Not specified, so `not_found`, `not_specified` and `0` stay three different answers.
+3. *A Phase 3 study is never first-in-human.* Angus said on the call (00:29-00:32) that a Phase 2, 3
+   or 4 study is never first-in-human. The rule is in `config/fields.yaml` as
+   `design.first_in_human.resolution_rules`, read generically by `reconcile/rules.py`; no field name
+   appears in Python. `domain/registry.py` validates the trigger field, the triggering values and the
+   rule's own value against each field's allowed values, and refuses the mechanism on a scoped field.
+   Phase 1 and Phase 1/2 keep the ordinary extraction.
+4. *Interim analyses: one count row, with the conflict flagged on it.* `interim.planned` is gone from
+   `config/fields.yaml`, from the tests and from `eval/golden/Example_protocol_2.json`.
+   `interim.count`'s hint now says an explicit statement that none are planned is a real 0.
+   `interim.timing` gained `follows_conflict_of: interim.count`, which `gate/_contradiction_for`
+   reads generically: a field with no disagreement of its own borrows the named field's
+   `Contradiction` by reference, so one numbered disagreement serves both rows.
+5. *Monitoring visits: one row per visit type, in the sponsor's own words.* `ops.monitoring_visits`
+   and `monitoring.onsite_remote_mix` are replaced by five `text` fields in Operational Metrics and
+   Volumes — site selection, site initiation, interim monitoring, close-out and pharmacy monitoring —
+   each a budget driver with `source_priority: rfp`. Every hint says to do no arithmetic, and no code
+   path calculates on them. Each row gives whether the sponsor specified that visit type, how many
+   exactly as the document states it, and the sponsor's own wording including any on-site against
+   remote split.
+6. *Keep text about related studies the sponsor is running alongside this one.*
+   `other_study/prompt.py` now removes a passage only when it is about an earlier or completed study,
+   and keeps a companion, sister, parallel, follow-on, extension or rollover study, or one sharing
+   sites, staff, pharmacies, laboratories, vendors, committees or patients with this one. Nothing new
+   is extracted from those passages; a variable for programme details belongs to the deferred
+   two-studies work.
+7. *Show the page number printed on the page as well as the PDF page.* The new
+   `ingest/page_labels.py` reads the PDF's own page labels where a document declares them and
+   otherwise finds the number printed on the page, trusting it only when the numbers rise across the
+   document. `Provenance.printed_page`, `RemovedPassage.printed_page_start/_end` and
+   `Document.page_labels` carry it, and `format_page_ref`/`format_page_range` in
+   `render/report_model.py` write "p.11 (printed p.9)" where the two differ and "p.11" where they
+   agree. Neither sample PDF declares page labels: the amendment prints its number from PDF page 5
+   onward, two lower than the PDF position throughout.
+
+**Two tightenings of `other_study/prompt.py` that the runs forced.** After run 1 the prompt gained
+the rule that being ongoing does not make a study alongside this one, and that a passage counts as
+alongside only when it states a link to how *this* study will be run. Run 2 still kept the first
+sentence of section 1.3.2 "Clinical Experience", with the reason "an ongoing companion study that may
+be running alongside this one", so `study.phase` carried Phase 1/2 again. Two rounds of abstract
+rules having failed, the prompt now carries that sentence and two others from the same section as
+worked examples of text to **remove**, says that another study's own design is not a link to this
+one, and says that a section whose every sentence is about other studies is `other_study` rather than
+`mixed`. Run 3 removed the section and `study.phase` is one row, Phase 3, Confirmed.
+
+**Two defects in the check script, both found by refusing to accept a FAIL without checking the
+data.** The loop's rule was that a check passing on the starting run is written wrongly; the converse
+turned out to matter as much. First, `_ENTRY` read Appendix A's confidence percentage as a page
+number, producing 56 false failures of check 7 on run 1; it gained a `(?![\d%])` lookahead. Second,
+`parse_report` applied a section heading only to a table header band on the same page, and on run 3
+the "Disagreements between the documents" heading sat at the foot of page 4 with its table beginning
+on page 5. Every row of that table was counted as part of All variables, and checks 4 and 8 reported
+three conflicts missing from a report that in fact printed all three. `parse_report` now carries a
+heading over to the table that starts on the next page.
+
+**Four changes made after run 3, all render-only and all shown with `scripts/rerender_report.py`
+rather than a fourth run, which the review's three-run limit forbids.** Taken in the order they were
+found: the borrowed-disagreement row below; Appendix B's lost reasoning; the raw document ids in that
+restored reasoning; and §4.9 of `docs/ARCHITECTURE.md`, which still specified the behaviour change 1
+removed.
+
+**Appendix B had been printing bare values.** Change 1 moved nine variables out of the Disagreements
+table and into Appendix B's dismissed list, and they arrived there as two numbers with nothing to say
+which to budget from — `Total number of patients / subjects` read "260 / 236". The adjudicating
+reviewer had written the sentence explaining that 236 is the power calculation's floor and 260 the
+planned enrolment cap, and the report was throwing it away. `Dismissed.explanation` now carries it and
+`pdf_renderer` prints it under the bullet.
+
+**That restored sentence showed the analyst raw internal document ids.** `_decisions` has always put
+the adjudicator's words through `_Docs.name_ids`, which turns `doc-2ea4cd79` into "Amendment";
+`_dismissed` did not, and ADJUDICATE's prompt prints `doc_id=` for every candidate and asks it to name
+the document, so seven of those ids reached pages 16 and 17 of the re-rendered report. Both the
+pipeline-rules reviewer and the plan-conformance reviewer found it independently. One call fixed it.
+`tests/render/test_report_model.py::test_a_dismissed_explanation_names_the_documents_not_their_ids`
+and the Appendix B assertions in `tests/render/test_pdf_renderer.py` both fail without it — the
+renderer fixture had been building its dismissed pair with no explanation at all, which is why nothing
+caught this.
+
+**A real-document test for change 6, and two defects it found in change 6's own prompt.**
+`tests/other_study/test_other_study_real_document.py` runs the real `samples/Example protocol 2.pdf`
+through INGEST and FIND_SECTIONS — both code, so it stays offline — locates section 1.3.2 "Clinical
+Experience", and checks that the three sentences `other_study/prompt.py` holds up as worked examples
+of text to REMOVE are in that section character-for-character. Two were not. One ended "…treated in
+the Escalation Phase of the study." where the document goes on "…and 42 subjects were enrolled and
+treated in the Expansion Phase.", so the example was a shortened sentence in a prompt that forbids
+shortening. The other wrote "Investigator's Brochure" with a straight apostrophe where the page has a
+typographic one, and `sections.locate_text` folds whitespace and case but not punctuation — a model
+copying that example would have had its sentence rejected as unverified and the passage KEPT, which is
+the exact failure runs 1 and 2 showed. Both examples now match the document, and the test fails if
+either drifts again. The model's own judgement is still only measurable on a live run, and the test
+says so rather than pretending otherwise. The plan-conformance reviewer had reported the missing
+real-document test as a problem; this closes it.
+
+**`docs/ARCHITECTURE.md` is the build contract, so it was brought back in line in five places**, all
+found by the plan-conformance reviewer. §4.9's GATE table said a `reconcilable` verdict forces
+`needs_review`, which is the behaviour change 1 removed; the row is corrected rather than annotated,
+with a paragraph saying why. §4.9 gained a row and a paragraph for `follows_conflict_of`, which the
+code's own copy of that table already had. §4.6 now states that a `not_specified` record does not
+compete and that RECONCILE ends by applying the registry's resolution rules. §3's `Provenance` block
+said `page: int  # 1-indexed, as printed if detectable`, which after change 7 says the opposite of
+what the code does: `page` is the position in the file and `printed_page` is the number on the paper.
+And §3 now records the three fields change 7 added to the graph state, in the same form as every
+earlier state addition.
+
+**One change made after run 3, from the report-usability reviewer.** The "Timing of each interim
+analysis" row said only "Sources disagree — see Disagreement 1", while Disagreement 1 describes two
+interim-analysis counts and says nothing about timing. A row that borrows another variable's
+disagreement number now names that variable: "The documents disagree on Number of interim analyses —
+see Disagreement 1". `Row.follows_label` in `render/report_model.py` holds the label, looked up
+through `follows_conflict_of` in the registry, and is set only where the row's `Contradiction` carries
+a different field's id. This is render-only, so it was shown with `scripts/rerender_report.py` rather
+than a fourth run; the re-rendered report is `runs/r-20261008-review2-run3-rerender/report.pdf` and
+all eight measurable checks pass on it too. Run 3's own `report.pdf` is left exactly as the pipeline
+produced it.
+
+**Both gate reviewers were then run a second time, because the four changes above were made after
+their first pass.** Check 10 of the review asks for both to have run after the last edit, and a fix
+made in answer to a review is still an edit. The pipeline-rules reviewer found no violation of any of
+the ten non-negotiable rules on either pass. The plan-conformance reviewer confirmed all seven changes
+met on both passes, and confirmed the four problems from its first pass fixed. Between them the second
+pass raised one code defect and six smaller items, and six of the seven are recorded below. The
+seventh is the `report.xlsx` page column, which is left alone on purpose and is in the list given to
+Oliver Zarate.
+
+**`ingest/page_labels.py` kept a page whose printed number equals its PDF position.** The PDF-label
+path dropped those; the page-text path did not. Measured on the samples: `samples/Example Protocol.pdf`
+produced 97 entries, all 97 of them a page printing its own position, and
+`samples/Synthetic_RFP_NEOD001.pdf` — half of the current test pair — produced 5, of which pages 1 and
+2 were such pages. `report.pdf` was right anyway, because `format_page_ref` compares the two numbers
+before printing a second one, but `extraction.json` dumps the whole `Provenance`, so run 3 carries
+`"printed_page": "1"` on 29 of its 374 provenance entries, against a schema comment that promises the
+field is None whenever the two numbers agree; and INGEST's log line counted those pages as printed
+numbers found. The filter now runs at the end of `read_page_labels`, **after** the rise check and not
+inside the comprehension, because a document whose pages 1 and 2 both print "1" has been misread and
+dropping page 1 first would leave "page 2 prints 1, page 3 prints 2", which rises, so the misread map
+would have been kept. `tests/ingest/test_page_labels.py::test_a_repeated_number_keeps_nothing` is the
+test that failed and said so, and two new tests cover a document numbered from its first page. After
+the fix: `Example Protocol.pdf` 0 entries, the synthetic RFP 3, the amendment 133 and unchanged. No
+page reference in `report.pdf` moves, so this needed no run and no re-render.
+
+**`docs/ARCHITECTURE.md` was stale for change 6, which the first pass had missed.** §4.2c is where a
+reader goes to learn what MARK_OTHER_STUDY removes and it recorded nothing about the narrowing Angus
+Gray asked for, while two lines elsewhere were now wrong: §2's summary called the node one that removes
+passages describing "a different study", which after change 6 is too broad, and §4.2b's paragraph on
+section 1.3.2 said "the section is not meant to go whole: MARK_OTHER_STUDY cuts the five sentences
+about study NEOD001-001", which the rewritten prompt and run 3's own `other_study` verdict both
+contradict. §4.2c gained a paragraph stating the criterion, why it is a budget question, that "ongoing"
+alone does not make a study a companion one, and why the worked examples have to match the document
+punctuation included. The other two lines are corrected, the second with its history, because it was
+written from the two stage-4 runs of 2026-10-02 where the model answered `mixed`.
+
+**Two more documentation corrections, both about the same sentence.** `gate/__init__.py`'s module
+docstring said the budget_driver row is "deliberately stricter than ARCHITECTURE.md's own table, which
+only names 'budget_driver with any disagreement' alongside conflict/reconcilable" — a cross-reference
+to wording this very change set deleted from §4.9. §4.9's matching paragraph said "stricter than the
+table's last row", and the clause is now in the table's third row, which change 4 moved by inserting
+the `follows_conflict_of` row after it. Both now say the same thing: the table states the rule, "any"
+means any adjudicated verdict including `not_a_conflict` and `reconcilable`, and there is nothing left
+for the code to be stricter than. §3's `Document` stub also gained `page_labels` and `removed`, the two
+fields a reader skimming that stub would otherwise not know exist.
+
+**Three tests added for rules that only a comment was holding up.** Nothing asserted that an integer
+`0` is not read as a record saying nothing: non-negotiable rule 3 rested on the `isinstance(value,
+str)` guard in `_says_nothing` and a comment. Two tests now use the real pair run 3 found — 0 interim
+analyses against 1 — and a `0` against a `not_specified`. The third pins the premise that keeps
+Appendix A's note line narrow. The plan-conformance reviewer read `notes=rf.notes if (rf.derived_from
+or rf.contradiction is None)` as broad enough to start printing the extraction model's own notes, which
+`config/fields.yaml` asks for on some fields including `interim.count`. It is not: DERIVE, ADJUDICATE
+and `reconcile/rules.py` are the only three writers of `ResolvedField.notes`, ADJUDICATE's rows all
+carry a contradiction, and none of RECONCILE's four `ResolvedField` calls copies a record's note
+across. The condition is therefore left as it is and
+`tests/reconcile/test_reconcile.py::TestARecordsOwnNoteStaysOnTheRecord` makes that a guarantee rather
+than an accident. One test class was also renamed: `TestTheTwoSampleDocuments` in
+`tests/ingest/test_page_labels.py` opened neither sample document, and a name claiming coverage it does
+not give is the thing the real-document rule exists to prevent.
+
+**Both gate reviewers were then run a third time, for the same reason as the second.** Answering the
+second pass was itself an edit, and the review asks for both reviewers to have run after the last one.
+Neither found a rule broken or a change unmet. Six things came out of it, none of them a defect in the
+pipeline. A figure was wrong in two comments: the 29 redundant `printed_page` entries in run 3 do not all
+read `"1"` — 18 read `"2"` and 11 read `"1"`, because pages 1 and 2 of the synthetic RFP both print their
+own position — and the sentence read as if 29 of the file's 374 provenance entries were affected when the
+file holds 431, of which 374 carry a printed number at all. `domain/schemas.py` dated the empty
+`page_labels` map "before 2026-10-07" when the change landed on the 8th, so the starting run is included
+too. `docs/ARCHITECTURE.md` §3 said three printed-number fields "are `str`, not `int`" when there are
+four of them across three classes, and the only `int` is a `page_labels` key.
+
+Two gaps in coverage were real and are closed. The page-label fix had no real-document coverage at all:
+`tests/graph/test_ingest_run_dir.py::test_ingest_records_the_number_printed_on_each_page` asserted pages
+3, 5 and 4 and said nothing about pages 1 and 2, which are exactly the two the fix removes, so it passed
+identically with and without the fix. One line asserting both are absent closes it, and it has teeth —
+`_printed_on_page` reads "1" and "2" off those pages. And `TestARecordsOwnNoteStaysOnTheRecord` claimed
+to pin four code paths while testing one. RECONCILE builds a `ResolvedField` in five places, not four:
+the four in `reconcile/__init__.py` pass no `notes`, and `reconcile/rules.py:102` passes the rule's own
+`because` sentence. Two tests were added for the all-silent path and the collection path — the one where
+a note would be worst, because the members come from several records — leaving only `_not_found`, which
+has no record to copy from. The claim in `render/report_model.py`'s comment was corrected to match.
+**The fourth pass, on 2026-10-11, found the all-silent test was not one.** It built its records with the
+class's `_record` helper, which marks every record found, so they went down the single-answer path at
+line 168 and the test asserted the `"not_specified"` string that path leaves as the value. Line 120 had
+still never run under a test. The test now builds `status="not_specified"` records with no value and
+asserts the `value=None` only line 120 produces; it fails if those records are marked found again.
+
+**Two latent risks were left in the code on purpose, each recorded where it lives.** `_from_pdf_page_labels`
+drops a declared label equal to its own page position while reading, before `_rises` sees it, so the
+misread that the page-text path's ordering guards against would still slip through a PDF *declaring*
+labels 1, 1, 2. Neither sample document declares any labels, and the comparison cannot simply be deleted
+because PyMuPDF returns the page position as a string for a file with no label tree, which is how "no
+labels at all" is detected. Separating those two meanings is a change to how PDFs are read, which nothing
+in this review asked for. And `render/report_model.py:_dismissed` selects Appendix B's rows as the
+complement of `NEEDS_DECISION` while its docstring named `gate.DISMISSED_VERDICTS`; the two are
+equivalent, because `Contradiction.verdict` allows only three verdicts and None, but a fourth added to
+neither tuple would be printed as dismissed while GATE flagged its field for review. Which verdicts reach
+that appendix is change 1's own subject, so the docstring was corrected to describe the code and the risk
+reported rather than the selector quietly rewritten.
+
+**Measured at the end.** `scripts/check_review_2026_10_07.py` reports 8 pass, 0 fail on both run 3
+and the re-rendered report, and still correctly fails checks 1, 2, 3, 4, 5 and 7 on the starting run
+`r-20261007-140411`. `ruff check .` passes. The test suite is 962 passed, 1 skipped — 942 when run 3
+was made, plus the twelve in the new real-document test, one for the renamed Appendix B reason, two for
+a page that prints its own position, three for the rules the second reviewer pass found resting on a
+comment, and two for the two `ResolvedField` paths the third pass found uncovered. On 2026-10-11 it is
+963: run `r-20261009-225414` added a folder under `runs/`, and `test_nothing_lost_on_a_real_run` runs
+once per folder.
+`mypy src/rfp_intake/domain src/rfp_intake/graph`, which is what `.github/workflows/ci.yml` line 41
+runs, finds no issues; `mypy .` reports 184 errors, the same total as before this work, so none of them
+is new. **An earlier draft of this paragraph said none of the 184 is in a file this work changed, and
+that was wrong**: `tests/render/test_pdf_renderer.py`, `tests/render/test_json_renderer.py` and
+`tests/render/test_report_model.py` all carry some. Every one is the pattern those files already used —
+an untyped pytest fixture parameter, a `type: ignore` mypy now calls unused, a call to an untyped
+helper such as `_conflict_state`, and one name redefined inside `assert_nothing_lost` — and none is in
+a line this work added. The repository is `strict = true` in `pyproject.toml` while
+`.github/workflows/ci.yml` line 41 runs mypy over `src/rfp_intake/domain` and `src/rfp_intake/graph`
+only, which is why a suite this size can sit at 184 and CI still pass.
+
+**Coverage did not fall.** The starting run found 39 of its 41 fields; run 3 finds 40 of 43. Three
+fields found in the starting run were removed by changes 4 and 5 (Interim analyses planned, Number of
+monitoring visits by type, On-site vs remote monitoring mix) and four fields added by change 5 were
+found in run 3 (site initiation, interim monitoring, close-out and pharmacy monitoring visits). So
+39 - 3 = 36 kept variables found before, and 40 - 4 = 36 kept variables found now.
+
+**Two deliberate losses of evidence, both worth revisiting.** Where a real conflict remains, the
+`Contradiction` built in `reconcile/__init__.py` carries only the competing records, so the page where
+a document said "not specified" is no longer cited in the Disagreements positions — the record itself
+is untouched in `extraction.json`. And a resolution rule discards the target field's extracted records
+and contradiction from `resolved` and `contradictions`, which is how First-in-human reads No at 100%
+with the study-phase passage as its evidence. Neither breaks a non-negotiable rule; both were flagged
+by the pipeline-rules reviewer as inconsistencies rather than violations.
+
+**`Site selection visits` reads Not found on run 3.** The synthetic RFP calls them "Site
+Qualification Visits" and its figure spans three lines of a two-column table. The alias is in
+`config/fields.yaml`; the extraction still misses it.
+
 ### Done 2026-10-03: ADJUDICATE picks a record, not a document — approved, built, and one live run
 
 **Oliver approved changing ADJUDICATE on 2026-10-03, and that approval overrides

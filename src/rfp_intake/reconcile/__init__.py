@@ -36,12 +36,28 @@ from rfp_intake.domain.schemas import (
     RunState,
 )
 from rfp_intake.normalize.scope import normalize_scope
+from rfp_intake.reconcile.rules import apply_resolution_rules
 
 logger = structlog.get_logger()
 
 # Bonus per additional independent corroborating source, capped at 1.0.
 # Not calibrated against the golden set yet — see ARCHITECTURE.md §9.
 CORROBORATION_BOOST_PER_SOURCE = 0.05
+
+# Values that answer "the document does not say", written as a value rather than
+# as a record status. Several yes/no variables in config/fields.yaml offer
+# `not_specified` among their allowed values (design.first_in_human is one), so a
+# passage that does not mention the subject comes back as a *found* record whose
+# value is this token — status "not_specified" is only used when EXTRACT found no
+# passage to read at all. The normalizer writes the underscored form for enum
+# fields (normalize/enum_maps.py YES_NO_MAP); a text field keeps whatever the
+# document said, hence the spaced form too.
+#
+# Non-negotiable rule 3 still holds: this is not a claim that `not_specified` is
+# the same as `not_found` or as `0`. It stays a distinct value, it is still
+# recorded, and it is still cited in the report. It simply does not compete with
+# a real answer — see _competing_records.
+_SAYS_NOTHING = frozenset({"not_specified", "not specified"})
 
 
 def reconcile_node(state: RunState) -> dict[str, Any]:
@@ -71,6 +87,10 @@ def reconcile_node(state: RunState) -> dict[str, Any]:
                 task_id=field_def.id,
                 error=f"Reconciliation failed for {field_def.id}: {e}",
             ))
+
+    # Last, because a rule reads the answer this node just worked out for the
+    # field it depends on. See reconcile/rules.py.
+    resolved, contradictions = apply_resolution_rules(registry, resolved, contradictions)
 
     logger.info(
         "reconcile_complete",
@@ -135,7 +155,8 @@ def _reconcile_field(
             resolved.append(_merge_collection(field_def, scope_records, scope))
             continue
 
-        value_groups = _group_by_canonical_value(scope_records)
+        competing, silent = _competing_records(scope_records)
+        value_groups = _group_by_canonical_value(competing)
 
         if len(value_groups) == 1:
             group = value_groups[0]
@@ -149,7 +170,10 @@ def _reconcile_field(
                 value=best.value,
                 status="needs_review",  # GATE decides confirmed vs needs_review
                 confidence=confidence,
-                sources=[r.provenance for r in group],
+                # The silent records are cited too, so the pages where a document
+                # does not answer stay in the report's evidence appendix. They
+                # are not corroboration, so they do not raise the confidence.
+                sources=[r.provenance for r in group] + [r.provenance for r in silent],
                 quote=best.quote,
                 scope=scope,
             ))
@@ -159,7 +183,7 @@ def _reconcile_field(
             # ADJUDICATE exists and judges it.
             contradictions.append(Contradiction(
                 field_id=field_def.id,
-                records=scope_records,
+                records=competing,
             ))
 
     return resolved, contradictions
@@ -212,6 +236,35 @@ def _merge_collection(
         quote=best.quote,
         scope=scope,
     )
+
+
+def _competing_records(
+    records: list[FieldRecord],
+) -> tuple[list[FieldRecord], list[FieldRecord]]:
+    """Split one scope's records into rival answers and records that say nothing.
+
+    "Not specified" is not a competing answer. One document saying "the protocol
+    does not state whether this is a first-in-human study" does not disagree with
+    another document saying it is not — the first says nothing on the subject.
+    Comparing it like any other value is what put First-in-human (Disagreement 9)
+    and Unblinded staff stated as required (Disagreement 5) in the Disagreements
+    table of run r-20261007-140411, and sent both to ADJUDICATE as if a person
+    had to settle them. Change 2 of the 2026-10-07 review.
+
+    When every record for the scope says nothing, nothing is filtered: the
+    records are returned as the competing set and resolve to Not specified
+    exactly as before, so the distinction rule 3 draws between `not_specified`,
+    `not_found` and `0` is untouched.
+    """
+    answered = [r for r in records if not _says_nothing(r)]
+    if not answered:
+        return records, []
+    return answered, [r for r in records if _says_nothing(r)]
+
+
+def _says_nothing(record: FieldRecord) -> bool:
+    value = record.value if record.value is not None else record.raw_value
+    return isinstance(value, str) and value.strip().casefold() in _SAYS_NOTHING
 
 
 def _group_by_canonical_value(records: list[FieldRecord]) -> list[list[FieldRecord]]:

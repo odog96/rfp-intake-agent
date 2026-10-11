@@ -9,6 +9,7 @@ import structlog
 
 from rfp_intake.config.settings import get_settings
 from rfp_intake.domain.schemas import Document, RunError, RunState
+from rfp_intake.ingest.page_labels import read_page_labels
 from rfp_intake.ingest.parsers import parse_with_escalation
 from rfp_intake.io.inputs import get_resolver
 
@@ -34,6 +35,12 @@ def ingest_node(state: RunState) -> dict[str, Any]:
         try:
             parsed = parse_with_escalation(path)
             doc = parsed.to_document(doc_id)
+            # The number printed on each page, where it differs from the page's
+            # position in the file. Read here rather than in a parser because
+            # two of the three parsers do not open the PDF themselves, and the
+            # page text they produce is all this needs. Change 7 of the
+            # 2026-10-07 review.
+            doc.page_labels = read_page_labels(path, doc.page_texts)
             documents.append(doc)
             logger.info(
                 "document_ingested",
@@ -43,6 +50,7 @@ def ingest_node(state: RunState) -> dict[str, Any]:
                 pages=doc.pages,
                 rung=parsed.metadata.rung_used,
                 tables=len(doc.tables),
+                printed_page_numbers=len(doc.page_labels),
                 duration_ms=parsed.metadata.parse_duration_ms,
             )
         except Exception as e:

@@ -94,8 +94,18 @@ def extraction_response_to_records(
     doc_kind: Literal["rfp", "protocol", "amendment", "soa", "other"],
     response: BaseModel,
     registry: Registry | None = None,
+    page_labels: dict[int, str] | None = None,
 ) -> list[FieldRecord]:
-    """Transform a dynamic extraction model instance into canonical FieldRecord objects."""
+    """Transform a dynamic extraction model instance into canonical FieldRecord objects.
+
+    `page_labels` is the document's `page_labels` — PDF page position to the
+    number printed on that page, for the pages where the two differ. It is
+    stamped on each record's provenance here because this is the only place in
+    `src/` that builds a `Provenance`, so every page reference in the report gets
+    the printed number without any other node knowing about it. Change 7 of the
+    2026-10-07 review. None, or a page not in it, means the report cites that
+    page by its position in the file alone, as it did before.
+    """
     if registry is None:
         registry = get_registry()
 
@@ -123,6 +133,7 @@ def extraction_response_to_records(
                         doc_id=doc_id,
                         doc_kind=doc_kind,
                         page=item.page,
+                        printed_page=(page_labels or {}).get(item.page),
                     ),
                     status=item.status,
                     confidence=item.confidence,

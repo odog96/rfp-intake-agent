@@ -113,6 +113,11 @@ class TestBuildExtractionDocument:
                 "heading": "1.3.2 Clinical Experience",
                 "page_start": 39,
                 "page_end": 40,
+                # The numbers printed on those pages, for Appendix C. None here
+                # because this passage was built by hand; see change 7 of the
+                # 2026-10-07 review and `ingest/page_labels.py`.
+                "printed_page_start": None,
+                "printed_page_end": None,
                 "verdict": "other_study",
                 "reason": "Describes completed study NEOD001-001, not this study.",
                 "text": "Study NEOD001-001 was an ongoing, open-label Phase 1/2 study.",

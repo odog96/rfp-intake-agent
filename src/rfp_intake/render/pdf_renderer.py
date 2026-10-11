@@ -124,6 +124,11 @@ def _styles() -> dict[str, ParagraphStyle]:
                                      textColor=colors.HexColor("#555555")),
         "evidence": ParagraphStyle("evidence", parent=body, fontSize=7.5, leading=9.2,
                                    leftIndent=10, firstLineIndent=-10, spaceAfter=2.5),
+        # Appendix B's dismissed reasons: indented under the bullet whose values
+        # they settle, with no hanging indent, so the sentence reads as attached
+        # to that variable rather than as another bullet.
+        "dismissed_reason": ParagraphStyle("dismissed_reason", parent=body, fontSize=7.5,
+                                           leading=9.2, leftIndent=18, spaceAfter=4),
     }
 
 
@@ -239,11 +244,19 @@ def _clip(text: str, limit: int) -> str:
 
 
 def _disagreements(model: ReportModel, styles: dict) -> list:  # type: ignore[type-arg]
-    """Every disagreement the reviewer did not dismiss, whatever its severity.
+    """Every variable the reviewer judged a real conflict, whatever its severity.
 
     Low-severity disagreements are not demoted into section 4. Severity is the
     reviewing model's own rating rather than something the code works out, so
     splitting on it would move a mis-rated disagreement into the quieter list.
+
+    Until 2026-10-07 this read "every disagreement the reviewer did not dismiss",
+    and a "reconcilable" verdict — the reviewer saying both values are true and
+    one is a restatement of the other — was printed here as something for a
+    person to settle. It is not, so it is no longer in this table: see
+    report_model.NEEDS_DECISION and gate.DISMISSED_VERDICTS. Those wordings are
+    still in the report, in Appendix B. A reconcilable verdict on a budget driver
+    still reaches a person, in Flagged for review.
     """
     story: list[object] = [
         Paragraph("Disagreements between the documents", styles["section"]),
@@ -405,9 +418,14 @@ def _value_cell(r: Row) -> str:
         ]
     body = "<br/>".join(parts)
     if r.decision_no is not None:
+        # A row that borrowed another variable's disagreement names it, because
+        # the Disagreements table describes that other variable's values and a
+        # reader sent there by a bare "Sources disagree" finds nothing about this
+        # row. See Row.follows_label in render/report_model.py.
+        what = f" on {escape(r.follows_label)}" if r.follows_label else ""
         body += (
-            f'<br/><font size="7" color="{_RED.hexval()}">Sources disagree — '
-            f"see Disagreement {r.decision_no}</font>"
+            f'<br/><font size="7" color="{_RED.hexval()}">The documents disagree'
+            f"{what} — see Disagreement {r.decision_no}</font>"
         )
     elif r.folded:
         n = len(r.folded)
@@ -419,6 +437,14 @@ def _value_cell(r: Row) -> str:
         body += (
             '<br/><font size="7" color="#757575">'
             "Worded differently; checked, not a conflict.</font>"
+        )
+    elif r.verdict == "reconcilable":
+        # One value line, because ADJUDICATE chose which record to show. Saying
+        # so is what stops the row looking like the only wording in the
+        # documents; the others are printed in Appendix B.
+        body += (
+            '<br/><font size="7" color="#757575">'
+            "Worded differently; checked, the same answer — see Appendix B.</font>"
         )
     return body
 
@@ -587,6 +613,12 @@ def _evidence_appendix(model: ReportModel, styles: dict) -> list:  # type: ignor
         if e.derived_from:
             line += f" <font color=\"#757575\">Derived from {escape(', '.join(e.derived_from))}"
             line += f"; {escape(e.notes)}</font>" if e.notes else "</font>"
+        elif e.notes:
+            # A value a rule in config/fields.yaml decided, rather than one read
+            # from a passage about the variable itself. The quote above is the
+            # passage the rule read; this says why it answers this variable. See
+            # reconcile/rules.py.
+            line += f' <font color="#757575">{escape(e.notes)}</font>'
         story.append(Paragraph(line, styles["evidence"]))
     return story
 
@@ -608,7 +640,7 @@ def _reasoning_appendix(model: ReportModel, styles: dict) -> list:  # type: igno
     if model.dismissed:
         story.append(Paragraph(
             f"<b>Checked and dismissed ({len(model.dismissed)})</b> — the documents word these "
-            "differently but do not disagree. Full reasoning is in extraction.json.",
+            "differently but do not disagree, and the reason each was dismissed follows it.",
             styles["body"],
         ))
         for x in model.dismissed:
@@ -618,6 +650,15 @@ def _reasoning_appendix(model: ReportModel, styles: dict) -> list:  # type: igno
                 for p in x.values
             )
             story.append(Paragraph(f"• {label}: {said}", styles["evidence"]))
+            # The reviewer's own sentence, indented under the values it settles.
+            # Change 1 of the 2026-10-07 review moved nine variables into this
+            # list, and without this line they read as two bare numbers with
+            # nothing to say which one to budget from.
+            if x.explanation:
+                story.append(Paragraph(
+                    f'<font color="#555555">{escape(x.explanation)}</font>',
+                    styles["dismissed_reason"],
+                ))
     return story
 
 

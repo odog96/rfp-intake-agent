@@ -68,7 +68,42 @@ Source: `/home/cdsw/how_to_resond.txt`, adapted for this project.
 19. **When told "unclear" or "too dense", rewrite with the missing pieces filled in.**
     Do not defend the original or apologise at length.
 
-## Current status (as of 2026-10-02)
+## Current status (as of 2026-10-08)
+
+**The seven changes Oliver and Angus agreed on 2026-10-07, after reviewing the report from run
+`r-20261007-140411`, are built and measured.** Read the 2026-10-08 entry in `docs/JOURNAL.md` for what
+each one was. The last of three live runs is `r-20261008-review2-run3`, which finds **40 of the 43
+registry fields**, with 115 resolved rows, 12 contradiction clusters and 16 EXTRACT errors in 9m09s.
+`scripts/check_review_2026_10_07.py` measures nine of the review's ten checks straight off `report.pdf`
+and reports 8 pass, 0 fail on that run; check 6 prints LOOK because its live half is a regression check,
+and it passes. Four render-only fixes were made after that run and shown with
+`scripts/rerender_report.py` rather than a fourth run, which the review's three-run limit forbids: the
+borrowed-disagreement row now names the variable the documents actually disagree about, Appendix B
+prints the adjudicating reviewer's reason beside each dismissed pair, that reason goes through
+`_Docs.name_ids` like every other piece of model-written text, and §4.9's own table was corrected. So
+the report the current code produces is
+`runs/r-20261008-review2-run3-rerender/report.pdf`; run 3's own `report.pdf` is left as the pipeline
+wrote it. **Both gate reviewers were run three times**, each later pass because answering the pass before
+it was itself an edit; the pipeline-rules reviewer found no violation of the ten non-negotiable rules on
+any of the three, and the plan-conformance reviewer found all seven changes met on all three. One code
+defect came out of the second pass and is fixed: `ingest/page_labels.py` recorded a printed page number
+for a page that prints its own PDF position, which `report.pdf` never showed — `format_page_ref` compares
+the two numbers first — but which put 29 redundant `printed_page` entries into run 3's
+`extraction.json`. No page reference in the report moves, so that fix needed neither a run nor a
+re-render. The third pass found no defect: it corrected a miscounted figure in two comments, two
+documentation slips, and the coverage of the page-label fix and the Appendix A note rule, and it named
+two latent risks in code left deliberately unchanged, both recorded where they live
+(`ingest/page_labels.py` on the PDF-label path's ordering, `render/report_model.py:_dismissed` on the
+verdict partition). **Two things Angus asked for are deliberately not started**: grouping related information into
+fewer rows, which Oliver is putting to Angus as a proposal first, and supporting two studies in one RFP,
+which waits until the single-study report is accepted.
+
+Three things from that work are still open, none of them blocking: `Site selection visits` reads Not
+found because the synthetic RFP calls them "Site Qualification Visits" across three lines of a
+two-column table; where a real conflict remains, the page on which a document said "not specified" is
+no longer cited in the Disagreements positions, though the record itself is still in `extraction.json`;
+and the report shows the reader raw field ids in two derived rows (`ip.form=['infusion_iv']` and the
+visit-intensity rubric line), which predates this work.
 
 Phases 0–4 of ARCHITECTURE.md §10 are done, and stages 1, 2, 3, 4 and 5 of `docs/PLAN_2026-10-02.md`.
 **Stage 5's two live criteria failed on 2026-10-02 and still fail after the 2026-10-03 fix**, though for
@@ -77,9 +112,13 @@ run, and what remains is PLAN keeping only three sections per field group. Read 
 in `docs/JOURNAL.md` before trusting `blinding.placebo_matching` or `blinding.unblinded_staff_stated`.
 Graph topology today:
 `INGEST → CLASSIFY → FIND_SECTIONS → SET_ASIDE_SECTIONS → MARK_OTHER_STUDY → PLAN → EXTRACT → NORMALIZE → RECONCILE → ADJUDICATE → DERIVE → GATE`,
-then RENDER runs after the graph finishes (see the deviations below). 870 tests passing, 1 skipped.
+then RENDER runs after the graph finishes (see the deviations below). 963 tests passing, 1 skipped, on
+2026-10-11 — the count moves with `runs/`, because `test_nothing_lost_on_a_real_run` runs once per run folder.
 Pushed to https://github.com/odog96/rfp-intake-agent.git. The push is done from a terminal by
-Oliver, from inside the repository directory — this session's credentials cannot do it.
+Oliver, from inside the repository directory — this session's credentials cannot do it. **The seven
+changes of the 2026-10-07 review are not committed**: 27 changed and 6 new files sit in the working
+tree, HEAD is still `64c042b`, and `main` is one commit behind `origin/main` — `dab43e0`, Oliver's
+2026-10-06 edit to `.project-metadata.yaml` on GitHub, which this work does not touch.
 
 Every `### Done` entry that used to be in this file is now in `docs/JOURNAL.md`, newest first, unedited.
 Nothing in `docs/JOURNAL.md` is current state; where the two disagree, this file wins.
@@ -94,7 +133,12 @@ Claude Sonnet 4.6 on AWS Bedrock (`us.anthropic.claude-sonnet-4-6`), `privacy_mo
 **Testing only** — Bedrock is outside the customer boundary, so synthetic and publicly-registered
 documents only, per non-negotiable rule 5 below. Production is CAII and `privacy_mode: private`.
 
-On the two-document test pair, the current baseline run `r-20261002-222824-stage4b` (2026-10-02) gave
+On the two-document test pair, **the current baseline is `r-20261008-review2-run3` (2026-10-08): 40 of
+the 43 registry fields found, 115 resolved rows, 12 contradiction clusters, 16 EXTRACT errors, 9m09s.**
+Quote that figure when comparing runs, and note that the registry held 36 fields when the runs below
+were made and 41 when `r-20261007-140411` was made, so a "27 of 36" and a "40 of 43" are not the same
+measurement. The runs that follow are kept because they are the record of how each stage moved the
+numbers. The earlier baseline run `r-20261002-222824-stage4b` (2026-10-02) gave
 **27 of the 36 registry fields at least one confirmed row**, in 9m03s, with 9 contradiction clusters and
 22 EXTRACT errors, and caught the planted `timeline.total_duration` disagreement. Quote that first figure
 when comparing runs. The stage 5 run `r-20261002-232830-stage5` gave **25 of those same 36**, below the
@@ -107,7 +151,7 @@ sentences about this study; and `r-20261002-200521-stage2` gave 26 of 36 in 5m56
 5 EXTRACT errors. The stage 2 entry in `docs/JOURNAL.md` has the stage 2 table, and the stage 4 entries
 there explain why the error count moved and why it is still not attributed to a stage.
 
-Always say which unit a count is in: `config/fields.yaml` defines 36 fields, and a field can hold many
+Always say which unit a count is in: `config/fields.yaml` defines 43 fields, and a field can hold many
 scoped rows, so a field count and a row count are not comparable.
 
 Claude Sonnet 4.6 is the only model tried that extracts the budget drivers reliably. Claude models
@@ -267,7 +311,8 @@ checks every task's field names against the specification, so neither mistake ca
    needle copied from a lower-case hint.
 7. **Find out why EXTRACT dropped 22 records in run `r-20261002-222824-stage4b` where the baseline
    before MARK_OTHER_STUDY dropped 5.** 21 of the 22 are `quote_not_found_in_excerpt`, 8 of them
-   `visits.frequency_by_period` on the protocol and 5 `ops.monitoring_visits` on the RFP.
+   `visits.frequency_by_period` on the protocol and 5 `ops.monitoring_visits` on the RFP
+   (`ops.monitoring_visits` was replaced on 2026-10-07 by five single-visit-type fields).
    **MARK_OTHER_STUDY is now largely ruled out as the cause.** Run `r-20261002-222824-stage4b` makes one
    removal of 1,084 characters, against the previous run's eight removals of 6,458 characters, and the
    count only fell from 27 to 22. The gap of 17 against the stage 2 baseline survives a run that removes

@@ -124,6 +124,43 @@ def test_extraction_response_to_records(fields_yaml_path: Path) -> None:
     assert records[0].provenance.page == 46
 
 
+def test_the_printed_page_number_is_stamped_on_the_provenance(fields_yaml_path: Path) -> None:
+    """Change 7 of the 2026-10-07 review.
+
+    This is the only place in `src/` that builds a `Provenance`, so stamping
+    here is what puts the printed page number on every reference in the report.
+    A page the document prints no number for, or prints the same number for, is
+    not in the map and keeps a provenance of None.
+    """
+    registry = load_registry(fields_yaml_path)
+    model = build_extraction_model("visits", registry=registry)
+    item = {"raw_value": "22", "quote": "A total of 22 visits are planned",
+            "status": "found", "confidence": 0.92, "scope": "total", "notes": None}
+    instance = model.model_validate({"total_count": [item | {"page": 46}, item | {"page": 3}]})
+
+    records = extraction_response_to_records(
+        group_id="visits", doc_id="proto1", doc_kind="protocol", response=instance,
+        registry=registry, page_labels={46: "44"},
+    )
+    printed = {r.provenance.page: r.provenance.printed_page for r in records}
+    assert printed == {46: "44", 3: None}
+
+
+def test_without_page_labels_nothing_is_stamped(fields_yaml_path: Path) -> None:
+    """Every run before 2026-10-07 has no page labels, and must still load."""
+    registry = load_registry(fields_yaml_path)
+    model = build_extraction_model("visits", registry=registry)
+    instance = model.model_validate({"total_count": [
+        {"raw_value": "22", "quote": "A total of 22 visits are planned", "status": "found",
+         "confidence": 0.92, "scope": "total", "page": 46, "notes": None},
+    ]})
+    records = extraction_response_to_records(
+        group_id="visits", doc_id="proto1", doc_kind="protocol", response=instance,
+        registry=registry,
+    )
+    assert records[0].provenance.printed_page is None
+
+
 def test_all_groups_build_successfully(fields_yaml_path: Path) -> None:
     """Every group in the registry should produce a valid extraction model."""
     registry = load_registry(fields_yaml_path)

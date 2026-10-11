@@ -57,7 +57,7 @@ def extract_group(
 
     doc_kind = doc.kind or "other"
     raw_records = extraction_response_to_records(
-        task.group, doc.id, doc_kind, response, registry
+        task.group, doc.id, doc_kind, response, registry, doc.page_labels
     )
 
     # Validate each record
@@ -98,7 +98,7 @@ def extract_group(
         try:
             repair_response = structured.extract(schema, repair_messages)
             repair_records = extraction_response_to_records(
-                task.group, doc.id, doc_kind, repair_response, registry
+                task.group, doc.id, doc_kind, repair_response, registry, doc.page_labels
             )
 
             for record in repair_records:

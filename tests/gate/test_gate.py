@@ -19,11 +19,13 @@ class TestBudgetDriverCollections:
     def test_several_values_stays_needs_review(self) -> None:
         # ops.monitoring_visits came back as ["75", "750", "300"] in run
         # r-listfix-175318 — three kinds of monitoring visit. Which number belongs
-        # in a budget is a human judgement.
+        # in a budget is a human judgement. That field was replaced on 2026-10-07
+        # by five single-visit-type rows, so the field named here is ip.form, the
+        # budget-driving list field the registry still has.
         from rfp_intake.gate import _gate_field
 
         out = _gate_field(
-            self._resolved("ops.monitoring_visits", ["75", "750", "300"]),
+            self._resolved("ip.form", ["infusion_iv", "injection_sc", "oral_tablet"]),
             None,
             is_budget_driver=True,
         )
@@ -33,7 +35,7 @@ class TestBudgetDriverCollections:
         from rfp_intake.gate import _gate_field
 
         out = _gate_field(
-            self._resolved("ops.monitoring_visits", ["75"]), None, is_budget_driver=True
+            self._resolved("ip.form", ["infusion_iv"]), None, is_budget_driver=True
         )
         assert out.status == "confirmed"
 

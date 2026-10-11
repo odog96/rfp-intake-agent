@@ -260,3 +260,119 @@ def test_validates_derived_missing_derived_from(tmp_path: Path) -> None:
     p.write_text(yaml.dump(data))
     with pytest.raises(RegistryValidationError, match="no derived_from"):
         load_registry(p)
+
+
+class TestTheInterimAnalysisRowsAfterThe20261007Review:
+    """Change 4: one count row, with the conflict flagged on it.
+
+    Run r-20261007-140411 printed "Interim analyses planned: No" beside "Number
+    of interim analyses: 1" — two rows answering the same question, with the
+    disagreement on the yes/no row and the count confirmed. Angus Gray asked for
+    the yes/no row to go, because a count of 0 already says none are planned.
+    """
+
+    def test_the_yes_no_row_is_gone(self, fields_yaml_path: Path) -> None:
+        registry = load_registry(fields_yaml_path)
+        assert "interim.planned" not in {f.id for f in registry.fields}
+
+    def test_the_count_asks_for_an_explicit_zero(self, fields_yaml_path: Path) -> None:
+        """Rule 3: 0 is a real answer and is not the same as finding nothing."""
+        field = load_registry(fields_yaml_path).get_field("interim.count")
+        hint = (field.hint or "").lower()
+        assert "no interim analyses are planned" in hint
+        assert "the answer is 0" in hint
+        assert field.budget_driver, "the count drives a budget"
+
+    def test_the_count_still_has_a_glossary_entry(self, fields_yaml_path: Path) -> None:
+        field = load_registry(fields_yaml_path).get_field("interim.count")
+        assert field.plain and "0 means" in field.plain
+
+    def test_the_timing_row_follows_the_counts_disagreement(
+        self, fields_yaml_path: Path
+    ) -> None:
+        field = load_registry(fields_yaml_path).get_field("interim.timing")
+        assert field.follows_conflict_of == "interim.count"
+
+
+def test_validates_follows_conflict_of(tmp_path: Path) -> None:
+    data = {
+        "version": 1,
+        "groups": [{"id": "g1", "label": "Group 1"}],
+        "fields": [
+            {
+                "id": "g1.follower",
+                "group": "g1",
+                "label": "Follower",
+                "type": "text",
+                "follows_conflict_of": "g1.nonexistent",
+            },
+        ],
+    }
+    p = tmp_path / "fields.yaml"
+    p.write_text(yaml.dump(data))
+    with pytest.raises(RegistryValidationError, match="unknown field.*nonexistent"):
+        load_registry(p)
+
+
+def test_validates_follows_conflict_of_itself(tmp_path: Path) -> None:
+    data = {
+        "version": 1,
+        "groups": [{"id": "g1", "label": "Group 1"}],
+        "fields": [
+            {
+                "id": "g1.self",
+                "group": "g1",
+                "label": "Self",
+                "type": "text",
+                "follows_conflict_of": "g1.self",
+            },
+        ],
+    }
+    p = tmp_path / "fields.yaml"
+    p.write_text(yaml.dump(data))
+    with pytest.raises(RegistryValidationError, match="follows its own conflict"):
+        load_registry(p)
+
+
+class TestTheMonitoringVisitRowsAfterThe20261007Review:
+    """Change 5: one row per visit type, in the sponsor's own words.
+
+    Run r-20261007-140411 printed "Number of monitoring visits by type:
+    75 visits total (1 per site), 750 visits total (10 per site), 300 visits
+    total (4 per site)" — three numbers with nothing saying which kind of visit
+    each belonged to — and a separate "On-site vs remote monitoring mix" row that
+    did not say which visit type it described.
+    """
+
+    # The order the review asked for, which is the order a reader sees.
+    FIVE = (
+        ("ops.visits_site_selection", "Site selection visits"),
+        ("ops.visits_site_initiation", "Site initiation visits"),
+        ("ops.visits_interim_monitoring", "Interim monitoring visits"),
+        ("ops.visits_close_out", "Close-out visits"),
+        ("ops.visits_pharmacy_monitoring", "Pharmacy monitoring visits"),
+    )
+
+    def test_the_two_old_rows_are_gone(self, fields_yaml_path: Path) -> None:
+        ids = {f.id for f in load_registry(fields_yaml_path).fields}
+        assert "ops.monitoring_visits" not in ids
+        assert "monitoring.onsite_remote_mix" not in ids
+
+    def test_five_rows_in_the_asked_for_order(self, fields_yaml_path: Path) -> None:
+        registry = load_registry(fields_yaml_path)
+        group = registry.get_fields_for_group("operational_metrics")
+        visits = [(f.id, f.label) for f in group if f.id.startswith("ops.visits_")]
+        assert visits == list(self.FIVE)
+
+    @pytest.mark.parametrize("field_id", [f for f, _ in FIVE])
+    def test_each_row_carries_the_documents_own_wording(
+        self, fields_yaml_path: Path, field_id: str
+    ) -> None:
+        field = load_registry(fields_yaml_path).get_field(field_id)
+        assert field.type == "text", "the row holds wording, not a number"
+        assert field.budget_driver, "each visit type drives a budget"
+        assert field.source_priority == "rfp", "like the field it replaced"
+        hint = (field.hint or "").lower()
+        assert "do no arithmetic" in hint, "no percentage turned into a count"
+        assert "remotely" in hint, "the on-site versus remote split lives on this row now"
+        assert field.plain, "the glossary needs an entry for every row"

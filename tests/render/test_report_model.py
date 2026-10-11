@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from pathlib import Path
 
 import pytest
@@ -26,12 +27,16 @@ from rfp_intake.domain.schemas import (
 from rfp_intake.normalize.scope import normalize_scope
 from rfp_intake.render.report_model import (
     _STATUS_RANK,
+    NEEDS_DECISION,
+    REASON_DISMISSED_DISAGREEMENT,
     REMOVED_EXTRACT_CHARS,
     SCHEDULE_THRESHOLD,
     ReportModel,
     _same_key,
     _signature,
     build_report_model,
+    format_page_range,
+    format_page_ref,
     format_value,
     humanize_enum,
 )
@@ -100,7 +105,7 @@ def assert_nothing_lost(state: RunState, registry: Registry, model: ReportModel)
     decided = {d.field_id for d in model.decisions}
     dismissed = {d.field_id for d in model.dismissed}
     for c in adjudicated:
-        if c.verdict in ("conflict", "reconcilable"):
+        if c.verdict in NEEDS_DECISION:
             assert c.field_id in decided
             d = next(d for d in model.decisions if d.signature == _signature(c))
             cited: dict[str, set[int]] = {}
@@ -111,21 +116,32 @@ def assert_nothing_lost(state: RunState, registry: Registry, model: ReportModel)
                 assert r.provenance.page in cited[codes[r.provenance.doc_id]]
         else:
             assert c.field_id in dismissed
-    needing = [c for c in adjudicated if c.verdict in ("conflict", "reconcilable")]
+    needing = [c for c in adjudicated if c.verdict in NEEDS_DECISION]
     assert len(model.decisions) == len(needing)
 
     # A row that carries a decision says so.
     for row in rows:
-        if row.verdict in ("conflict", "reconcilable"):
+        if row.verdict in NEEDS_DECISION:
             assert row.decision_no is not None
 
 
+# One cited page: its position in the file, and the number printed on it where
+# the two differ — "11" or "11 (printed p.9)". Change 7 of the 2026-10-07 review.
+_CITED_PAGE = re.compile(r"(\d+)(?:\s*\(printed p\.[^)]*\))?")
+
+
 def _parse_sources(text: str) -> dict[str, set[int]]:
-    """"Protocol p.11, 42; RFP p.2" -> {"Protocol": {11, 42}, "RFP": {2}}."""
+    """"Protocol p.11 (printed p.9), 42; RFP p.2" -> {"Protocol": {11, 42}, "RFP": {2}}.
+
+    Only the file positions come back. A printed number beside one is extra, for
+    a reader holding the paper, and the checks below are about which pages are
+    cited at all.
+    """
     out: dict[str, set[int]] = {}
     for part in filter(None, (t.strip() for t in text.split(";"))):
-        code, _, pages = part.rpartition(" p.")
-        out[code] = {int(n) for n in pages.split(",")}
+        head = re.match(r"(.*?) p\.(.*)", part)
+        assert head, f"not a page reference: {part!r}"
+        out[head.group(1)] = {int(m.group(1)) for m in _CITED_PAGE.finditer(head.group(2))}
     return out
 
 
@@ -225,11 +241,11 @@ class TestNothingLost:
         assert len([r for r in model.all_rows() if r.field_id == "ops.subjects_total"]) == 2
 
     def test_a_conflict_becomes_a_numbered_decision_linked_from_its_row(self) -> None:
-        c = _contradiction("interim.planned", "conflict",
-                           [("false", 98, "d-prot"), ("true", 4, "d-rfp")])
+        c = _contradiction("interim.count", "conflict",
+                           [("0", 98, "d-prot"), ("1", 4, "d-rfp")])
         state = RunState(
             run_id="r-1",
-            resolved=[_rf("interim.planned", "false", status="needs_review", pages=(98, 4),
+            resolved=[_rf("interim.count", 0, status="needs_review", pages=(98, 4),
                           contradiction=c)],
             contradictions=[c],
         )
@@ -237,23 +253,148 @@ class TestNothingLost:
         assert_nothing_lost(state, get_registry(), model)
         [d] = model.decisions
         assert [(p.text, p.sources) for p in d.positions] == [
-            ("No", "Protocol p.98"), ("Yes", "RFP p.4"),
+            ("0", "Protocol p.98"), ("1", "RFP p.4"),
         ]
-        [row] = [r for r in model.all_rows() if r.field_id == "interim.planned"]
+        [row] = [r for r in model.all_rows() if r.field_id == "interim.count"]
         assert row.decision_no == d.no == 1
 
-    def test_conflicts_come_before_reconcilable_ones(self) -> None:
-        a = _contradiction("ops.sites_total", "reconcilable",
-                           [("75", 1, "d-prot"), ("70", 2, "d-rfp")])
-        b = _contradiction("interim.planned", "conflict",
-                           [("false", 3, "d-prot"), ("true", 4, "d-rfp")], severity="low")
+    def test_two_rows_sharing_one_disagreement_share_its_number(self) -> None:
+        """Change 4 of the 2026-10-07 review: the timing row follows the count.
+
+        GATE hands the same Contradiction object to both rows (see
+        gate/_contradiction_for), so the report must print one numbered
+        disagreement and point both rows at it.
+        """
+        c = _contradiction("interim.count", "conflict",
+                           [("0", 98, "d-prot"), ("1", 4, "d-rfp")])
+        state = RunState(
+            run_id="r-1",
+            resolved=[
+                _rf("interim.count", 0, status="needs_review", pages=(98, 4),
+                    contradiction=c),
+                _rf("interim.timing", ["After about 156 events"], status="needs_review",
+                    pages=(4,), doc="d-rfp", kind="rfp", contradiction=c),
+            ],
+            contradictions=[c],
+        )
+        model = build_report_model(state, get_registry())
+        assert_nothing_lost(state, get_registry(), model)
+        assert len(model.decisions) == 1, "one disagreement, not one per row"
+        rows = {r.field_id: r for r in model.all_rows()
+                if r.field_id in ("interim.count", "interim.timing")}
+        assert {k: r.decision_no for k, r in rows.items()} == {
+            "interim.count": 1, "interim.timing": 1,
+        }
+
+        # The timing row names the variable the documents actually disagree
+        # about. The report-usability reviewer of run r-20261008-review2-run2
+        # followed the timing row's bare "Sources disagree — see Disagreement 1"
+        # to a disagreement that describes two interim-analysis COUNTS and
+        # nothing about timing at all, and could not tell what had been disputed.
+        assert rows["interim.timing"].follows_label == "Number of interim analyses"
+        assert rows["interim.timing"].reasons == [
+            "The documents disagree on Number of interim analyses "
+            "— see Disagreement 1."
+        ]
+        # The row that owns the disagreement still says it plainly, with no
+        # variable named: the Disagreements table is about that row's own values.
+        assert rows["interim.count"].follows_label is None
+        assert rows["interim.count"].reasons == [
+            "The documents disagree — see Disagreement 1."
+        ]
+
+    def test_the_worst_conflict_comes_first(self) -> None:
+        a = _contradiction("ops.sites_total", "conflict",
+                           [("75", 1, "d-prot"), ("70", 2, "d-rfp")], severity="low")
+        b = _contradiction("interim.count", "conflict",
+                           [("0", 3, "d-prot"), ("1", 4, "d-rfp")], severity="high")
         state = RunState(run_id="r-1", contradictions=[a, b])
         model = build_report_model(state, get_registry())
-        assert [d.field_id for d in model.decisions] == ["interim.planned", "ops.sites_total"]
+        assert [d.field_id for d in model.decisions] == ["interim.count", "ops.sites_total"]
+
+    def test_a_reconcilable_verdict_is_not_a_disagreement_to_settle(self) -> None:
+        """Change 1 of the 2026-10-07 review: follow the reviewer's conclusion.
+
+        ADJUDICATE says "reconcilable" when both values are true and one restates
+        the other. That is not something a person has to settle, so the variable
+        is not in the Disagreements table and its row does not say
+        "Disagreement" — it shows the value ADJUDICATE chose. Both wordings are
+        still in the report, in Appendix B.
+        """
+        c = _contradiction("study.population", "reconcilable",
+                           [("Adults with AL amyloidosis", 12, "d-prot"),
+                            ("Subjects with AL amyloidosis", 3, "d-rfp")])
+        state = RunState(
+            run_id="r-1",
+            resolved=[_rf("study.population", "Adults with AL amyloidosis",
+                          pages=(12, 3), contradiction=c)],
+            contradictions=[c],
+        )
+        model = build_report_model(state, get_registry())
+        assert_nothing_lost(state, get_registry(), model)
+        assert model.decisions == []
+        assert [d.field_id for d in model.dismissed] == ["study.population"]
+        [row] = [r for r in model.all_rows() if r.field_id == "study.population"]
+        assert row.decision_no is None
+        assert row.verdict == "reconcilable"
+        assert [v.text for v in row.values] == ["Adults with AL amyloidosis"]
+
+    def test_a_dismissed_explanation_names_the_documents_not_their_ids(self) -> None:
+        """Appendix B's reasons go through the same renaming as the Disagreements table.
+
+        ADJUDICATE's prompt prints `doc_id=` for every candidate and asks it to
+        name the document, so its sentences carry internal ids such as
+        `doc-2ea4cd79`. `_decisions` has always passed them through
+        `_Docs.name_ids`; when change 1 of the 2026-10-07 review started printing
+        the dismissed reasons too, they went out unrenamed, and Appendix B of
+        r-20261008-review2-run3 showed four raw ids to the analyst.
+        """
+        c = _contradiction("study.population", "reconcilable",
+                           [("Adults with AL amyloidosis", 12, "d-prot"),
+                            ("Subjects with AL amyloidosis", 3, "d-rfp")])
+        state = RunState(
+            run_id="r-1",
+            resolved=[_rf("study.population", "Adults with AL amyloidosis",
+                          pages=(12, 3), contradiction=c)],
+            contradictions=[c],
+        )
+        model = build_report_model(state, get_registry())
+
+        [dismissed] = model.dismissed
+        assert "d-prot" not in dismissed.explanation
+        assert "d-rfp" not in dismissed.explanation
+        # The same names the rest of the report uses for those two documents.
+        codes = {ref.code for ref in model.documents}
+        assert all(code in dismissed.explanation for code in codes), dismissed.explanation
+
+    def test_a_reconcilable_budget_driver_is_flagged_without_a_decision_number(self) -> None:
+        """The other half of change 1: a budget driver still reaches a person.
+
+        ops.subjects_total was Disagreement 7 in run r-20261007-140411 (260
+        against 236). It must not simply disappear: GATE keeps it at
+        needs_review because it is a budget driver, so it moves to Flagged for
+        review, with a reason that does not cite a disagreement number that no
+        longer exists.
+        """
+        c = _contradiction("ops.subjects_total", "reconcilable",
+                           [("260", 15, "d-prot"), ("236", 4, "d-rfp")])
+        state = RunState(
+            run_id="r-1",
+            resolved=[_rf("ops.subjects_total", 260, status="needs_review",
+                          pages=(15, 4), contradiction=c)],
+            contradictions=[c],
+        )
+        model = build_report_model(state, get_registry())
+        assert_nothing_lost(state, get_registry(), model)
+        assert model.decisions == []
+        [row] = [r for r in model.all_rows() if r.field_id == "ops.subjects_total"]
+        assert row.decision_no is None
+        assert row in model.review_rows()
+        assert row.reasons == [REASON_DISMISSED_DISAGREEMENT]
 
     def test_document_ids_in_the_reasoning_become_names(self) -> None:
-        c = _contradiction("interim.planned", "conflict",
-                           [("false", 98, "d-prot"), ("true", 4, "d-rfp")])
+        c = _contradiction("interim.count", "conflict",
+                           [("0", 98, "d-prot"), ("1", 4, "d-rfp")])
         model = build_report_model(RunState(run_id="r-1", contradictions=[c]), get_registry())
         assert model.decisions[0].explanation == "Doc Protocol says one thing and RFP another."
 
@@ -301,6 +442,106 @@ class TestNothingLost:
         assert any(r.field_id == "retired.field" for r in model.all_rows())
 
 
+class TestThePageNumberPrintedOnThePage:
+    """Change 7 of the 2026-10-07 review.
+
+    The report cites a page by its position in the PDF file, which is what gets
+    a reader there in a viewer. The protocol amendment prints numbers two lower,
+    so "Amendment p.11" sent Oliver Zarate to the wrong page. Where the two
+    differ the reference now carries both.
+    """
+
+    def test_one_page_shows_both_numbers(self) -> None:
+        assert format_page_ref(11, "9") == "11 (printed p.9)"
+
+    def test_a_page_whose_numbers_agree_shows_one(self) -> None:
+        assert format_page_ref(4, "4") == "4"
+
+    def test_a_page_with_no_printed_number_shows_one(self) -> None:
+        assert format_page_ref(4, None) == "4"
+
+    def test_a_range_shows_both_ends(self) -> None:
+        assert format_page_range(39, 41, "37", "39") == "39-41 (printed p.37-39)"
+
+    def test_a_range_missing_its_printed_start_falls_back_to_the_file_position(self) -> None:
+        assert format_page_range(3, 6, None, "4") == "3-6 (printed p.3-4)"
+
+    def test_a_range_missing_its_printed_end_shows_the_start_alone(self) -> None:
+        """Nothing is inferred from the offset: a document can renumber anywhere."""
+        assert format_page_range(5, 7, "3", None) == "5-7 (printed p.3)"
+
+    def test_a_range_with_no_printed_numbers_is_unchanged(self) -> None:
+        assert format_page_range(39, 41, None, None) == "39-41"
+
+    def test_a_range_of_one_page_is_written_as_one_page(self) -> None:
+        assert format_page_range(11, 11, "9", "9") == "11 (printed p.9)"
+
+    def test_a_value_row_cites_both_numbers(self) -> None:
+        state = RunState(
+            run_id="r-1",
+            documents=[Document(id="d-prot", path="/in/Amendment.pdf",
+                                kind="amendment", pages=137)],
+            resolved=[ResolvedField(
+                field_id="study.phase", value="phase_3", status="confirmed", confidence=0.95,
+                quote="This is a Phase 3 study.",
+                sources=[
+                    Provenance(doc_id="d-prot", doc_kind="amendment", page=11, printed_page="9"),
+                    Provenance(doc_id="d-prot", doc_kind="amendment", page=18, printed_page="16"),
+                ],
+            )],
+        )
+        model = build_report_model(state, get_registry())
+        assert_nothing_lost(state, get_registry(), model)
+        row = next(r for r in model.all_rows() if r.field_id == "study.phase")
+        assert row.values[0].sources == "Amendment p.11 (printed p.9), 18 (printed p.16)"
+
+    def test_a_page_without_a_printed_number_keeps_its_bare_reference(self) -> None:
+        """Mixed is normal: the amendment's cover pages print nothing at all."""
+        state = RunState(
+            run_id="r-1",
+            documents=[Document(id="d-prot", path="/in/Amendment.pdf",
+                                kind="amendment", pages=137)],
+            resolved=[ResolvedField(
+                field_id="study.phase", value="phase_3", status="confirmed", confidence=0.95,
+                quote="q",
+                sources=[
+                    Provenance(doc_id="d-prot", doc_kind="amendment", page=2),
+                    Provenance(doc_id="d-prot", doc_kind="amendment", page=11, printed_page="9"),
+                ],
+            )],
+        )
+        row = next(r for r in build_report_model(state, get_registry()).all_rows()
+                   if r.field_id == "study.phase")
+        assert row.values[0].sources == "Amendment p.2, 11 (printed p.9)"
+
+    def test_a_disagreements_positions_cite_both_numbers(self) -> None:
+        c = Contradiction(
+            field_id="study.duration_months", verdict="conflict", severity="high",
+            explanation="The documents disagree.",
+            records=[
+                FieldRecord(
+                    field_id="study.duration_months", group="study_design", raw_value="42",
+                    value=42, quote="42 months", confidence=0.9,
+                    provenance=Provenance(doc_id="d-prot", doc_kind="protocol",
+                                          page=11, printed_page="9"),
+                ),
+                FieldRecord(
+                    field_id="study.duration_months", group="study_design", raw_value="40",
+                    value=40, quote="40 months", confidence=0.9,
+                    provenance=Provenance(doc_id="d-rfp", doc_kind="rfp", page=2),
+                ),
+            ],
+        )
+        state = RunState(
+            run_id="r-1",
+            resolved=[_rf("study.duration_months", 42, status="needs_review",
+                          pages=(11,), contradiction=c)],
+            contradictions=[c],
+        )
+        [d] = build_report_model(state, get_registry()).decisions
+        assert [p.sources for p in d.positions] == ["Protocol p.11 (printed p.9)", "RFP p.2"]
+
+
 class TestRemovedPassages:
     """Appendix C — what MARK_OTHER_STUDY took out, as the report prints it."""
 
@@ -336,6 +577,14 @@ class TestRemovedPassages:
                          removed_passages=[self._passage(page_start=53, page_end=53)])
         [r] = build_report_model(state, get_registry()).removed
         assert r.pages == "p.53"
+
+    def test_the_page_range_carries_the_printed_numbers(self) -> None:
+        """Change 7: Appendix C cites a page like every other reference."""
+        state = RunState(run_id="r-1", removed_passages=[self._passage(
+            page_start=39, page_end=41, printed_page_start="37", printed_page_end="39",
+        )])
+        [r] = build_report_model(state, get_registry()).removed
+        assert r.pages == "p.39-41 (printed p.37-39)"
 
     def test_a_removed_sentence_says_part_of_the_section(self) -> None:
         """`mixed` means the section stayed and one sentence went. A reader

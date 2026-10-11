@@ -80,3 +80,208 @@ class TestCollectionFieldsDoNotContradict:
         resolved, contradictions = _reconcile_field(field_def, records)
         assert len(contradictions) == 1
         assert resolved == []
+
+
+class TestARecordsOwnNoteStaysOnTheRecord:
+    """RECONCILE never copies `FieldRecord.notes` onto a `ResolvedField`.
+
+    Appendix A prints `ResolvedField.notes` for any row with no disagreement
+    (`render/report_model.py`), which change 3 needs so a resolution rule's
+    `because` sentence appears beside the passage it borrowed. On 2026-10-08 the
+    plan-conformance reviewer read that condition as broad enough to start
+    printing the extraction model's own notes, since `config/fields.yaml` asks
+    for them on some fields including `interim.count`. It cannot: the model's
+    note is written to `FieldRecord.notes` by `extract/__init__.py` and
+    `domain/dynamic.py`, and nothing in RECONCILE carries it across.
+
+    RECONCILE builds a `ResolvedField` in five places: four in
+    `reconcile/__init__.py` (lines 120, 168, 230 and 284), none of which passes
+    `notes` at all, and one in `reconcile/rules.py` (line 102), which does pass
+    `notes` — but from the resolution rule's own `because` sentence, never from a
+    record. The three tests below cover the three of those five that have a
+    record to copy a note from: the single-answer path (line 168), the
+    all-silent path (line 120) and the collection path (line 230). Line 284 is
+    `_not_found`, which has no record at all. The third reviewer pass on
+    2026-10-08 found this docstring claiming four paths while one test covered
+    one of them; the two extra tests and this paragraph are the answer. The
+    fourth pass on 2026-10-11 found the all-silent test built from found
+    records, so it ran line 168 a second time; it now builds its own.
+    """
+
+    _record = staticmethod(TestCollectionFieldsDoNotContradict._record)
+
+    _NOTE = "The protocol mentions a third analysis that was cancelled."
+
+    def test_a_resolved_field_has_no_note_of_its_own(self) -> None:
+        from rfp_intake.domain.registry import get_registry
+        from rfp_intake.reconcile import _reconcile_field
+
+        field_def = get_registry().get_field("interim.count")
+        record = self._record("interim.count", "interim_analyses", 2, 98)
+        record.notes = self._NOTE
+        resolved, contradictions = _reconcile_field(field_def, [record])
+
+        assert contradictions == []
+        [rf] = resolved
+        assert rf.notes is None, (
+            "the model's note stays in extraction.json and off the report's evidence page"
+        )
+
+    def test_a_field_every_record_calls_not_specified_has_no_note_either(self) -> None:
+        """The status path at `reconcile/__init__.py:120`.
+
+        `_record` marks every record found, which would send these down the
+        single-answer path at line 168 instead; the fourth reviewer pass on
+        2026-10-11 caught exactly that. So the records are rebuilt here with
+        `status="not_specified"` and no value, and the assertions check the
+        `value=None` that only line 120 produces.
+        """
+        from rfp_intake.domain.registry import get_registry
+        from rfp_intake.reconcile import _reconcile_field
+
+        field_def = get_registry().get_field("design.first_in_human")
+        records = [
+            self._record("design.first_in_human", "study_design", "not_specified", page)
+            .model_copy(update={"status": "not_specified", "value": None, "notes": self._NOTE})
+            for page in (18, 4)
+        ]
+        resolved, contradictions = _reconcile_field(field_def, records)
+
+        assert contradictions == []
+        [rf] = resolved
+        assert rf.status == "not_specified"
+        assert rf.value is None
+        assert rf.notes is None
+
+    def test_a_collection_field_has_no_note_either(self) -> None:
+        """The members path at `reconcile/__init__.py:230`.
+
+        This is the path where a note would be worst: the members come from
+        several records, so the report would have to pick one record's note and
+        print it as if it described the merged answer.
+        """
+        from rfp_intake.domain.registry import get_registry
+        from rfp_intake.reconcile import _reconcile_field
+
+        field_def = get_registry().get_field("visits.intensity_evidence")
+        records = [
+            self._record("visits.intensity_evidence", "visits", ["safety_labs"], 1),
+            self._record("visits.intensity_evidence", "visits", ["questionnaires"], 2),
+        ]
+        for record in records:
+            record.notes = self._NOTE
+        resolved, contradictions = _reconcile_field(field_def, records)
+
+        assert contradictions == []
+        [rf] = resolved
+        assert rf.notes is None
+
+
+class TestNotSpecifiedIsNotACompetingAnswer:
+    """Change 2 of the 2026-10-07 review.
+
+    A passage that does not mention the subject does not disagree with one that
+    answers it. In run r-20261007-140411 that reading produced Disagreement 9
+    (First-in-human: "No" on amendment p.11 against "Not specified" on p.18) and
+    Disagreement 5 (Unblinded staff stated as required).
+    """
+
+    _record = staticmethod(TestCollectionFieldsDoNotContradict._record)
+
+    def test_a_real_answer_beats_not_specified_without_a_disagreement(self) -> None:
+        from rfp_intake.domain.registry import get_registry
+        from rfp_intake.reconcile import _reconcile_field
+
+        field_def = get_registry().get_field("design.first_in_human")
+        records = [
+            self._record("design.first_in_human", "study_design", "false", 11),
+            self._record("design.first_in_human", "study_design", "not_specified", 18),
+        ]
+        resolved, contradictions = _reconcile_field(field_def, records)
+
+        assert contradictions == [], "saying nothing is not a rival answer"
+        [rf] = resolved
+        assert rf.value == "false"
+        assert [p.page for p in rf.sources] == [11, 18], (
+            "the page that says nothing is still cited, so Appendix A is unchanged"
+        )
+        assert rf.confidence == 0.9, "silence is not corroboration, so no boost"
+
+    def test_two_real_answers_still_disagree_while_silence_drops_out(self) -> None:
+        from rfp_intake.domain.registry import get_registry
+        from rfp_intake.reconcile import _reconcile_field
+
+        field_def = get_registry().get_field("design.first_in_human")
+        records = [
+            self._record("design.first_in_human", "study_design", "false", 11),
+            self._record("design.first_in_human", "study_design", "not_specified", 18),
+            self._record("design.first_in_human", "study_design", "true", 40),
+        ]
+        resolved, contradictions = _reconcile_field(field_def, records)
+
+        assert resolved == []
+        [c] = contradictions
+        assert [r.value for r in c.records] == ["false", "true"], (
+            "the reviewer is asked about the two real answers only"
+        )
+
+    def test_a_count_of_zero_is_an_answer_and_still_disagrees_with_one(self) -> None:
+        """Non-negotiable rule 3, on the field change 2 could most easily break.
+
+        `0` is a real count a document stated, not a document saying nothing, so
+        change 2 must not quietly drop it out of a disagreement. This is the
+        exact pair run r-20261008-review2-run3 found — 0 interim analyses on
+        amendment p.98 against 1 in the RFP p.4 — and it is Disagreement 1 of
+        the report, so losing it would be visible. Added 2026-10-08 after the
+        plan-conformance reviewer pointed out that only a code comment and the
+        `isinstance(value, str)` guard in `_says_nothing` stood behind it.
+        """
+        from rfp_intake.domain.registry import get_registry
+        from rfp_intake.reconcile import _reconcile_field
+
+        field_def = get_registry().get_field("interim.count")
+        records = [
+            self._record("interim.count", "interim_analyses", 0, 98),
+            self._record("interim.count", "interim_analyses", 1, 4),
+        ]
+        resolved, contradictions = _reconcile_field(field_def, records)
+
+        assert resolved == [], "a real disagreement resolves nothing until ADJUDICATE"
+        [c] = contradictions
+        assert [r.value for r in c.records] == [0, 1], (
+            "zero is one of the two rival answers, not a record that says nothing"
+        )
+
+    def test_a_count_of_zero_beats_a_record_that_says_nothing(self) -> None:
+        """The other half of rule 3: `0` wins over `not_specified` without a disagreement."""
+        from rfp_intake.domain.registry import get_registry
+        from rfp_intake.reconcile import _reconcile_field
+
+        field_def = get_registry().get_field("interim.count")
+        records = [
+            self._record("interim.count", "interim_analyses", 0, 98),
+            self._record("interim.count", "interim_analyses", "not_specified", 12),
+        ]
+        resolved, contradictions = _reconcile_field(field_def, records)
+
+        assert contradictions == []
+        [rf] = resolved
+        assert rf.value == 0, "an explicit zero is the answer, not 'not specified'"
+        assert [p.page for p in rf.sources] == [98, 12]
+
+    def test_every_record_saying_nothing_still_resolves_to_not_specified(self) -> None:
+        # Rule 3: not_specified stays distinct from not_found and from 0.
+        from rfp_intake.domain.registry import get_registry
+        from rfp_intake.reconcile import _reconcile_field
+
+        field_def = get_registry().get_field("design.first_in_human")
+        records = [
+            self._record("design.first_in_human", "study_design", "not_specified", 18),
+            self._record("design.first_in_human", "study_design", "not_specified", 4),
+        ]
+        resolved, contradictions = _reconcile_field(field_def, records)
+
+        assert contradictions == []
+        [rf] = resolved
+        assert rf.value == "not_specified"
+        assert [p.page for p in rf.sources] == [18, 4]

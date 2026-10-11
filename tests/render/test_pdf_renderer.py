@@ -162,20 +162,27 @@ def _headings(pdf: bytes) -> list[str]:
 def _conflict_state():  # type: ignore[no-untyped-def]
     from rfp_intake.domain.schemas import Contradiction, FieldRecord, Provenance
 
-    def rec(value: str, page: int, doc: str, kind: str) -> FieldRecord:
+    def rec(value: int, page: int, doc: str, kind: str) -> FieldRecord:
         return FieldRecord(
-            field_id="interim.planned", group="interim_analyses", raw_value=value, value=value,
+            field_id="interim.count", group="interim_analyses", raw_value=str(value),
+            value=value,
             quote=f"quote on page {page}", confidence=0.9,
             provenance=Provenance(doc_id=doc, doc_kind=kind, page=page),  # type: ignore[arg-type]
         )
 
     conflict = Contradiction(
-        field_id="interim.planned", verdict="conflict", severity="high",
+        field_id="interim.count", verdict="conflict", severity="high",
         explanation="The RFP (d-rfp) plans an interim analysis; the protocol (d-prot) does not.",
-        records=[rec("false", 98, "d-prot", "protocol"), rec("true", 4, "d-rfp", "rfp")],
+        records=[rec(0, 98, "d-prot", "protocol"), rec(1, 4, "d-rfp", "rfp")],
     )
     dismissed = Contradiction(
         field_id="study.indication", verdict="not_a_conflict",
+        # Appendix B prints this sentence beside the two wordings it settles, so
+        # the fixture has to carry one. Written the way ADJUDICATE writes them,
+        # with the internal document id in it: the renderer has to swap that for
+        # the report's own name. See
+        # `test_reasoning_and_dismissed_entries_are_in_the_appendix`.
+        explanation="Both records name the same disease; the protocol (d-prot) abbreviates it.",
         records=[
             FieldRecord(field_id="study.indication", group="phase_population", raw_value=v,
                         value=v, quote=v, confidence=0.9,
@@ -187,7 +194,7 @@ def _conflict_state():  # type: ignore[no-untyped-def]
     return RunState(
         run_id="r-1",
         resolved=[
-            ResolvedField(field_id="interim.planned", value="false", status="needs_review",
+            ResolvedField(field_id="interim.count", value=0, status="needs_review",
                           confidence=0.9, contradiction=conflict,
                           sources=[r.provenance for r in conflict.records]),
             ResolvedField(field_id="study.indication", value="AL amyloidosis", status="confirmed",
@@ -335,12 +342,12 @@ class TestReportText:
         """The variables table flags the row and points at the numbered table."""
         _use_real_registry(fields_yaml_path)
         text = _pdf_text(build_report_pdf(_conflict_state(), _registry(), generated_at="t"))
-        assert "Interim analyses planned" in text
+        assert "Number of interim analyses" in text
         # The row in All variables says so, and says where to read the detail.
-        assert "Sources disagree — see Disagreement 1" in text
+        assert "The documents disagree — see Disagreement 1" in text
         # The numbered table carries both sides with their pages, and the verdict.
-        assert "No — Protocol p.98" in text
-        assert "Yes — RFP p.4" in text
+        assert "0 — Protocol p.98" in text
+        assert "1 — RFP p.4" in text
         assert "Conflict" in text
 
     def test_confidence_is_printed_and_explained(self, fields_yaml_path) -> None:  # type: ignore[no-untyped-def]
@@ -383,6 +390,19 @@ class TestReportText:
         assert "The RFP (RFP) plans an interim analysis; the protocol (Protocol) does not." in text
         assert "Checked and dismissed (1)" in text
         assert "Light chain amyloidosis" in text
+        # The dismissed pair carries its reason too, and that reason is renamed
+        # the same way. Change 1 of the 2026-10-07 review moved nine variables
+        # into this list and they first arrived as bare values; the reason was
+        # then printed, but unrenamed, so Appendix B of
+        # r-20261008-review2-run3 showed the analyst "doc-2ea4cd79".
+        assert (
+            "Both records name the same disease; the protocol (Protocol) abbreviates it."
+            in text
+        )
+        # Scoped to the appendix: the header block on page 1 names both document
+        # ids on purpose, as the key that explains "Amendment" and "RFP".
+        appendix_b = text[text.index("Checked and dismissed (1)"):]
+        assert "d-prot" not in appendix_b, "no internal document id reaches the appendix"
 
     def test_quotes_are_in_the_evidence_appendix(self, fields_yaml_path) -> None:  # type: ignore[no-untyped-def]
         _use_real_registry(fields_yaml_path)

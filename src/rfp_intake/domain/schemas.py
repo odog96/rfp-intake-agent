@@ -15,6 +15,16 @@ class Provenance(BaseModel):
     doc_version: str | None = None
     doc_date: str | None = None
     page: int
+    # The page number printed on that page, when the document prints one and it
+    # is not the same as `page`. `page` is the page's position in the PDF file,
+    # which is what a reader scrolling a viewer sees; the printed number is what
+    # is on the paper. The protocol amendment's two cover pages make every
+    # printed number two lower than its position, and "Amendment p.11" sent
+    # Oliver Zarate to the wrong page on 2026-10-07. Added by change 7 of that
+    # day's review; filled from `Document.page_labels` by
+    # `domain/dynamic.py:extraction_response_to_records`, and None whenever the
+    # two numbers agree or no printed number could be read.
+    printed_page: str | None = None
     section: str | None = None
     char_span: tuple[int, int] | None = None
 
@@ -173,6 +183,13 @@ class RemovedPassage(BaseModel):
     heading: str
     page_start: int
     page_end: int
+    # The numbers printed on those two pages, where the document prints them and
+    # they differ from the PDF positions. Appendix C cites a removed passage by
+    # page like every other reference, so it needs the same pair of numbers. See
+    # `Provenance.printed_page`; stamped by `other_study/__init__.py`, which has
+    # the document in hand when it builds the passage.
+    printed_page_start: str | None = None
+    printed_page_end: str | None = None
     verdict: Literal["other_study", "mixed"]
     reason: str
     text: str
@@ -187,6 +204,12 @@ class Document(BaseModel):
     outline: list[OutlineEntry] = Field(default_factory=list)
     tables: list[TableData] = Field(default_factory=list)
     page_texts: dict[int, str] = Field(default_factory=dict)
+    # PDF page position -> the page number printed on that page, for the pages
+    # where the two differ and a printed number could be read. Filled by INGEST
+    # from `ingest/page_labels.py`; see `Provenance.printed_page`. Empty for a
+    # document that prints no page numbers, and for every run made before
+    # 2026-10-08, the starting run r-20261007-140411 included.
+    page_labels: dict[int, str] = Field(default_factory=dict)
     sections: list[Section] = Field(default_factory=list)
     # Text MARK_OTHER_STUDY took out because it describes a different study.
     # Stored on the document rather than only on RunState because this is what

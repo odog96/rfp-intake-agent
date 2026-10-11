@@ -36,7 +36,7 @@ def test_field_record_validation() -> None:
 
 def test_field_record_status_not_specified() -> None:
     r = FieldRecord(
-        field_id="interim.planned",
+        field_id="interim.count",
         group="interim_analyses",
         raw_value="N/A",
         quote="No interim analyses are planned",

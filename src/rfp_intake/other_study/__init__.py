@@ -151,6 +151,17 @@ def locate_sentence(doc: Document, section: Section, sentence: str) -> TextSpan 
     return None
 
 
+def _printed(doc: Document, page: int) -> str | None:
+    """The number printed on one of `doc`'s pages, where it differs from the position.
+
+    Appendix C cites a removed passage by page like every other reference, so it
+    needs the printed number too. INGEST read these; see `ingest/page_labels.py`
+    and change 7 of the 2026-10-07 review. None when the document prints no
+    number on that page, or prints the same one.
+    """
+    return doc.page_labels.get(page)
+
+
 def removals_for_verdict(
     doc: Document, section: Section, verdict: SectionVerdict
 ) -> tuple[RemovedPassage | None, list[str]]:
@@ -171,6 +182,8 @@ def removals_for_verdict(
                 heading=section.heading,
                 page_start=section.page_start,
                 page_end=section.page_end,
+                printed_page_start=_printed(doc, section.page_start),
+                printed_page_end=_printed(doc, section.page_end),
                 verdict="other_study",
                 reason=verdict.reason,
                 text="".join(pages[page] for page in sorted(pages)),
@@ -200,6 +213,8 @@ def removals_for_verdict(
             heading=section.heading,
             page_start=min(s.page for s in spans),
             page_end=max(s.page for s in spans),
+            printed_page_start=_printed(doc, min(s.page for s in spans)),
+            printed_page_end=_printed(doc, max(s.page for s in spans)),
             verdict="mixed",
             reason=verdict.reason,
             text="\n".join(kept_text),

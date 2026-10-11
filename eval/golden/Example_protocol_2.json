@@ -30,9 +30,9 @@
       "expected_status": "found",
       "notes": "Visit schedule from SoA table"
     },
-    "interim.planned": {
-      "expected_value": "yes",
-      "expected_status": "found"
+    "interim.count": {
+      "expected_status": "found",
+      "notes": "Replaced interim.planned on 2026-10-07, when that field was removed; a count of 0 says none are planned. No count is asserted here because this entry never recorded which passage it was read from."
     },
     "blinding.design": {
       "expected_status": "found"

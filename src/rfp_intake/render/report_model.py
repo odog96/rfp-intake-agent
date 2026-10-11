@@ -28,7 +28,7 @@ from typing import Any
 
 from rfp_intake.domain.registry import FieldDef, GroupDef, Registry
 from rfp_intake.domain.schemas import Contradiction, Provenance, ResolvedField, RunState
-from rfp_intake.gate import CONFIDENCE_CONFIRMED
+from rfp_intake.gate import CONFIDENCE_CONFIRMED, DISMISSED_VERDICTS
 from rfp_intake.normalize.scope import normalize_scope
 
 # A variable with more rows than this is a schedule, not a fact: in run
@@ -54,7 +54,18 @@ DECISION_VALUE_CHARS = 110
 # merging can only ever make a row look less certain, never more.
 _STATUS_RANK = {"needs_review": 0, "not_found": 1, "not_specified": 2, "confirmed": 3}
 
-NEEDS_DECISION = ("conflict", "reconcilable")
+# Verdicts that put a variable in the Disagreements table and mark its row
+# "Disagreement" — the ones where the reviewer found something a person still has
+# to settle. The counterpart is gate.DISMISSED_VERDICTS, imported above: a
+# verdict in that tuple is the reviewer saying the documents agree, and those go
+# to Appendix B instead (_dismissed). A verdict of None is in neither tuple —
+# ADJUDICATE did not reach it, so the report cannot claim either way, and
+# _review_reasons says the documents disagree without a number.
+#
+# "reconcilable" was in this tuple until 2026-10-07. Removing it is the change
+# agreed after the review of run r-20261007-140411: see gate.DISMISSED_VERDICTS
+# for why, and docs/JOURNAL.md.
+NEEDS_DECISION = ("conflict",)
 
 _KIND_CODES = {
     "rfp": "RFP",
@@ -113,6 +124,13 @@ class Row:
     # Rewordings moved to Appendix B rather than printed in the table. See
     # _fold_rewordings for exactly when that happens.
     folded: list[ValueLine] = field(default_factory=list)
+    # Set only when this row's disagreement number belongs to ANOTHER variable,
+    # through that variable's `follows_conflict_of` in config/fields.yaml: the
+    # label of the variable the documents actually disagree about. The report
+    # then names that variable instead of saying "Sources disagree", which on
+    # run r-20261008-review2-run2 sent a reader to a disagreement about the
+    # number of interim analyses looking for one about their timing.
+    follows_label: str | None = None
 
 
 @dataclass
@@ -160,6 +178,12 @@ class Dismissed:
     label: str
     scope: str | None
     values: list[Position]
+    # Why the reviewer decided the documents do not disagree, in ADJUDICATE's own
+    # words — the same text a Decision carries. Printed since 2026-10-08: change 1
+    # of the 2026-10-07 review moved nine variables out of the Disagreements
+    # table, and they arrived here as bare values, so the report stopped saying
+    # why 260 rather than 236 is the number to budget from.
+    explanation: str = ""
 
 
 @dataclass
@@ -329,6 +353,52 @@ def _same_key(items: list[str]) -> str:
 
 
 # --------------------------------------------------------------------------- #
+# Page references
+# --------------------------------------------------------------------------- #
+#
+# Change 7 of the 2026-10-07 review. A page reference names the page's position
+# in the PDF file, because that is what gets a reader to the page in a viewer.
+# The protocol amendment's own printed numbers are two lower, so "Amendment
+# p.11" sent Oliver Zarate to the wrong page when he looked for the printed 11.
+# Where the two numbers differ the reference now shows both; where they agree,
+# or no printed number was read, it shows the file position alone as before.
+# This changes how a reference is written, not where one appears.
+
+
+def format_page_ref(page: int, printed: str | None) -> str:
+    """One page: "11" on its own, or "11 (printed p.9)" when the two differ."""
+    if printed is None or printed == str(page):
+        return str(page)
+    return f"{page} (printed p.{printed})"
+
+
+def format_page_range(
+    page_start: int,
+    page_end: int,
+    printed_start: str | None,
+    printed_end: str | None,
+) -> str:
+    """A span of pages: "11 (printed p.9)", or "39-41 (printed p.37-39)".
+
+    A span whose two ends are the same page is written as one page. Where only
+    one end has a printed number, the printed span is filled in from what is
+    known rather than guessed: a missing start falls back to its file position,
+    and a missing end leaves the printed start standing alone. Nothing is
+    inferred from the offset between the two numbers — a document can restart
+    its numbering anywhere.
+    """
+    if page_start == page_end:
+        return format_page_ref(page_start, printed_start or printed_end)
+
+    span = f"{page_start}-{page_end}"
+    if printed_end is not None and printed_end != str(page_end):
+        return f"{span} (printed p.{printed_start or page_start}-{printed_end})"
+    if printed_start is not None and printed_start != str(page_start):
+        return f"{span} (printed p.{printed_start})"
+    return span
+
+
+# --------------------------------------------------------------------------- #
 # Documents
 # --------------------------------------------------------------------------- #
 
@@ -379,12 +449,23 @@ class _Docs:
         return text
 
     def pages(self, provenance: list[Provenance]) -> str:
-        """Each document once with its pages in order: "Amendment p.12, 42; RFP p.2"."""
-        pages: dict[str, set[int]] = {}
+        """Each document once with its pages in order: "Amendment p.12, 42; RFP p.2".
+
+        A page whose printed number differs from its position in the file shows
+        both — "Amendment p.11 (printed p.9), 18 (printed p.16)". See
+        `format_page_ref`.
+        """
+        pages: dict[str, dict[int, str | None]] = {}
         for p in provenance:
-            pages.setdefault(p.doc_id, set()).add(p.page)
+            printed = pages.setdefault(p.doc_id, {})
+            # Several records can cite one page. They come from the same
+            # document, so any printed number among them is that page's number;
+            # the first one found stands.
+            if printed.get(p.page) is None:
+                printed[p.page] = p.printed_page
         return "; ".join(
-            f"{self.code(doc_id)} p.{', '.join(str(n) for n in sorted(ns))}"
+            f"{self.code(doc_id)} p."
+            + ", ".join(format_page_ref(n, ns[n]) for n in sorted(ns))
             for doc_id, ns in pages.items()
         )
 
@@ -420,7 +501,11 @@ def build_report_model(state: RunState, registry: Registry) -> ReportModel:
         rows: list[Row] = []
         schedules: list[Schedule] = []
         for fd in (f for f in registry.fields if f.group == group.id):
-            field_rows = _rows_for(fd, by_field.get(fd.id, []), docs, decision_no)
+            leader = field_by_id.get(fd.follows_conflict_of or "")
+            field_rows = _rows_for(
+                fd, by_field.get(fd.id, []), docs, decision_no,
+                leader.label if leader else None,
+            )
             if any(r.status != "not_found" for r in field_rows):
                 found += 1
             if len(field_rows) > SCHEDULE_THRESHOLD:
@@ -470,10 +555,8 @@ def _removed(state: RunState, docs: _Docs) -> list[RemovedText]:
         RemovedText(
             doc_code=docs.code(p.doc_id),
             heading=p.heading,
-            pages=(
-                f"p.{p.page_start}"
-                if p.page_start == p.page_end
-                else f"p.{p.page_start}-{p.page_end}"
+            pages="p." + format_page_range(
+                p.page_start, p.page_end, p.printed_page_start, p.printed_page_end
             ),
             verdict="whole section" if p.verdict == "other_study" else "part of the section",
             reason=p.reason,
@@ -498,6 +581,7 @@ def _rows_for(
     entries: list[ResolvedField],
     docs: _Docs,
     decision_no: dict[tuple[object, ...], int],
+    follows_label: str | None = None,
 ) -> list[Row]:
     if not entries:
         return [Row(
@@ -542,6 +626,13 @@ def _rows_for(
              if rf.contradiction and _signature(rf.contradiction) in decision_no),
             None,
         )
+        # GATE hands a `follows_conflict_of` field the LEADER's contradiction, so
+        # the contradiction on this row can carry another variable's field_id.
+        # Where it does, the report names that variable.
+        borrowed = follows_label if any(
+            rf.contradiction is not None and rf.contradiction.field_id != fd.id
+            for rf in group
+        ) else None
         rows.append(_fold_rewordings(fd, Row(
             field_id=fd.id,
             label=fd.label,
@@ -551,7 +642,8 @@ def _rows_for(
             values=lines,
             verdict=verdict,
             decision_no=no,
-            reasons=_review_reasons(fd, group, no),
+            reasons=_review_reasons(fd, group, no, borrowed),
+            follows_label=borrowed,
         )))
     return rows
 
@@ -612,7 +704,10 @@ REASON_UNEXPLAINED = (
 
 
 def _review_reasons(
-    fd: FieldDef, entries: list[ResolvedField], decision_no: int | None
+    fd: FieldDef,
+    entries: list[ResolvedField],
+    decision_no: int | None,
+    follows_label: str | None = None,
 ) -> list[str]:
     """Why each flagged entry in this row is flagged, de-duplicated, in GATE's order.
 
@@ -627,8 +722,13 @@ def _review_reasons(
             continue
         if rf.derived_from:
             reason = REASON_DERIVED
-        elif rf.contradiction is not None and rf.contradiction.verdict != "not_a_conflict":
+        elif (
+            rf.contradiction is not None
+            and rf.contradiction.verdict not in DISMISSED_VERDICTS
+        ):
             reason = REASON_DISAGREE + (
+                f" on {follows_label}" if follows_label else ""
+            ) + (
                 f" — see Disagreement {decision_no}." if decision_no is not None else "."
             )
         elif rf.contradiction is not None and fd.budget_driver:
@@ -683,7 +783,9 @@ def _decisions(
             explanation=docs.name_ids(c.explanation) if c.explanation else None,
             signature=_signature(c),
         ))
-    # Conflicts before reconcilable ones, high severity first within each.
+    # High severity first. Since 2026-10-07 only "conflict" reaches this list, so
+    # the first sort key no longer separates two verdicts; it is kept so the order
+    # does not change if another verdict is ever added to NEEDS_DECISION.
     sev = {"high": 0, "medium": 1, "low": 2}
     out.sort(key=lambda d: (d.verdict != "conflict", sev.get(d.severity or "", 3)))
     for i, d in enumerate(out, 1):
@@ -723,6 +825,31 @@ def _provisional(c: Contradiction, fd: FieldDef | None, docs: _Docs) -> str | No
 def _dismissed(
     state: RunState, field_by_id: dict[str, FieldDef], docs: _Docs
 ) -> list[Dismissed]:
+    """Appendix B's dismissed list: every adjudicated verdict except "conflict".
+
+    That is every verdict in `gate.DISMISSED_VERDICTS` today, because
+    `Contradiction.verdict` allows only "conflict", "reconcilable",
+    "not_a_conflict" and None. The loop below is written as the complement of
+    `NEEDS_DECISION` rather than as a test against `DISMISSED_VERDICTS`, so a
+    fourth verdict added to that Literal and to neither tuple would be printed
+    here as checked and dismissed while GATE flagged its field for review.
+    Reported to Oliver on 2026-10-08 and deliberately not changed: the two are
+    equivalent today, and which verdicts reach this appendix is change 1's
+    subject, not something to alter unasked.
+
+    Since 2026-10-07 the list includes "reconcilable", which used to be in the
+    Disagreements table. The values are still printed, and still with the pages
+    they came from, so moving a reconcilable verdict out of the main table does
+    not take a wording out of the report — it only stops the report asking for a
+    decision the reviewer already made.
+
+    The reviewer's explanation comes with them, added 2026-10-08. Without it the
+    nine variables change 1 moved here read as two bare numbers: the report
+    usability review of run r-20261008-review2-run3 found
+    `Total number of patients / subjects` showing "260 / 236" with nothing to say
+    that 236 is the power calculation's minimum and 260 the enrolment the budget
+    is built on. ADJUDICATE wrote that sentence; it was being thrown away.
+    """
     out = []
     for c in state.contradictions:
         if c.verdict is None or c.verdict in NEEDS_DECISION:
@@ -733,6 +860,13 @@ def _dismissed(
             label=_label(field_by_id, c.field_id),
             scope=c.records[0].scope if c.records else None,
             values=_positions(c, fd, docs),
+            # Through `name_ids`, like the Disagreements explanations in
+            # `_decisions`: ADJUDICATE's prompt prints `doc_id=` for every
+            # candidate and asks it to name the document, so its sentences carry
+            # internal ids such as `doc-2ea4cd79` routinely. On the first render
+            # of this line, Appendix B of r-20261008-review2-run3 showed four
+            # of them where the Disagreements table shows "Amendment" and "RFP".
+            explanation=docs.name_ids(c.explanation) if c.explanation else "",
         ))
     return out
 
@@ -762,6 +896,27 @@ def _evidence(
             confidence=rf.confidence,
             quote=rf.quote,
             derived_from=rf.derived_from,
-            notes=rf.notes if rf.derived_from else None,
+            # A note is printed for a value the pipeline worked out — a derived
+            # field, or one a rule in config/fields.yaml decided (see
+            # reconcile/rules.py), where the note is the only thing that explains
+            # why the quote beside it answers this variable. ADJUDICATE's
+            # explanation is also kept in `notes`, and is not printed here: it is
+            # printed in full in Appendix B, under the disagreement it belongs to.
+            #
+            # `rf.contradiction is None` reads broader than those two sources,
+            # and the plan-conformance reviewer read it that way on 2026-10-08:
+            # `config/fields.yaml` asks the extraction model for `notes` on some
+            # fields, `interim.count` among them. Those notes never arrive here.
+            # DERIVE, ADJUDICATE and reconcile/rules.py are the only three
+            # writers of `ResolvedField.notes`; the model's note is written to
+            # `FieldRecord.notes`, and nothing in RECONCILE copies it across —
+            # the four `ResolvedField` calls in reconcile/__init__.py pass no
+            # `notes` at all, and the fifth, reconcile/rules.py:102, passes the
+            # rule's own `because` sentence. Pinned by
+            # tests/reconcile/test_reconcile.py::TestARecordsOwnNoteStaysOnTheRecord,
+            # which covers the three of those five that have a record to copy a
+            # note from, so if that ever changes a test says so rather than a
+            # report.
+            notes=rf.notes if (rf.derived_from or rf.contradiction is None) else None,
         ))
     return out

@@ -222,8 +222,10 @@ than `Document.outline` entries, and the excerpt EXTRACT sends holds only the ch
 **Stage 3, 2026-10-02, added SET_ASIDE_SECTIONS** (§4.2b): the two dozen kinds of section an analyst
 skips entirely come off `Document.sections` before PLAN scores them. **Stage 4, 2026-10-02, added
 MARK_OTHER_STUDY** (§4.2c): the one node of the four that calls a model, which labels passages that
-describe a different study so that code can cut their text out before PLAN scores anything. All four
-nodes of `docs/PLAN_2026-10-02.md` between CLASSIFY and PLAN are now built.
+describe an *earlier or completed* study so that code can cut their text out before PLAN scores
+anything. All four nodes of `docs/PLAN_2026-10-02.md` between CLASSIFY and PLAN are now built.
+Text about a study being run **alongside** this one is kept, which change 6 of the 2026-10-07 review
+narrowed this node to on 2026-10-08; see §4.2c.
 
 **Every edge is a static Python edge or a `Send`.** There are no LLM-chosen routes and no agent delegation.
 In MVP there is exactly one conditional edge: `ADJUDICATE` is skipped when the candidate set is empty.
@@ -254,7 +256,8 @@ class Provenance(BaseModel):
     doc_kind: Literal["rfp", "protocol", "amendment", "soa", "other"]
     doc_version: str | None = None      # amendment number / version label if detected
     doc_date: str | None = None         # ISO; drives recency precedence
-    page: int                            # 1-indexed, as printed if detectable
+    page: int                            # 1-indexed position in the PDF file
+    printed_page: str | None = None      # the number printed on that page, when it differs
     section: str | None = None           # nearest enclosing heading
     char_span: tuple[int, int] | None = None
 
@@ -334,6 +337,21 @@ a fan-in branch returns a plain list. Fixed 2026-08-27.
 do, and `extraction.json` does not carry them — `render/json_renderer.py` writes resolved fields,
 contradictions and errors, not documents.
 
+**Four fields carry the printed page number, added 2026-10-08** (change 7 of the 2026-10-07 review).
+`Document.page_labels` maps a PDF page position to the number printed on that page, filled by INGEST from
+`ingest/page_labels.py` — the PDF's own page labels where it declares them, otherwise the number read off
+the page. It is empty where a document prints nothing, and holds **only the pages whose printed number
+differs from the position**, so a reference needs no second number wherever the key is absent. A page
+printing its own position is dropped *after* the whole document's numbers have been checked for rising,
+never before: a document whose pages 1 and 2 both print "1" has been misread and the whole map is thrown
+away, which dropping page 1 first would hide.
+`Provenance.printed_page` is stamped from it by `domain/dynamic.py`, the one place a `Provenance` is
+built, which is what makes every reference in the report carry the pair without any other node knowing.
+`RemovedPassage.printed_page_start` / `_end` do the same for Appendix C. Every printed number in all four
+of those fields is a `str`, not an `int`: a printed number can be "ix" or "A-3". Only the keys of
+`Document.page_labels` are `int`, because a key is a position in the file. `page` stays the position in the file and is what every offset and
+every quote check is expressed in — nothing in the pipeline looks a page up by its printed number.
+
 **`RunState` gained `set_aside` on 2026-10-02** (stage 3). It holds one `SetAsideSection` per section
 SET_ASIDE_SECTIONS removed — document, section id, heading, pages, and either the
 `config/sections.yaml` entry that matched the heading or the parent section that took it. It has **no
@@ -355,7 +373,9 @@ class Section(BaseModel):
 
 class Document(BaseModel):
     ...
+    page_labels: dict[int, str] = {}   # PDF page -> the number printed on it, where they differ
     sections: list[Section] = []
+    removed: list[RemovedPassage] = [] # what MARK_OTHER_STUDY cut; page_texts keeps it
     section_source: Literal[
         "bookmarks", "whole_document", "heading_scan", "whole_document_fallback"
     ] | None = None
@@ -559,8 +579,21 @@ MARK_OTHER_STUDY doing anything. Stage 4 has now passed twice on its own — run
 1.3 and would go with it, but `keep_if_contains` rescues it on the phrase "interim analysis" — and that
 phrase sits in one of the very sentences MARK_OTHER_STUDY then removes. The rescue is real, because
 stage 3 runs before stage 4, but a protocol that worded its interim analysis differently would lose the
-section, and the section is not meant to go whole: MARK_OTHER_STUDY cuts the five sentences about study
-NEOD001-001 and the rest is this study's text.
+section before MARK_OTHER_STUDY ever saw it, and the section has to reach the model for the model's
+judgement to be the thing that removes it.
+
+**What MARK_OTHER_STUDY then does with section 1.3.2 changed on 2026-10-08.** This paragraph used to
+end "the section is not meant to go whole: MARK_OTHER_STUDY cuts the five sentences about study
+NEOD001-001 and the rest is this study's text." That was written from runs
+`r-20261002-213531-stage4` and `r-20261002-222824-stage4b`, where the model returned `mixed`. Change 6
+of the 2026-10-07 review rewrote the prompt, and it now says that a section which opens by naming an
+earlier study and then reports its results is `other_study` as a whole. Run
+`r-20261008-review2-run3` removed section 1.3.2 whole, with `verdict: other_study`, and Appendix C of
+that report prints "1.3.2 Clinical Experience — Amendment p.39-40 (printed p.37-38), whole section".
+Either verdict keeps `study.phase` right, which is what the section was blocking; the one thing the
+prompt must not do is remove a companion study the sponsor is running alongside this one, and
+`tests/other_study/test_other_study_real_document.py` holds both halves of that against the real
+document.
 `tests/sections/test_set_aside_samples.py::TestTheBackgroundAndNonclinicalSections` asserts the survival
 and records why, so the day it stops being true a test fails instead of a number going missing.
 
@@ -611,6 +644,21 @@ on keywords.
    `other_study_sentence_not_found`. A paraphrase therefore costs nothing; only a verbatim copy cuts
    text. The prompt says so, and it says to answer `this_study` when unsure: keeping a passage costs
    some tokens, removing one wrongly loses a number the budget needs.
+
+**What counts as a different study was narrowed on 2026-10-08** (change 6 of the 2026-10-07 review).
+"A different study" now means an **earlier or completed** study. Text describing a study the sponsor is
+running **alongside** this one is kept, and so is a follow-on or extension study, a rollover, and any
+study sharing sites, staff or patients with this one. Angus Gray asked for this because that text is
+where the sponsor says how much of the work is shared, which is a budget question: a study sharing 80%
+of its sites is not the same bid as a standalone one. "Ongoing" alone does not make a study a companion
+one — an earlier study still enrolling is still an earlier study — so the prompt turns on what the text
+says the study's relationship to this one is, not on its tense. The criterion lives in
+`other_study/prompt.py` and nowhere else; no node and no field reads it. The worked examples in that
+prompt are quoted from `samples/Example protocol 2.pdf` character for character, because `locate_text`
+folds whitespace and case but **not** punctuation: an example written with a straight apostrophe where
+the document prints a typographic one teaches the model a sentence that cannot be located, and an
+unlocatable sentence is kept. `tests/other_study/test_other_study_real_document.py` holds every example
+against the real document for that reason.
 
 **The study the documents are about is named in the prompt**, from `Document.protocol_id` and
 `Document.title` as CLASSIFY recorded them, preferring the protocol's own values over an RFP's. CLASSIFY
@@ -736,6 +784,25 @@ Group records by `(field_id, scope)`. Then:
   documents is real signal — reward it).
 - **n records, canonical values differ** → emit a `Contradiction` candidate. Do not resolve yet.
 
+**A record that says "not specified" does not compete, added 2026-10-08** (change 2 of the 2026-10-07
+review). Where at least one record in the group answers, `_competing_records` drops the records whose
+value is `not_specified` before the values are compared, so silence from one document is no longer a
+disagreement with an answer from the other. Where **every** record says nothing, they are all kept and the
+field resolves to Not specified exactly as before. The filter matches `str` values only, so an integer `0`
+can never be read as silence — `not_found`, `not_specified` and `0` stay three different answers. A
+dropped record is still cited in the resolved field's `sources`, so Appendix A keeps its quote; it is no
+longer among the `Contradiction`'s records, so the page on which a document said nothing is no longer
+cited in the Disagreements positions. That second part is a loss of evidence and is recorded as open in
+`CLAUDE.md`.
+
+**RECONCILE ends by applying the registry's resolution rules, added 2026-10-08** (change 3). After the
+loop above, `reconcile/rules.py:apply_resolution_rules` reads the `resolution_rules` block of
+`config/fields.yaml`: where a trigger field resolved to one of the values the rule names, the rule's own
+field is resolved to the rule's value at the stated confidence, carrying the **trigger field's** sources
+and quote as its evidence. It names no field in Python — the only field ids are in the registry, and
+`domain/registry.py` validates that the trigger field, its listed values and the rule's own value all
+exist in `config/fields.yaml`. The rule in use makes First-in-human "No" for a Phase 2, 3 or 4 study.
+
 Precedence policy (`config/precedence.yaml`), applied only after adjudication:
 1. **Recency** — a later amendment beats an earlier protocol version. Always first.
 2. **Domain authority** — Protocol wins on scientific/design facts (phase, design, dosing, interim analyses,
@@ -826,18 +893,44 @@ Maps confidence and contradiction state to a reviewer-facing status:
 | Condition | Status |
 |---|---|
 | single or corroborated source, conf ≥ 0.80, quote validated | `confirmed` |
-| conf 0.50–0.80, or derived, or `reconcilable` verdict | `needs_review` |
+| conf 0.50–0.80, or derived | `needs_review` |
 | `conflict` verdict, or conf < 0.50, or budget_driver with any disagreement | `needs_review` (flagged) |
+| the field named in this field's `follows_conflict_of` has such a disagreement | `needs_review` (flagged) |
 | explicit none/N/A in source | `not_specified` |
 | searched, absent | `not_found` |
 
 Calibrate the thresholds against the golden set — do not ship the numbers above as gospel, ship the mechanism.
 
-**The implementation is deliberately stricter than the table's last row.** A `budget_driver`
-field forces `needs_review` on *any* adjudicated verdict, including `not_a_conflict` — not just
-on `conflict`/`reconcilable`. A misjudged "these don't really disagree" on a site count is the
-costliest place ADJUDICATE's single LLM call can be wrong, and that call is the only
-non-deterministic step upstream of the number a budget is built from. See `gate/__init__.py`.
+**A `reconcilable` verdict no longer forces `needs_review`, and the second row of the table above
+said it did until 2026-10-08.** That row is corrected rather than annotated, because it was the
+specification of a behaviour Oliver Zarate and Angus Gray decided against: a `reconcilable` verdict is
+the adjudicating reviewer saying the documents do not disagree, and a report that then asked a person
+to settle it was asking twice. The verdict is now listed in `gate.DISMISSED_VERDICTS` alongside
+`not_a_conflict`, so a field holding one takes its status from the rest of the table — a non-budget
+driver at conf ≥ 0.80 reaches `confirmed`. Agreed as change 1 of the 2026-10-07 review; see the
+2026-10-08 entry in `docs/JOURNAL.md`. The row below is unchanged: a budget driver still goes to
+`needs_review` whatever the verdict, so no number a budget is built from is confirmed on the strength
+of that one LLM call.
+
+**What "budget_driver with any disagreement" means, in the third row.** *Any* means any adjudicated
+verdict, including `not_a_conflict` and `reconcilable` — not just `conflict`. A misjudged "these don't
+really disagree" on a site count is the costliest place ADJUDICATE's single LLM call can be wrong, and
+that call is the only non-deterministic step upstream of the number a budget is built from. See
+`gate/__init__.py`. Until 2026-10-08 this paragraph said the implementation was "deliberately stricter
+than the table's last row": the clause was not in the table at all then, and the row it meant was in a
+different place before change 4 inserted the `follows_conflict_of` row. The table now states the rule,
+so there is nothing left for the code to be stricter than.
+
+**`follows_conflict_of` gives one field another's disagreement, added 2026-10-08** (change 4 of the
+2026-10-07 review). A field whose registry entry names another field takes that field's `Contradiction`
+**by reference** when it has none of its own, so it goes to `needs_review` and the report prints one
+disagreement number for both rows rather than two. It exists because the number of interim analyses and
+the timing of each are one dispute: the documents disagree about whether there is an interim analysis at
+all, and a timing row that said Confirmed beside it was confirming the timing of something that may not
+happen. GATE follows exactly one hop and reads the field id off the registry, so no field is named in
+Python. The report then names the other variable on the borrowed row — "The documents disagree on Number
+of interim analyses" — because a reader sent to a disagreement about counts by a bare pointer on a timing
+row finds nothing about timing there.
 
 ### 4.10 RENDER — pure functions, not a graph node
 Canonical JSON is the source of truth; renderers are pure functions over it.

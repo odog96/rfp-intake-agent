@@ -167,12 +167,13 @@ groups:
     search_hints:
       headings: ["Number of Sites", "Number of Subjects", "Sample Size", "Countries",
                  "Scope of Work", "Assumptions", "Budget Assumptions", "Study Scope",
-                 "CRF", "Data Management", "Site Distribution"]
+                 "Study Overview", "CRF", "Data Management", "Site Distribution"]
       keywords: ["number of sites", "investigative sites", "number of subjects", "number of patients",
                  "planned enrolment", "sample size", "screen failure rate", "CRF pages", "eCRF pages",
                  "unique CRF", "SSV", "site selection visit", "SIV", "site initiation visit",
                  "IMV", "interim monitoring visit", "COV", "close-out visit", "pharmacy visit",
-                 "booster visit", "remote monitoring", "centralised monitoring", "co-monitoring"]
+                 "booster visit", "remote monitoring", "centralised monitoring", "co-monitoring",
+                 "site qualification visit", "pharmacy monitoring", "time on site"]
       requires_tables: true
 
   - id: clinical_monitoring
@@ -245,6 +246,21 @@ fields:
       Whether the drug has never been given to a person before. If so, safety monitoring is much
       heavier and the first doses go to one person at a time.
     source_priority: protocol
+    # A Phase 2, 3 or 4 study is never first-in-human: by the time a drug reaches
+    # Phase 2 it has already been given to people in Phase 1. Angus Gray stated
+    # the rule on the 2026-10-07 call (transcript 00:29-00:32) — answer No, full
+    # confidence, no passage needs to be searched for. Phase 1 and Phase 1/2 are
+    # deliberately absent: those are the studies that do need checking, and they
+    # are extracted as before.
+    resolution_rules:
+      - when_field: study.phase
+        when_value_in: [phase_2, phase_2_3, phase_3, phase_3_4, phase_4]
+        value: no
+        confidence: 1.0
+        because: >
+          A Phase 2, 3 or 4 study is never first-in-human: the drug has already been
+          given to people in an earlier phase. Read from the study phase, not from a
+          passage about first-in-human status.
 
   - id: design.healthy_volunteers
     group: study_design
@@ -338,28 +354,33 @@ fields:
     source_priority: protocol
 
 # --- Group 3: Interim Analyses ----------------------------------------------
-  - id: interim.planned
-    group: interim_analyses
-    label: Interim analyses planned
-    type: enum
-    values: [yes, no, not_specified]
-    aliases: ["interim analysis", "interim analyses", "IA", "planned interim"]
-    hint: >
-      Formal planned interim analyses only. A DSMB/IDMC safety review is NOT automatically an
-      interim analysis — capture it only if the document frames it as one, and note the distinction
-      in `notes`.
-    plain: >
-      Whether the results are formally analysed before the study ends, to decide whether to carry
-      on. Each analysis needs its own data cut, statistics and committee meeting.
-    # Angus: this can appear in EITHER document. No blanket protocol precedence.
-    source_priority: any
-    budget_driver: true
-
+  # `interim.planned` — "Interim analyses planned", yes or no — was removed on
+  # 2026-10-07 at Angus Gray's request (change 4 of that day's review). A count
+  # of 0 already says none are planned, and two rows answering the same question
+  # side by side is how run r-20261007-140411 came to show "Interim analyses
+  # planned: No" next to "Number of interim analyses: 1", with the disagreement
+  # flagged on the yes/no row and the count confirmed. The count carries the
+  # question now, and the hint below is what makes an explicit "no interim
+  # analyses are planned" come back as 0 rather than as nothing found.
   - id: interim.count
     group: interim_analyses
     label: Number of interim analyses
     type: int
-    hint: Only if explicitly stated or unambiguously enumerable from the document.
+    aliases: ["interim analysis", "interim analyses", "IA", "planned interim"]
+    hint: >
+      How many formal interim analyses are planned. Only if explicitly stated or unambiguously
+      enumerable from the document. WHERE THE DOCUMENT STATES THAT NO INTERIM ANALYSES ARE
+      PLANNED — "no interim analyses are planned for this study", "no formal interim analysis will
+      be performed" — THE ANSWER IS 0, with that sentence as the quote. 0 is a real answer and is
+      not the same as finding nothing: leave the field out only where the document does not say.
+      Formal planned interim analyses only. A DSMB/IDMC safety review is NOT automatically an
+      interim analysis — capture it only if the document frames it as one, and note the distinction
+      in `notes`.
+    plain: >
+      How many times the results are formally analysed before the study ends, to decide whether to
+      carry on. Each analysis needs its own data cut, statistics and committee meeting. 0 means
+      none are planned.
+    # Angus: this can appear in EITHER document. No blanket protocol precedence.
     source_priority: any
     budget_driver: true
 
@@ -370,6 +391,12 @@ fields:
     aliases: ["after N events", "when X% enrolled", "after N subjects complete"]
     hint: One entry per interim analysis, describing when it is expected to occur.
     source_priority: any
+    # When the documents disagree about how many interim analyses there are, they
+    # disagree about this row too, and this row cannot see it: RECONCILE never
+    # compares a list across documents (reconcile/__init__.py _merge_collection),
+    # so one document's timing was shown as Confirmed in run r-20261007-140411
+    # while the count beside it was in dispute. Change 4 of that review.
+    follows_conflict_of: interim.count
 
 # --- Group 4: Treatment and Dosing ------------------------------------------
   - id: ip.form
@@ -572,7 +599,7 @@ fields:
     # `yes` and `no` as booleans, so the registry turns them into the strings
     # `true` and `false` whatever is written here. And every other yes-or-no
     # field in this file already uses `true`/`false` — design.first_in_human,
-    # design.healthy_volunteers, interim.planned, dosing.varies_by_cohort,
+    # design.healthy_volunteers, dosing.varies_by_cohort,
     # monitoring.unblinded_required, monitoring.frequency_requested — so making
     # this one the exception would be the surprise, not the fix. The
     # blinding.placebo_assumption rubric reads this value, and
@@ -705,26 +732,180 @@ fields:
     source_priority: rfp
     budget_driver: true
 
-  - id: ops.monitoring_visits
+  # The five rows below replaced `ops.monitoring_visits` ("Number of monitoring
+  # visits by type") on 2026-10-07, change 5 of that day's review. That one field
+  # was a list of objects, and the report printed it as
+  # "75 visits total (1 per site), 750 visits total (10 per site), 300 visits
+  # total (4 per site)" in run r-20261007-140411 — three numbers with nothing
+  # saying which kind of visit each belongs to. `monitoring.onsite_remote_mix`
+  # went at the same time: it described a split without saying which visit type
+  # it was describing, so each row below carries its own split instead.
+  #
+  # One row per visit type, in the order the five appear here, all still in the
+  # Operational Metrics and Volumes group where the field they replaced sat.
+  # Each is `text`, not a number, because the row has to carry the document's own
+  # wording: the sponsor may state a per-site figure, a total, a percentage of
+  # sites, or that it will do the visits itself, and the pipeline must do no
+  # calculation (CLAUDE.md and the review prompt both forbid it).
+  - id: ops.visits_site_selection
     group: operational_metrics
-    label: Number of monitoring visits by type
-    type: object[]
-    schema:
-      visit_type: enum[ssv, siv, imv, cov, pharmacy, booster, remote, centralised,
-                       co_monitoring, other]
-      count: int
-      per: enum[per_site, per_study, per_country, not_specified]
-      notes: text
-    aliases: ["SSV", "site selection visit", "SIV", "site initiation visit", "IMV",
-              "interim monitoring visit", "COV", "close-out visit", "pharmacy visit",
-              "booster visit", "remote monitoring visit", "centralised monitoring",
-              "co-monitoring visit", "pre-study visit", "PSV"]
+    label: Site selection visits
+    type: text
+    aliases: ["SSV", "site selection visit", "site qualification visit",
+              "pre-study visit", "PSV", "site evaluation visit"]
     hint: >
-      `per` is critical: "4 IMVs" per site versus per study differ by two orders of magnitude
-      in the budget. If the document does not say, set per=not_specified rather than assuming.
+      ANSWER IN ONE ROW, IN THE DOCUMENT'S OWN WORDS. Say how many site selection visits the document states,
+      copying the figure exactly as written — a number of visits, a per-site figure, or a
+      percentage such as "75% of sites" — and then the sentence or table entry it came from,
+      including any split between visits done on site and visits done remotely. DO NO ARITHMETIC:
+      never turn a percentage into a count and never multiply a per-site figure by the number of
+      sites. If the document states both a per-site figure and a total, give both as it gives them.
+      THE VALUE MUST CARRY EVERY FIGURE THE DOCUMENT GIVES FOR THIS VISIT TYPE in the one table
+      entry or sentence that states it: the per-site figure, the total, the hours or days on site
+      per visit, and any split between visits done on site and visits done remotely. A value that
+      gives the count and drops the hours has lost half of what the visit is costed from.
+      QUOTE THE SHORTEST UNBROKEN RUN OF THE DOCUMENT'S OWN CHARACTERS THAT CONTAINS THE FIGURE.
+      These figures usually sit in a two-column table whose label and figure are on separate lines,
+      so do not join text across the two columns, do not re-order lines and do not tidy the spacing
+      — a quote that is not in the text character for character is thrown away and the row is lost.
+      A SHORT EXACT FRAGMENT IS BETTER THAN A LONG TIDY ONE: where you cannot reproduce the whole
+      entry character for character, quote only the few words around the figure, as they appear.
+      The value may read as one tidy sentence; the quote may not.
+      Where the document says the sponsor will do site selection visits itself, say that in the document's own
+      words. Leave the field out only where no document mentions site selection visits at all.
     plain: >
-      Visits by the sponsor's or CRO's monitor to check a site — not the participant's appointments.
-      Whether a count is per site or for the whole study changes the budget enormously.
+      Visits to look a site over before it is chosen — made by the sponsor's or the CRO's monitor,
+      not appointments for a participant. Each one is travel, a day of a monitor's time and a
+      report.
+    source_priority: rfp
+    budget_driver: true
+
+  - id: ops.visits_site_initiation
+    group: operational_metrics
+    label: Site initiation visits
+    type: text
+    aliases: ["SIV", "site initiation visit", "site activation visit",
+              "green light visit", "start-up visit"]
+    hint: >
+      ANSWER IN ONE ROW, IN THE DOCUMENT'S OWN WORDS. Say how many site initiation visits the document states,
+      copying the figure exactly as written — a number of visits, a per-site figure, or a
+      percentage such as "75% of sites" — and then the sentence or table entry it came from,
+      including any split between visits done on site and visits done remotely. DO NO ARITHMETIC:
+      never turn a percentage into a count and never multiply a per-site figure by the number of
+      sites. If the document states both a per-site figure and a total, give both as it gives them.
+      THE VALUE MUST CARRY EVERY FIGURE THE DOCUMENT GIVES FOR THIS VISIT TYPE in the one table
+      entry or sentence that states it: the per-site figure, the total, the hours or days on site
+      per visit, and any split between visits done on site and visits done remotely. A value that
+      gives the count and drops the hours has lost half of what the visit is costed from.
+      QUOTE THE SHORTEST UNBROKEN RUN OF THE DOCUMENT'S OWN CHARACTERS THAT CONTAINS THE FIGURE.
+      These figures usually sit in a two-column table whose label and figure are on separate lines,
+      so do not join text across the two columns, do not re-order lines and do not tidy the spacing
+      — a quote that is not in the text character for character is thrown away and the row is lost.
+      A SHORT EXACT FRAGMENT IS BETTER THAN A LONG TIDY ONE: where you cannot reproduce the whole
+      entry character for character, quote only the few words around the figure, as they appear.
+      The value may read as one tidy sentence; the quote may not.
+      Where the document says the sponsor will do site initiation visits itself, say that in the document's own
+      words. Leave the field out only where no document mentions site initiation visits at all.
+    plain: >
+      Visits to start a site up once it has been chosen — training the site's staff and checking it
+      is ready to enrol. Usually one per site, so the count follows the number of sites.
+    source_priority: rfp
+    budget_driver: true
+
+  - id: ops.visits_interim_monitoring
+    group: operational_metrics
+    label: Interim monitoring visits
+    type: text
+    aliases: ["IMV", "interim monitoring visit", "routine monitoring visit",
+              "periodic monitoring visit", "ongoing monitoring visit"]
+    hint: >
+      ANSWER IN ONE ROW, IN THE DOCUMENT'S OWN WORDS. Say how many interim monitoring visits the document states,
+      copying the figure exactly as written — a number of visits, a per-site figure, or a
+      percentage such as "75% of sites" — and then the sentence or table entry it came from,
+      including any split between visits done on site and visits done remotely. DO NO ARITHMETIC:
+      never turn a percentage into a count and never multiply a per-site figure by the number of
+      sites. If the document states both a per-site figure and a total, give both as it gives them.
+      THE VALUE MUST CARRY EVERY FIGURE THE DOCUMENT GIVES FOR THIS VISIT TYPE in the one table
+      entry or sentence that states it: the per-site figure, the total, the hours or days on site
+      per visit, and any split between visits done on site and visits done remotely. A value that
+      gives the count and drops the hours has lost half of what the visit is costed from.
+      QUOTE THE SHORTEST UNBROKEN RUN OF THE DOCUMENT'S OWN CHARACTERS THAT CONTAINS THE FIGURE.
+      These figures usually sit in a two-column table whose label and figure are on separate lines,
+      so do not join text across the two columns, do not re-order lines and do not tidy the spacing
+      — a quote that is not in the text character for character is thrown away and the row is lost.
+      A SHORT EXACT FRAGMENT IS BETTER THAN A LONG TIDY ONE: where you cannot reproduce the whole
+      entry character for character, quote only the few words around the figure, as they appear.
+      The value may read as one tidy sentence; the quote may not.
+      Where the document says the sponsor will do interim monitoring visits itself, say that in the document's own
+      words. Leave the field out only where no document mentions interim monitoring visits at all.
+    plain: >
+      The repeat visits a monitor makes to a site while the study is running. These are the largest
+      monitoring cost in most budgets, because there are several per site.
+    source_priority: rfp
+    budget_driver: true
+
+  - id: ops.visits_close_out
+    group: operational_metrics
+    label: Close-out visits
+    type: text
+    aliases: ["COV", "close-out visit", "closeout visit", "site closure visit",
+              "site close-out visit", "termination visit"]
+    hint: >
+      ANSWER IN ONE ROW, IN THE DOCUMENT'S OWN WORDS. Say how many close-out visits the document states,
+      copying the figure exactly as written — a number of visits, a per-site figure, or a
+      percentage such as "75% of sites" — and then the sentence or table entry it came from,
+      including any split between visits done on site and visits done remotely. DO NO ARITHMETIC:
+      never turn a percentage into a count and never multiply a per-site figure by the number of
+      sites. If the document states both a per-site figure and a total, give both as it gives them.
+      THE VALUE MUST CARRY EVERY FIGURE THE DOCUMENT GIVES FOR THIS VISIT TYPE in the one table
+      entry or sentence that states it: the per-site figure, the total, the hours or days on site
+      per visit, and any split between visits done on site and visits done remotely. A value that
+      gives the count and drops the hours has lost half of what the visit is costed from.
+      QUOTE THE SHORTEST UNBROKEN RUN OF THE DOCUMENT'S OWN CHARACTERS THAT CONTAINS THE FIGURE.
+      These figures usually sit in a two-column table whose label and figure are on separate lines,
+      so do not join text across the two columns, do not re-order lines and do not tidy the spacing
+      — a quote that is not in the text character for character is thrown away and the row is lost.
+      A SHORT EXACT FRAGMENT IS BETTER THAN A LONG TIDY ONE: where you cannot reproduce the whole
+      entry character for character, quote only the few words around the figure, as they appear.
+      The value may read as one tidy sentence; the quote may not.
+      Where the document says the sponsor will do close-out visits itself, say that in the document's own
+      words. Leave the field out only where no document mentions close-out visits at all.
+    plain: >
+      The last visit to a site, to collect the paperwork and shut the site down. Usually one per
+      site.
+    source_priority: rfp
+    budget_driver: true
+
+  - id: ops.visits_pharmacy_monitoring
+    group: operational_metrics
+    label: Pharmacy monitoring visits
+    type: text
+    aliases: ["pharmacy monitoring visit", "pharmacy visit", "drug accountability visit",
+              "IP accountability visit", "unblinded pharmacy visit"]
+    hint: >
+      ANSWER IN ONE ROW, IN THE DOCUMENT'S OWN WORDS. Say how many pharmacy monitoring visits the document states,
+      copying the figure exactly as written — a number of visits, a per-site figure, or a
+      percentage such as "75% of sites" — and then the sentence or table entry it came from,
+      including any split between visits done on site and visits done remotely. DO NO ARITHMETIC:
+      never turn a percentage into a count and never multiply a per-site figure by the number of
+      sites. If the document states both a per-site figure and a total, give both as it gives them.
+      THE VALUE MUST CARRY EVERY FIGURE THE DOCUMENT GIVES FOR THIS VISIT TYPE in the one table
+      entry or sentence that states it: the per-site figure, the total, the hours or days on site
+      per visit, and any split between visits done on site and visits done remotely. A value that
+      gives the count and drops the hours has lost half of what the visit is costed from.
+      QUOTE THE SHORTEST UNBROKEN RUN OF THE DOCUMENT'S OWN CHARACTERS THAT CONTAINS THE FIGURE.
+      These figures usually sit in a two-column table whose label and figure are on separate lines,
+      so do not join text across the two columns, do not re-order lines and do not tidy the spacing
+      — a quote that is not in the text character for character is thrown away and the row is lost.
+      A SHORT EXACT FRAGMENT IS BETTER THAN A LONG TIDY ONE: where you cannot reproduce the whole
+      entry character for character, quote only the few words around the figure, as they appear.
+      The value may read as one tidy sentence; the quote may not.
+      Where the document says the sponsor will do pharmacy monitoring visits itself, say that in the document's own
+      words. Leave the field out only where no document mentions pharmacy monitoring visits at all.
+    plain: >
+      Visits to a site's pharmacy to check the study drug — how much is there, how it was stored
+      and where each dose went. On a blinded study these are often done by a different monitor
+      from the one who visits the rest of the site.
     source_priority: rfp
     budget_driver: true
 
@@ -759,13 +940,11 @@ fields:
              site_specific, phase_specific, cohort_specific, not_specified]
     source_priority: rfp
 
-  - id: monitoring.onsite_remote_mix
-    group: clinical_monitoring
-    label: On-site vs remote monitoring mix
-    type: text
-    aliases: ["remote monitoring", "on-site monitoring", "hybrid monitoring", "centralised monitoring"]
-    source_priority: rfp
-    budget_driver: true
+  # `monitoring.onsite_remote_mix` — "On-site vs remote monitoring mix" — was
+  # removed on 2026-10-07 by change 5 of that day's review. It held a split
+  # without saying which visit type the split was about, which is unusable in a
+  # budget. Each of the five visit-type rows in operational_metrics now carries
+  # its own on-site versus remote wording.
 
   - id: monitoring.sdv_expectation
     group: clinical_monitoring

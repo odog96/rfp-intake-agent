@@ -57,6 +57,27 @@ class TestIngestRunDir:
         assert len(result["errors"]) == 1
         assert "no pdf" in result["errors"][0].error.lower()
 
+    def test_ingest_records_the_number_printed_on_each_page(self, run_with_pdf: str) -> None:
+        """Change 7 of the 2026-10-07 review.
+
+        The synthetic RFP is an extract of a 34-page document, so its "Page N of
+        34" footers do not match its own page positions — page 3 of the file
+        prints 10. A reader sent to "RFP p.3" needs to be told both.
+        """
+        state = RunState(run_id=run_with_pdf)
+        [doc] = ingest_node(state)["documents"]
+
+        assert doc.page_labels[3] == "10"
+        assert doc.page_labels[5] == "14"
+        assert 4 not in doc.page_labels, "page 4 prints no number; nothing is guessed"
+        # Pages 1 and 2 of this file print "1" and "2". Added 2026-10-08: until
+        # then this test passed whether or not `read_page_labels` dropped a page
+        # printing its own position, so the fix that drops them had no coverage
+        # on a real document at all.
+        assert 1 not in doc.page_labels and 2 not in doc.page_labels, (
+            "a page printing its own position gives the reader no second number"
+        )
+
     def test_ingest_multiple_pdfs(self, run_dir: Path) -> None:
         run_id = "multi-pdf-run"
         inputs = run_dir / run_id / "inputs"

@@ -43,6 +43,53 @@ class ObjectFieldSchema(BaseModel):
     fields: dict[str, str] = Field(default_factory=dict)
 
 
+def _as_value_token(v: Any) -> str:
+    """YAML's `no` is a boolean; config/fields.yaml means the enum token "no"."""
+    return str(v).lower() if isinstance(v, bool) else str(v)
+
+
+class ResolutionRule(BaseModel):
+    """One answer a clinical reviewer says follows from another field's answer.
+
+    Added 2026-10-07 for change 3 of that day's review: Angus Gray's rule that a
+    Phase 2, 3 or 4 study is never first-in-human, so the answer is No at full
+    confidence and no passage needs to be searched for. The rule lives in
+    config/fields.yaml next to the field it answers, because it is clinical
+    knowledge rather than code — non-negotiable rule 4 forbids keying pipeline
+    behaviour to a field name in Python, and a rule written here is read by
+    reconcile/rules.py without naming any field.
+
+    `because` is printed as the resolved field's note, so a reviewer reading
+    report.pdf sees why the pipeline answered without quoting a passage about
+    the field itself. The evidence shown is the trigger field's own passage.
+    """
+
+    when_field: str
+    when_value_in: list[str]
+    value: str
+    confidence: float = Field(default=1.0, ge=0.0, le=1.0)
+    because: str | None = None
+
+    @field_validator("when_value_in", mode="before")
+    @classmethod
+    def _coerce_tokens(cls, v: Any) -> Any:
+        if isinstance(v, list):
+            return [_as_value_token(item) for item in v]
+        return v
+
+    @field_validator("value", mode="before")
+    @classmethod
+    def _coerce_value(cls, v: Any) -> Any:
+        return _as_value_token(v)
+
+    @field_validator("because", mode="before")
+    @classmethod
+    def _one_line(cls, v: Any) -> Any:
+        # YAML's folded block scalar leaves a trailing newline, and this text is
+        # printed in a report line.
+        return " ".join(str(v).split()) if v is not None else None
+
+
 class FieldDef(BaseModel):
     id: str
     group: str
@@ -73,6 +120,18 @@ class FieldDef(BaseModel):
     derived: bool = False
     derived_from: list[str] | None = None
     schema_def: dict[str, str] | None = Field(default=None, alias="schema")
+    # Answers that follow from another field's answer. See ResolutionRule.
+    resolution_rules: list[ResolutionRule] = Field(default_factory=list)
+    # Another field whose disagreement is this field's disagreement too, named
+    # where a reviewer can see it rather than worked out by code that could not
+    # know. A list field is the case that needs it: RECONCILE folds a list's
+    # records into one answer instead of comparing them across documents, so a
+    # list cannot notice that the documents disagree about it, however plainly
+    # they do. GATE reads this and marks the field with the same disagreement
+    # number, so the report points at one disagreement from both rows. Added
+    # 2026-10-07 for change 4 of that day's review (interim.timing following
+    # interim.count).
+    follows_conflict_of: str | None = None
 
     model_config = {"populate_by_name": True}
 
@@ -136,6 +195,50 @@ def _validate_registry(groups: list[GroupDef], fields: list[FieldDef]) -> None:
                         errors.append(
                             f"Derived field {f.id} references unknown field: {ref}"
                         )
+
+    # A field follows a real other field's disagreement, and not its own.
+    for f in fields:
+        if f.follows_conflict_of is None:
+            continue
+        if f.follows_conflict_of == f.id:
+            errors.append(f"Field {f.id} follows its own conflict")
+        elif f.follows_conflict_of not in seen_ids:
+            errors.append(
+                f"Field {f.id} follows the conflict of an unknown field: "
+                f"{f.follows_conflict_of}"
+            )
+
+    # Resolution rules reference a real field, a value the field allows, and a
+    # target the pipeline can write in one row.
+    by_id = {f.id: f for f in fields}
+    for f in fields:
+        for rule in f.resolution_rules:
+            trigger = by_id.get(rule.when_field)
+            if trigger is None:
+                errors.append(
+                    f"Field {f.id} has a resolution rule on unknown field: {rule.when_field}"
+                )
+            elif trigger.values:
+                unknown = [v for v in rule.when_value_in if v not in trigger.values]
+                if unknown:
+                    errors.append(
+                        f"Field {f.id} has a resolution rule on {rule.when_field} "
+                        f"values it does not allow: {', '.join(unknown)}"
+                    )
+            if rule.when_field == f.id:
+                errors.append(f"Field {f.id} has a resolution rule on itself")
+            if f.values and rule.value not in f.values:
+                errors.append(
+                    f"Field {f.id} has a resolution rule setting a value it does not "
+                    f"allow: {rule.value}"
+                )
+            # One rule writes one row, so it cannot answer a field that resolves
+            # once per country, cohort or arm.
+            if f.scoped or (trigger is not None and trigger.scoped):
+                errors.append(
+                    f"Field {f.id} has a resolution rule, which is not supported for "
+                    "scoped fields"
+                )
 
     if errors:
         raise RegistryValidationError(

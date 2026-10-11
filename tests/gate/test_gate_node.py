@@ -114,13 +114,37 @@ class TestGateNode:
         assert result["resolved"][0].status == "needs_review"
         assert result["resolved"][0].contradiction is not None
 
-    def test_reconcilable_verdict_forces_needs_review(self, fields_yaml_path) -> None:  # type: ignore[no-untyped-def]
+    def test_reconcilable_verdict_allows_normal_gating_for_non_budget_driver(  # type: ignore[no-untyped-def]
+        self, fields_yaml_path,
+    ) -> None:
+        """Change 1 of the 2026-10-07 review: follow the reviewer's conclusion.
+
+        "reconcilable" means ADJUDICATE found both values true, one a restatement
+        of the other, and named which to show. Until 2026-10-07 GATE treated that
+        as a live disagreement, which sent free-text variables whose two passages
+        word the same fact differently to the Disagreements table. It now gates
+        on confidence like any other value.
+        """
         _use_real_registry(fields_yaml_path)
-        rf = _resolved(confidence=0.95)
+        rf = _resolved(field_id=NON_BUDGET_DRIVER_FIELD, confidence=0.95)
+        contradiction = _contradiction(NON_BUDGET_DRIVER_FIELD, verdict="reconcilable")
+        state = RunState(run_id="t", resolved=[rf], contradictions=[contradiction])
+        result = gate_node(state)
+        assert result["resolved"][0].status == "confirmed"
+
+    def test_reconcilable_verdict_still_forces_review_for_budget_driver(  # type: ignore[no-untyped-def]
+        self, fields_yaml_path,
+    ) -> None:
+        """The guard on change 1: a wrong "reconcilable" on a budget driver is
+        still seen by a person. It moves from the Disagreements table to Flagged
+        for review rather than being cleared."""
+        _use_real_registry(fields_yaml_path)
+        rf = _resolved(field_id=BUDGET_DRIVER_FIELD, confidence=0.99)
         contradiction = _contradiction(BUDGET_DRIVER_FIELD, verdict="reconcilable")
         state = RunState(run_id="t", resolved=[rf], contradictions=[contradiction])
         result = gate_node(state)
         assert result["resolved"][0].status == "needs_review"
+        assert result["resolved"][0].contradiction is not None
 
     def test_not_a_conflict_allows_normal_gating_for_non_budget_driver(  # type: ignore[no-untyped-def]
         self, fields_yaml_path,
@@ -167,3 +191,84 @@ class TestGateNode:
         by_scope = {r.scope: r.status for r in result["resolved"]}
         assert by_scope["country:DE"] == "needs_review"
         assert by_scope["country:US"] == "confirmed"
+
+
+class TestAFieldThatSharesAnotherFieldsDisagreement:
+    """Change 4 of the 2026-10-07 review: the timing row follows the count row.
+
+    `config/fields.yaml` gives `interim.timing` the key
+    `follows_conflict_of: interim.count`. RECONCILE never compares a list across
+    documents, so the timing row cannot notice that the two documents disagree
+    about how many interim analyses there are; in run r-20261007-140411 it was
+    printed as Confirmed next to a count that was in dispute.
+    """
+
+    FOLLOWER = "interim.timing"
+    LEADER = "interim.count"
+
+    def _count_conflict(self) -> Contradiction:
+        return Contradiction(
+            field_id=self.LEADER,
+            verdict="conflict",
+            severity="high",
+            explanation="The amendment says none are planned; the RFP describes one.",
+            records=[
+                FieldRecord(
+                    field_id=self.LEADER, group="interim_analyses", raw_value=raw, value=raw,
+                    quote=f"quote on page {page}", confidence=0.9,
+                    provenance=Provenance(doc_id=doc, doc_kind=kind, page=page),
+                )
+                for raw, page, doc, kind in (
+                    ("0", 98, "d-prot", "protocol"), ("1", 4, "d-rfp", "rfp"),
+                )
+            ],
+        )
+
+    def test_the_timing_row_is_flagged_with_the_counts_disagreement(
+        self, fields_yaml_path,  # type: ignore[no-untyped-def]
+    ) -> None:
+        _use_real_registry(fields_yaml_path)
+        conflict = self._count_conflict()
+        timing = ResolvedField(
+            field_id=self.FOLLOWER,
+            value=["After approximately 156 primary endpoint events"],
+            status="needs_review",
+            confidence=0.95,
+            sources=[Provenance(doc_id="d-rfp", doc_kind="rfp", page=4)],
+        )
+        state = RunState(run_id="t", resolved=[timing], contradictions=[conflict])
+
+        [gated] = gate_node(state)["resolved"]
+
+        assert gated.status == "needs_review", "not Confirmed while the count is in dispute"
+        assert gated.contradiction is conflict, (
+            "the same disagreement object, so the report gives both rows one number"
+        )
+
+    def test_the_timing_rows_own_disagreement_wins(self, fields_yaml_path) -> None:  # type: ignore[no-untyped-def]
+        _use_real_registry(fields_yaml_path)
+        own = _contradiction(self.FOLLOWER, verdict="conflict")
+        timing = ResolvedField(
+            field_id=self.FOLLOWER, value=["after 156 events"], status="needs_review",
+            confidence=0.95,
+            sources=[Provenance(doc_id="d-rfp", doc_kind="rfp", page=4)],
+        )
+        state = RunState(
+            run_id="t", resolved=[timing], contradictions=[own, self._count_conflict()],
+        )
+
+        [gated] = gate_node(state)["resolved"]
+
+        assert gated.contradiction is own
+
+    def test_without_the_counts_disagreement_the_timing_row_gates_normally(
+        self, fields_yaml_path,  # type: ignore[no-untyped-def]
+    ) -> None:
+        _use_real_registry(fields_yaml_path)
+        timing = ResolvedField(
+            field_id=self.FOLLOWER, value=["after 156 events"], status="needs_review",
+            confidence=0.95,
+            sources=[Provenance(doc_id="d-rfp", doc_kind="rfp", page=4)],
+        )
+        [gated] = gate_node(RunState(run_id="t", resolved=[timing]))["resolved"]
+        assert gated.status == "confirmed"

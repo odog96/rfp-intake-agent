@@ -479,6 +479,202 @@ class TestThePrompt:
         assert "reporting what those studies did or found" in system
 
 
+class TestThePrintedPageNumberOnARemovedPassage:
+    """Change 7 of the 2026-10-07 review.
+
+    Appendix C cites a removed passage by page like every other reference, so it
+    needs the number printed on the page as well as the page's position in the
+    file. INGEST read those numbers; this node has the document in hand.
+    """
+
+    def test_both_ends_are_stamped_from_the_documents_page_labels(self) -> None:
+        doc = build_doc(("1.3.2 Clinical Experience", 2, OTHER_STUDY_BODY))
+        doc.page_labels = {1: "3"}
+        section = doc.sections[0]
+
+        passage, _ = removals_for_verdict(
+            doc,
+            section,
+            SectionVerdict(section_id=section.id, verdict="other_study",
+                           reason="An earlier study of the same drug."),
+        )
+
+        assert passage is not None
+        assert (passage.printed_page_start, passage.printed_page_end) == ("3", "3")
+
+    def test_a_document_that_prints_no_numbers_stamps_nothing(self) -> None:
+        """Every run before this change, and any document with no printed numbers."""
+        doc = build_doc(("1.3.2 Clinical Experience", 2, OTHER_STUDY_BODY))
+        section = doc.sections[0]
+
+        passage, _ = removals_for_verdict(
+            doc,
+            section,
+            SectionVerdict(section_id=section.id, verdict="other_study", reason="Earlier."),
+        )
+
+        assert passage is not None
+        assert passage.printed_page_start is None and passage.printed_page_end is None
+
+    def test_a_removed_sentence_is_stamped_too(self) -> None:
+        doc = build_doc(("1.3 Drug Experience", 2, THIS_STUDY_BODY + OTHER_STUDY_BODY))
+        doc.page_labels = {1: "3"}
+        section = doc.sections[0]
+
+        passage, _ = removals_for_verdict(
+            doc,
+            section,
+            SectionVerdict(
+                section_id=section.id, verdict="mixed", reason="One earlier result.",
+                other_study_sentences=["The maximum tolerated dose was not reached."],
+            ),
+        )
+
+        assert passage is not None
+        assert (passage.printed_page_start, passage.printed_page_end) == ("3", "3")
+
+
+class TestAStudyRunAlongsideThisOne:
+    """Change 6 of the 2026-10-07 review: keep the companion study's text.
+
+    Angus Gray (call transcript 00:04-00:10): text about a sister study, an
+    extension study or another study in the same programme that IQVIA is also
+    budgeting must stay, because "Study A has 80% site overlap with Study B" is
+    how a cost saving is applied across two studies. Only an EARLIER or COMPLETED
+    study's text is removed.
+
+    The sentence these tests use is the one the review names.
+    """
+
+    SHARED = (
+        "This study will share approximately 80% of its sites with the companion "
+        "study NEOD001-CL003."
+    )
+    ALONGSIDE_BODY = (
+        "The sponsor is running two studies of NEOD001 in parallel. " + SHARED + " "
+        "Subjects who complete this study will be offered enrolment in the "
+        "open-label extension study NEOD001-CL004. Site staff and the central "
+        "laboratory are shared between the two studies. "
+    )
+
+    def test_the_sentence_is_in_the_prompt_as_a_worked_keep(self) -> None:
+        """The model is shown this exact sentence and told to keep it."""
+        system = str(build_other_study_prompt("- Title: A Study", [])[0].content)
+        assert self.SHARED in system
+        assert "KEEP every passage about a study that is being run ALONGSIDE this one" in system
+
+    def test_the_prompt_names_the_three_kinds_that_stay(self) -> None:
+        system = str(build_other_study_prompt("- Title: A Study", [])[0].content)
+        assert "companion, sister, parallel or partner study" in system
+        assert "follow-on, extension, rollover, open-label extension or" in system
+        assert "same programme, platform or master protocol" in system
+        assert "shares, or will share, sites, investigators, staff" in system
+
+    def test_removal_is_now_limited_to_an_earlier_or_completed_study(self) -> None:
+        """"Ongoing" alone is no longer grounds for removal: a companion study is ongoing."""
+        system = str(build_other_study_prompt("- Title: A Study", [])[0].content)
+        assert "Remove a passage ONLY when it is about an EARLIER or COMPLETED study" in system
+        assert "describes a study that is ongoing or already completed" not in system
+
+    def test_the_default_when_a_shared_resource_is_stated_is_to_keep_it(self) -> None:
+        system = str(build_other_study_prompt("- Title: A Study", [])[0].content)
+        assert (
+            "When a passage states a link of that kind and you cannot tell whether "
+            "the other study is alongside this one or unrelated, KEEP it."
+        ) in system
+
+    def test_being_ongoing_does_not_make_a_study_alongside_this_one(self) -> None:
+        """What run r-20261008-review2-run1 got wrong.
+
+        The protocol calls the earlier Phase 1/2 study NEOD001-001 "an ongoing,
+        open-label study", and the model read "ongoing" as "alongside", kept the
+        sentence and let Phase 1/2 into the Study phase row. The passage reports
+        what that study found and states nothing shared with this one, so it goes.
+        """
+        system = str(build_other_study_prompt("- Title: A Study", [])[0].content)
+        assert '"ONGOING" DOES NOT MAKE A STUDY ALONGSIDE THIS ONE' in system
+        assert "A passage is ALONGSIDE this one ONLY when it states a link to how" in system
+        assert (
+            "A passage that only reports what another study did or found states no "
+            "such link"
+        ) in system
+        assert '"clinical experience", "prior experience", "previous studies"' in system
+
+    def test_the_clinical_experience_sentences_are_worked_remove_examples(self) -> None:
+        """What run r-20261008-review2-run2 still got wrong.
+
+        The rules on their own did not stop it: the model kept the first sentence
+        of section 1.3.2 "Clinical Experience" and called the earlier study "an
+        ongoing companion study that may be running alongside this one". The
+        prompt now carries that sentence as a worked example of text to remove,
+        alongside the KEEP examples it already carried.
+        """
+        system = str(build_other_study_prompt("- Title: A Study", [])[0].content)
+        assert "These real sentences must all be REMOVED" in system
+        assert (
+            "The safety and tolerability of NEOD001 are being investigated in an "
+            "ongoing, open-label, dose escalation Phase 1/2 study (Study "
+            "NEOD001-001)"
+        ) in system
+        assert "ANOTHER STUDY'S OWN DESIGN IS NOT A LINK TO THIS ONE" in system
+        assert (
+            "WHERE EVERY SENTENCE IN A SECTION IS ABOUT OTHER STUDIES, ANSWER "
+            "other_study, NOT mixed"
+        ) in system
+
+    def test_the_section_reaches_the_model_whole(self) -> None:
+        """A made-up section carrying the sentence is asked about, not skipped."""
+        doc = build_doc(("1.4 Related Studies", 2, self.ALONGSIDE_BODY + THIS_STUDY_BODY))
+        stub = StubStructured(
+            verdicts(
+                SectionVerdict(
+                    section_id=doc.sections[0].id,
+                    verdict="this_study",
+                    reason="The companion and extension studies are run alongside this one.",
+                )
+            )
+        )
+
+        doc.removed = mark_other_study(doc, study_identity([doc]), stub)
+
+        assert self.SHARED in str(stub.prompts[0][-1].content), "the model saw the sentence"
+        assert doc.removed == []
+        assert self.SHARED in section_text(doc, doc.sections[0])
+
+    def test_an_earlier_studys_result_goes_and_the_shared_sites_stay(self) -> None:
+        """The one removal a reviewer would still want, in the same section.
+
+        This is what change 6 narrows the node down to: the data-cutoff sentence
+        about the completed Phase 1/2 study goes, and the sentence about the
+        companion study's shared sites stays.
+        """
+        body = self.ALONGSIDE_BODY + OTHER_STUDY_BODY
+        doc = build_doc(("1.4 Related Studies", 2, body))
+        section = doc.sections[0]
+        earlier = "The maximum tolerated dose was not reached."
+
+        doc.removed = mark_other_study(
+            doc,
+            study_identity([doc]),
+            StubStructured(
+                verdicts(
+                    SectionVerdict(
+                        section_id=section.id,
+                        verdict="mixed",
+                        reason="One sentence reports a completed study's result.",
+                        other_study_sentences=[earlier],
+                    )
+                )
+            ),
+        )
+
+        kept = section_text(doc, section)
+        assert earlier not in kept
+        assert self.SHARED in kept, "the 80% site overlap is a saving the budget needs"
+        assert "open-label extension study NEOD001-CL004" in kept
+        assert "central" in kept and "laboratory are shared" in kept
+
+
 class TestTheNode:
     def _patched(
         self, monkeypatch: pytest.MonkeyPatch, *answers: OtherStudyBatch | Exception
