@@ -98,40 +98,33 @@ verdict partition). **Two things Angus asked for are deliberately not started**:
 fewer rows, which Oliver is putting to Angus as a proposal first, and supporting two studies in one RFP,
 which waits until the single-study report is accepted.
 
-Eight things are still open, each its own item. Oliver set items 1 and 2 as the next work, in that
-order, on 2026-10-11; items 3 to 8 wait for his decision.
+Seven things are still open, each its own item. Oliver set item 1 as the next work on 2026-10-11;
+items 2 to 7 wait for his decision. (The visit-intensity rating computed from one row of several was
+item 1 until it was fixed on 2026-10-11; see `docs/JOURNAL.md`.)
 
-1. **The visit-intensity rating can be computed from one row of several.** DERIVE builds
-   `resolved_by_id = {r.field_id: r for r in state.resolved}` (`derive/__init__.py:39`), so when an
-   input field has more than one row, the last row silently wins. On live run `r-20261011-fix1` the
-   second `visits.intensity_evidence` row (scope "Months 1-3", one item, amendment p.82) replaced the
-   nine-item row, and the rating fell from high (score 14) to low (score 2). It is not new: 15 of the
-   29 runs in `runs/` have several `visits.intensity_evidence` rows, and 13 of them report a lower
-   rating than their rows together support. This is next, after fix 2;
-   the cause and a proposed rule go to Oliver before anything changes.
-2. **`Site selection visits` reads Not found.** The synthetic RFP calls them "Site Qualification
+1. **`Site selection visits` reads Not found.** The synthetic RFP calls them "Site Qualification
    Visits" across three lines of a two-column table. Fix 1 of the 2026-10-09 brief (the repair retry
    shows the model the nearest passage) is committed but failed its live run `r-20261011-fix1`; see
    the 2026-10-11 entry in `docs/JOURNAL.md`. The second attempt is on the parsing side — whether the
    table can be read as a table so label and value are not interleaved — and comes to Oliver as a
-   proposal after item 1.
-3. **Pages where a document said "not specified" are cited beside an agreed value.** RECONCILE adds
+   proposal.
+2. **Pages where a document said "not specified" are cited beside an agreed value.** RECONCILE adds
    the silent records' pages to an agreed row's sources (`reconcile/__init__.py:176`), which breaks the
    rule fix 2 enforces (a page beside a value must state it). `extraction.json` keeps only the
    provenance on the row, so the report cannot tell those pages apart; the fix belongs in RECONCILE.
    Separately, where a real conflict remains, the "not specified" page is no longer cited in the
    Disagreements positions, though the record is still in `extraction.json`.
-4. **Losing values in Appendix A carry no "not used" marker.** Since fix 2, each side of a
+3. **Losing values in Appendix A carry no "not used" marker.** Since fix 2, each side of a
    disagreement has its own Appendix A entry, but nothing tells the reader which side the report
    used (report-usability-reviewer, 2026-10-11).
-5. **The derived row "What to assume about the placebo" cites RFP p.3, a page that contradicts its
+4. **The derived row "What to assume about the placebo" cites RFP p.3, a page that contradicts its
    value.** This predates fix 2.
-6. **The report shows the reader raw field ids in two derived rows** (`ip.form=['infusion_iv']` and the
+5. **The report shows the reader raw field ids in two derived rows** (`ip.form=['infusion_iv']` and the
    visit-intensity rubric line). This predates this work.
-7. **`report.xlsx` does not follow fix 2's rule.** Its page column is `rf.sources[0]`
+6. **`report.xlsx` does not follow fix 2's rule.** Its page column is `rf.sources[0]`
    (`render/xlsx_renderer.py:72`), which for a disagreement row can be the losing document's page.
    Fix 2 changed only the PDF report, as the brief asked (pipeline-rules-reviewer, 2026-10-11).
-8. **In 3 of the 29 runs a disagreement row's quote comes from a different record than its value.**
+7. **In 3 of the 29 runs a disagreement row's quote comes from a different record than its value.**
    ADJUDICATE's `_handle_conflict` looks the quote up by document, not by value
    (`adjudicate/__init__.py:179,215`). Fix 2's Appendix A lines for each record are right; the row's own
    extra line still pairs the two. The fix belongs in ADJUDICATE.
@@ -143,14 +136,14 @@ run, and what remains is PLAN keeping only three sections per field group. Read 
 in `docs/JOURNAL.md` before trusting `blinding.placebo_matching` or `blinding.unblinded_staff_stated`.
 Graph topology today:
 `INGEST → CLASSIFY → FIND_SECTIONS → SET_ASIDE_SECTIONS → MARK_OTHER_STUDY → PLAN → EXTRACT → NORMALIZE → RECONCILE → ADJUDICATE → DERIVE → GATE`,
-then RENDER runs after the graph finishes (see the deviations below). 976 tests passing, 1 skipped, on
+then RENDER runs after the graph finishes (see the deviations below). 1002 tests passing, 1 skipped, on
 2026-10-11 — the count moves with `runs/`, because `test_nothing_lost_on_a_real_run` runs once per run folder.
 Pushed to https://github.com/odog96/rfp-intake-agent.git. The push is done from a terminal by
 Oliver, from inside the repository directory — this session's credentials cannot do it. The seven
 changes of the 2026-10-07 review were committed on 2026-10-11 as `c4ecd75`, on top of `dab43e0`
 (Oliver's 2026-10-06 edit to `.project-metadata.yaml` on GitHub), with `GATE_OFF=1` approved by Oliver
 because the session's gate hooks were not loaded. Fix 1 of the 2026-10-09 brief is committed after
-it, and fix 2 after that. **None of the three is pushed.**
+it, fix 2 after that, and the visit-intensity fix after that. **None of the four is pushed.**
 
 Every `### Done` entry that used to be in this file is now in `docs/JOURNAL.md`, newest first, unedited.
 Nothing in `docs/JOURNAL.md` is current state; where the two disagree, this file wins.

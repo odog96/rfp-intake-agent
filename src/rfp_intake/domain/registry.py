@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import re
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
@@ -90,6 +91,31 @@ class ResolutionRule(BaseModel):
         return " ".join(str(v).split()) if v is not None else None
 
 
+class ScopeLeftOut(BaseModel):
+    """Rows a derived field's rubric must not read, named by words in their scope.
+
+    Added 2026-10-11, approved by Oliver, for the visit-intensity rating: a
+    separate schedule for patients who stopped treatment early must not be added
+    to the main count, because IQVIA budgets dropouts separately
+    (docs/ANALYST_PROCEDURE_PROTOCOL.md section 9). Which scopes those are is
+    clinical knowledge, so it lives in config/fields.yaml; derive/__init__.py
+    reads it without naming any field.
+
+    A phrase matches a scope when its words appear in the scope one after
+    another, ignoring case and punctuation: "post etd" matches "Post-ETD
+    (early discontinuation)". `reason` is printed in the derived row's note
+    beside each row left out, so a reviewer sees what was not counted and why.
+    """
+
+    phrases: list[str]
+    reason: str
+
+    @field_validator("reason", mode="before")
+    @classmethod
+    def _one_line(cls, v: Any) -> Any:
+        return " ".join(str(v).split())
+
+
 class FieldDef(BaseModel):
     id: str
     group: str
@@ -119,6 +145,9 @@ class FieldDef(BaseModel):
     budget_driver: bool = False
     derived: bool = False
     derived_from: list[str] | None = None
+    # Rows of the `derived_from` inputs that this field's rubric must not read.
+    # See ScopeLeftOut.
+    leave_out_scopes: ScopeLeftOut | None = None
     schema_def: dict[str, str] | None = Field(default=None, alias="schema")
     # Answers that follow from another field's answer. See ResolutionRule.
     resolution_rules: list[ResolutionRule] = Field(default_factory=list)
@@ -195,6 +224,18 @@ def _validate_registry(groups: list[GroupDef], fields: list[FieldDef]) -> None:
                         errors.append(
                             f"Derived field {f.id} references unknown field: {ref}"
                         )
+
+    # Only a derived field reads rows from other fields, so only one can leave
+    # some out, and a phrase with no words would match every scope.
+    for f in fields:
+        if f.leave_out_scopes is None:
+            continue
+        if not f.derived:
+            errors.append(f"Field {f.id} leaves out scopes but is not derived")
+        if not f.leave_out_scopes.phrases or not all(
+            re.findall(r"[a-z0-9]+", p.lower()) for p in f.leave_out_scopes.phrases
+        ):
+            errors.append(f"Field {f.id} has an empty leave_out_scopes phrase")
 
     # A field follows a real other field's disagreement, and not its own.
     for f in fields:

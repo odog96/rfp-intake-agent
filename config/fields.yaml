@@ -30,6 +30,10 @@
 #   budget_driver  true => directly moves the budget. Any disagreement is severity=high
 #                  and forces needs_review. These are the fields the tool exists for.
 #   derived        true => computed in DERIVE from other fields, never extracted directly
+#   leave_out_scopes  derived fields only: `phrases` naming scopes whose input rows the rubric
+#                  must not read, and the `reason` printed beside each row left out.
+#                  A phrase matches when its words appear in the scope in order, ignoring
+#                  case and punctuation. See ScopeLeftOut in domain/registry.py.
 #
 # GROUP KEYS
 #   id             fan-out unit; one LLM call per (document × group)
@@ -522,6 +526,42 @@ fields:
       A low / moderate / high rating of how demanding each appointment is. No document states this:
       the tool works it out from the procedures it found, so it is a starting point, not a fact.
     budget_driver: true
+    # The rating combines every row of its inputs except those about patients who
+    # stopped treatment early. docs/ANALYST_PROCEDURE_PROTOCOL.md section 9: their
+    # separate follow-up schedule must not be added to the main count, because
+    # IQVIA budgets dropouts separately. Narrower rows about the main patients,
+    # such as "Months 1-3", still count. Approved by Oliver on 2026-10-11.
+    #
+    # The phrases name the patients or the time after they stop, never the
+    # "End of Treatment / Early Treatment Discontinuation" visit on its own:
+    # every patient has that visit, completers included, so it belongs to the
+    # main schedule. That is why bare "early termination" and "early treatment
+    # discontinuation" are not here — "End of Treatment / Early Termination" is
+    # how the synthetic pair names that visit. The phrases were chosen against
+    # every scope written in runs/ up to r-20261011-fix1.
+    #
+    # Known edge: "early discontinuation" is kept bare because scopes such as
+    # "Early discontinuation (Appendix 3): Months 3-12" need it, but it would
+    # also hold back a scope worded "End of Treatment / Early Discontinuation
+    # visit". No run has written that wording; if one does, the note names the
+    # row, so a reviewer will see it.
+    leave_out_scopes:
+      reason: >
+        it is about patients who stopped treatment early, whose visits follow a separate schedule
+        that is budgeted apart from the main count
+      phrases:
+        - early discontinuation
+        - early discontinuers
+        - early drug discontinuation
+        - early treatment discontinuation subjects
+        - etd subjects
+        - early termination subjects
+        - discontinue study drug
+        - discontinued study drug
+        - discontinuing study drug
+        - stopped treatment early
+        - post etd
+        - post discontinuation
 
 # --- Group 6: Study Timelines -----------------------------------------------
   - id: timeline.total_duration

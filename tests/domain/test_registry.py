@@ -262,6 +262,48 @@ def test_validates_derived_missing_derived_from(tmp_path: Path) -> None:
         load_registry(p)
 
 
+def _with_leave_out(tmp_path: Path, *, derived: bool, phrases: list[str]) -> Path:
+    data = {
+        "version": 1,
+        "groups": [{"id": "g1", "label": "Group 1"}],
+        "fields": [
+            {"id": "g1.base", "group": "g1", "label": "Base", "type": "int"},
+            {
+                "id": "g1.rated",
+                "group": "g1",
+                "label": "Rated",
+                "type": "enum",
+                "values": ["low", "high"],
+                "derived": derived,
+                "derived_from": ["g1.base"],
+                "leave_out_scopes": {"reason": "a separate schedule", "phrases": phrases},
+            },
+        ],
+    }
+    p = tmp_path / "fields.yaml"
+    p.write_text(yaml.dump(data))
+    return p
+
+
+def test_leave_out_scopes_is_read(tmp_path: Path) -> None:
+    registry = load_registry(_with_leave_out(tmp_path, derived=True, phrases=["post etd"]))
+    leave_out = registry.get_field("g1.rated").leave_out_scopes
+    assert leave_out is not None
+    assert leave_out.phrases == ["post etd"]
+
+
+def test_leave_out_scopes_only_on_a_derived_field(tmp_path: Path) -> None:
+    with pytest.raises(RegistryValidationError, match="leaves out scopes but is not derived"):
+        load_registry(_with_leave_out(tmp_path, derived=False, phrases=["post etd"]))
+
+
+@pytest.mark.parametrize("phrases", [[], ["post etd", " - "]])
+def test_leave_out_scopes_phrase_must_have_words(tmp_path: Path, phrases: list[str]) -> None:
+    """A phrase with no words would match every scope and leave every row out."""
+    with pytest.raises(RegistryValidationError, match="empty leave_out_scopes phrase"):
+        load_registry(_with_leave_out(tmp_path, derived=True, phrases=phrases))
+
+
 class TestTheInterimAnalysisRowsAfterThe20261007Review:
     """Change 4: one count row, with the conflict flagged on it.
 

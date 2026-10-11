@@ -892,6 +892,17 @@ reaches a person.
 The explanation names every input it used and quotes it where there is a quote, because the whole value
 of an assumption a person can overrule is that they can see what it rests on.
 
+**An input with several rows** (added 2026-10-11, approved by Oliver). A scoped field resolves to one row
+per scope, and a list field can resolve to several, so each rubric receives every row of each input, never
+one picked by position. The visit-intensity rubric combines the flags of every evidence row, each flag
+counted once: a narrower row such as "Months 1-3" is about the same patients and adds to the study-wide
+row. Rows whose scope is patients who stopped treatment early are held back, because that schedule is
+budgeted apart from the main count (`docs/ANALYST_PROCEDURE_PROTOCOL.md` section 9). The phrases that mark
+such a scope are `leave_out_scopes` on the derived field in `config/fields.yaml`, and the derived row's
+note names each row held back, its pages, and the reason. The placebo rubric uses an input's rows when
+they agree; when they give different answers and the rule reached needs that input, the answer is that
+the documents give more than one answer and the sponsor should be asked.
+
 ### 4.9 GATE
 Maps confidence and contradiction state to a reviewer-facing status:
 

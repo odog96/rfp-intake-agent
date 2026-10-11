@@ -8,6 +8,7 @@ script reads the values the pipeline already wrote and renders them again.
 
     python scripts/rerender_report.py r-20260923-131601
     python scripts/rerender_report.py r-20260923-131601 --pages
+    python scripts/rerender_report.py r-20261011-fix1 --rederive
 
 It writes runs/<run_id>/report-rerender.pdf and never touches report.pdf, which
 is the artefact the Cloudera AI Application offers for download and the record of
@@ -20,6 +21,12 @@ Two things it does not reproduce:
 - Only resolved values and contradictions are read back. The graph's other state
   (excerpts, the extraction plan) is not in extraction.json and the report does
   not use it.
+
+`--rederive` throws away the saved derived rows (every field `derived: true` in
+config/fields.yaml) and computes them again with today's DERIVE, which is pure
+Python and calls no model. It shows what a DERIVE change does to a run already
+on disk — the visit-intensity fix of 2026-10-11 was checked this way. Without
+it, the derived rows are the ones the run wrote.
 
 `generated_at` is taken from the saved extraction.json rather than stamped with
 today's date, so re-rendering the same run twice produces the same bytes.
@@ -34,6 +41,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
+from rfp_intake.derive import derive_node  # noqa: E402
 from rfp_intake.domain.registry import get_registry  # noqa: E402
 from rfp_intake.domain.schemas import (  # noqa: E402
     Contradiction,
@@ -62,6 +70,14 @@ def load_run_state(run_path: Path) -> tuple[RunState, str]:
         ],
     )
     return state, str(doc.get("generated_at", "unknown"))
+
+
+def rederive(state: RunState) -> RunState:
+    """The same state with its derived rows computed again by DERIVE."""
+    derived = {f.id for f in get_registry().fields if f.derived}
+    kept = [rf for rf in state.resolved if rf.field_id not in derived]
+    result = derive_node(state.model_copy(update={"resolved": kept}))
+    return state.model_copy(update={"resolved": result["resolved"]})
 
 
 def describe(pdf_bytes: bytes) -> str:
@@ -99,6 +115,10 @@ def main() -> int:
     parser.add_argument(
         "--pages", action="store_true", help="also measure the rendered PDF with pymupdf"
     )
+    parser.add_argument(
+        "--rederive", action="store_true",
+        help="compute the derived rows again with today's DERIVE (no model calls)",
+    )
     args = parser.parse_args()
 
     run_path = PROJECT_ROOT / "runs" / args.run_id
@@ -107,6 +127,8 @@ def main() -> int:
         return 1
 
     state, generated_at = load_run_state(run_path)
+    if args.rederive:
+        state = rederive(state)
     pdf_bytes = build_report_pdf(state, get_registry(), generated_at=generated_at)
 
     out = run_path / "report-rerender.pdf"

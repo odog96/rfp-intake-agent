@@ -13,6 +13,7 @@ import pytest
 from rfp_intake.derive.rubric import (
     PLACEBO_CONTRADICTION,
     PLACEBO_INJECTED_NOT_STATED,
+    PLACEBO_INPUTS_DISAGREE,
     PLACEBO_OPEN_LABEL,
     PLACEBO_ORAL_NOT_STATED,
     compute_placebo_assumption,
@@ -21,54 +22,64 @@ from rfp_intake.derive.rubric import (
 from rfp_intake.domain.schemas import Provenance, ResolvedField
 
 
-def _evidence(flags: list[str], confidence: float = 0.85) -> ResolvedField:
+def _evidence(
+    flags: list[str],
+    confidence: float = 0.85,
+    *,
+    scope: str | None = None,
+    page: int = 7,
+    status: str = "needs_review",
+) -> ResolvedField:
     return ResolvedField(
         field_id="visits.intensity_evidence",
         value=flags,
-        status="needs_review",
+        status=status,  # type: ignore[arg-type]
         confidence=confidence,
-        sources=[Provenance(doc_id="doc-1", doc_kind="protocol", page=7)],
+        scope=scope,
+        sources=[Provenance(doc_id="doc-1", doc_kind="protocol", page=page)],
     )
+
+
+def _visit(*rows: ResolvedField) -> dict[str, list[ResolvedField]]:
+    return {"visits.intensity_evidence": list(rows)}
 
 
 class TestComputeVisitIntensity:
     def test_no_evidence_field_is_not_specified(self) -> None:
-        result = compute_visit_intensity({"visits.intensity_evidence": None})
+        result = compute_visit_intensity(_visit())
         assert result.status == "not_specified"
         assert result.value == "not_specified"
 
     def test_none_found_flag_is_not_specified(self) -> None:
-        result = compute_visit_intensity({"visits.intensity_evidence": _evidence(["none_found"])})
+        result = compute_visit_intensity(_visit(_evidence(["none_found"])))
         assert result.status == "not_specified"
 
     def test_low_score(self) -> None:
         # questionnaires(1) = 1 -> low
-        evidence = _evidence(["questionnaires"])
-        result = compute_visit_intensity({"visits.intensity_evidence": evidence})
+        result = compute_visit_intensity(_visit(_evidence(["questionnaires"])))
         assert result.value == "low"
         assert result.status == "needs_review"
 
     def test_moderate_score(self) -> None:
         # biomarker_sampling(1) + ecgs(1) + safety_labs(1) + questionnaires(1) = 4 -> moderate
         flags = ["biomarker_sampling", "ecgs", "safety_labs", "questionnaires"]
-        result = compute_visit_intensity({"visits.intensity_evidence": _evidence(flags)})
+        result = compute_visit_intensity(_visit(_evidence(flags)))
         assert result.value == "moderate"
 
     def test_high_score(self) -> None:
         # pk_pd_sampling(2) + imaging(2) + infusion_observation_period(2) + overnight_stay(2) = 8
         flags = ["pk_pd_sampling", "imaging", "infusion_observation_period", "overnight_stay"]
-        result = compute_visit_intensity({"visits.intensity_evidence": _evidence(flags)})
+        result = compute_visit_intensity(_visit(_evidence(flags)))
         assert result.value == "high"
 
     def test_confidence_and_sources_carried_from_evidence(self) -> None:
         evidence = _evidence(["imaging"], confidence=0.77)
-        result = compute_visit_intensity({"visits.intensity_evidence": evidence})
+        result = compute_visit_intensity(_visit(evidence))
         assert result.confidence == 0.77
         assert result.sources == evidence.sources
 
     def test_explanation_lists_contributing_flags(self) -> None:
-        evidence = _evidence(["imaging", "ecgs"])
-        result = compute_visit_intensity({"visits.intensity_evidence": evidence})
+        result = compute_visit_intensity(_visit(_evidence(["imaging", "ecgs"])))
         assert "imaging" in result.explanation
         assert "ecgs" in result.explanation
 
@@ -76,15 +87,96 @@ class TestComputeVisitIntensity:
         """RECONCILE always writes status=needs_review pre-GATE; DERIVE runs before GATE."""
         evidence = _evidence(["imaging"])
         assert evidence.status == "needs_review"
-        result = compute_visit_intensity({"visits.intensity_evidence": evidence})
+        result = compute_visit_intensity(_visit(evidence))
         assert result.status == "needs_review"
+
+    def test_confirmed_evidence_is_read_too(self) -> None:
+        """A saved run's rows are mostly `confirmed`; re-deriving from them must score them."""
+        result = compute_visit_intensity(_visit(_evidence(["imaging"], status="confirmed")))
+        assert result.value == "low"
 
     def test_not_found_evidence_status_is_not_specified(self) -> None:
         evidence = ResolvedField(
             field_id="visits.intensity_evidence", value=None, status="not_found", confidence=0.0,
         )
-        result = compute_visit_intensity({"visits.intensity_evidence": evidence})
+        result = compute_visit_intensity(_visit(evidence))
         assert result.status == "not_specified"
+
+
+class TestVisitIntensityCombinesEveryRow:
+    """The bug fixed 2026-10-11: DERIVE kept only the last evidence row.
+
+    In r-20261011-fix1 the study-wide row named nine kinds of evidence (score
+    14, high) and a later "Months 1-3" row named one (score 2, low); the report
+    said low. 13 of the 29 saved runs read lower than all their rows together.
+    """
+
+    def test_a_narrower_row_adds_to_the_study_wide_row_rather_than_replacing_it(self) -> None:
+        wide = _evidence(
+            ["pk_pd_sampling", "imaging", "infusion_observation_period", "overnight_stay"],
+            page=40,
+        )
+        narrow = _evidence(["questionnaires"], scope="Months 1-3", page=41)
+        result = compute_visit_intensity(_visit(wide, narrow))
+        assert result.value == "high"
+        assert result.explanation.startswith("score=9 ")
+
+    def test_the_order_of_the_rows_does_not_matter(self) -> None:
+        wide = _evidence(["pk_pd_sampling", "imaging", "infusion_observation_period", "ecgs"])
+        narrow = _evidence(["questionnaires"], scope="Months 1-3")
+        assert (
+            compute_visit_intensity(_visit(wide, narrow)).value
+            == compute_visit_intensity(_visit(narrow, wide)).value
+            == "high"
+        )
+
+    def test_a_flag_named_by_two_rows_is_counted_once(self) -> None:
+        # imaging(2) + ecgs(1) = 3 -> low; counting imaging twice would make it 5, moderate.
+        first = _evidence(["imaging", "ecgs"])
+        second = _evidence(["imaging"], scope="Months 1-3")
+        result = compute_visit_intensity(_visit(first, second))
+        assert result.value == "low"
+        assert result.explanation.startswith("score=3 ")
+
+    def test_confidence_is_the_weakest_row(self) -> None:
+        result = compute_visit_intensity(
+            _visit(_evidence(["imaging"], 0.9), _evidence(["ecgs"], 0.6, scope="Months 1-3"))
+        )
+        assert result.confidence == 0.6
+
+    def test_sources_are_every_row_s_pages_once_each(self) -> None:
+        result = compute_visit_intensity(
+            _visit(
+                _evidence(["imaging"], page=40),
+                _evidence(["ecgs"], scope="Months 1-3", page=41),
+                _evidence(["ecgs"], scope="Months 4-6", page=40),
+            )
+        )
+        assert [p.page for p in result.sources] == [40, 41]
+
+    def test_the_explanation_names_the_rows_it_combined(self) -> None:
+        result = compute_visit_intensity(
+            _visit(_evidence(["imaging"]), _evidence(["ecgs"], scope="Months 1-3"))
+        )
+        assert 'combined 2 rows: no scope stated, "Months 1-3"' in result.explanation
+
+    def test_a_scope_shared_by_several_rows_is_named_once_with_a_count(self) -> None:
+        result = compute_visit_intensity(
+            _visit(
+                _evidence(["imaging"]),
+                _evidence(["ecgs"]),
+                _evidence(["safety_labs"], scope="total"),
+                _evidence(["questionnaires"]),
+            )
+        )
+        assert 'combined 4 rows: no scope stated (3), "total"' in result.explanation
+
+    def test_a_none_found_row_does_not_hide_a_row_with_evidence(self) -> None:
+        result = compute_visit_intensity(
+            _visit(_evidence(["imaging"]), _evidence(["none_found"], scope="Months 1-3"))
+        )
+        assert result.value == "low"
+        assert result.status == "needs_review"
 
 
 def _field(
@@ -115,24 +207,26 @@ def _inputs(
     design_quote: str | None = None,
     matching_quote: str | None = None,
     staff_quote: str | None = None,
-) -> dict[str, ResolvedField | None]:
+) -> dict[str, list[ResolvedField]]:
     """The four `derived_from` inputs, any of them absent.
 
-    An absent input is None, which is what DERIVE passes when the field was never
-    resolved (`derive/__init__.py` builds `inputs` with `resolved_by_id.get`).
+    Each input is every row DERIVE has for it; an absent input is an empty list,
+    which is what DERIVE passes when the field was never resolved.
     """
     return {
         "blinding.design": (
-            _field("blinding.design", design, quote=design_quote) if design else None
+            [_field("blinding.design", design, quote=design_quote)] if design else []
         ),
-        "ip.form": _field("ip.form", forms) if forms else None,
+        "ip.form": [_field("ip.form", forms)] if forms else [],
         "blinding.placebo_matching": (
-            _field("blinding.placebo_matching", matching, quote=matching_quote)
+            [_field("blinding.placebo_matching", matching, quote=matching_quote)]
             if matching
-            else None
+            else []
         ),
         "blinding.unblinded_staff_stated": (
-            _field("blinding.unblinded_staff_stated", staff, quote=staff_quote) if staff else None
+            [_field("blinding.unblinded_staff_stated", staff, quote=staff_quote)]
+            if staff
+            else []
         ),
     }
 
@@ -199,7 +293,7 @@ class TestComputePlaceboAssumption:
         ],
     )
     def test_each_rule(
-        self, case: str, inputs: dict[str, ResolvedField | None], expected: str
+        self, case: str, inputs: dict[str, list[ResolvedField]], expected: str
     ) -> None:
         result = compute_placebo_assumption(inputs)
         assert result.value == expected, case
@@ -295,7 +389,7 @@ class TestComputePlaceboAssumption:
         ],
     )
     def test_an_undecidable_case_says_so_rather_than_reassuring(
-        self, case: str, inputs: dict[str, ResolvedField | None]
+        self, case: str, inputs: dict[str, list[ResolvedField]]
     ) -> None:
         """A route in neither set must not fall through to the oral answer.
 
@@ -314,9 +408,9 @@ class TestComputePlaceboAssumption:
         an enum value is how an inference turns into a fact.
         """
         inputs = _inputs(design="double_blind", forms=["oral_tablet"])
-        inputs["blinding.placebo_matching"] = _field(
-            "blinding.placebo_matching", None, status="not_found", confidence=0.0
-        )
+        inputs["blinding.placebo_matching"] = [
+            _field("blinding.placebo_matching", None, status="not_found", confidence=0.0)
+        ]
         result = compute_placebo_assumption(inputs)
         assert result.value == PLACEBO_ORAL_NOT_STATED
 
@@ -341,15 +435,98 @@ class TestComputePlaceboAssumption:
 
     def test_sources_come_from_every_input_that_had_one(self) -> None:
         """A reader has to be able to turn to the pages the assumption rests on."""
+        inputs = _inputs()
+        inputs["blinding.design"] = [_field("blinding.design", "double_blind", page=4)]
+        inputs["ip.form"] = [_field("ip.form", ["infusion_iv"], page=12)]
+        inputs["blinding.placebo_matching"] = [
+            _field("blinding.placebo_matching", "not_matching_stated", page=30)
+        ]
+        result = compute_placebo_assumption(inputs)
+        assert [p.page for p in result.sources] == [4, 30, 12]
+
+    def test_a_page_two_inputs_share_is_listed_once(self) -> None:
         result = compute_placebo_assumption(
             _inputs(design="double_blind", forms=["infusion_iv"], matching="not_matching_stated")
         )
-        assert len(result.sources) == 3
+        assert [p.page for p in result.sources] == [12]
 
     def test_confidence_is_the_weakest_input_not_the_strongest(self) -> None:
         """An assumption is only as good as the shakiest answer under it."""
         inputs = _inputs(design="double_blind", forms=["infusion_iv"])
-        inputs["blinding.design"] = _field("blinding.design", "double_blind", confidence=0.9)
-        inputs["ip.form"] = _field("ip.form", ["infusion_iv"], confidence=0.4)
+        inputs["blinding.design"] = [_field("blinding.design", "double_blind", confidence=0.9)]
+        inputs["ip.form"] = [_field("ip.form", ["infusion_iv"], confidence=0.4)]
         result = compute_placebo_assumption(inputs)
         assert result.confidence == 0.4
+
+
+class TestPlaceboInputsWithSeveralRows:
+    """The rule approved 2026-10-11: rows that agree are one answer; rows that
+    disagree decide nothing, and the sponsor is asked."""
+
+    def test_rows_that_agree_are_used(self) -> None:
+        inputs = _inputs(design="double_blind")
+        inputs["ip.form"] = [
+            _field("ip.form", ["infusion_iv"], page=12),
+            _field("ip.form", ["INFUSION_IV"], page=30),
+        ]
+        result = compute_placebo_assumption(inputs)
+        assert result.value == PLACEBO_INJECTED_NOT_STATED
+        assert {p.page for p in result.sources} == {12, 30}
+
+    def test_list_rows_in_a_different_order_agree(self) -> None:
+        inputs = _inputs(design="double_blind")
+        inputs["ip.form"] = [
+            _field("ip.form", ["oral_tablet", "oral_capsule"]),
+            _field("ip.form", ["oral_capsule", "oral_tablet"]),
+        ]
+        assert compute_placebo_assumption(inputs).value == PLACEBO_ORAL_NOT_STATED
+
+    def test_rows_that_disagree_ask_the_sponsor_and_name_every_answer(self) -> None:
+        inputs = _inputs(design="double_blind")
+        inputs["ip.form"] = [
+            _field("ip.form", ["oral_tablet"], page=12),
+            _field("ip.form", ["infusion_iv"], page=30),
+        ]
+        result = compute_placebo_assumption(inputs)
+        assert result.value == PLACEBO_INPUTS_DISAGREE
+        assert "oral_tablet" in result.explanation
+        assert "infusion_iv" in result.explanation
+
+    def test_a_split_design_asks_the_sponsor_even_with_open_label_among_the_rows(self) -> None:
+        """Choosing open-label from two answers would end the check on a guess."""
+        inputs = _inputs()
+        inputs["blinding.design"] = [
+            _field("blinding.design", "open_label"),
+            _field("blinding.design", "double_blind"),
+        ]
+        assert compute_placebo_assumption(inputs).value == PLACEBO_INPUTS_DISAGREE
+
+    def test_a_split_the_rule_reached_does_not_need_does_not_matter(self) -> None:
+        """On an open-label study the route decides nothing, so its rows may differ."""
+        inputs = _inputs(design="open_label")
+        inputs["ip.form"] = [
+            _field("ip.form", ["oral_tablet"]),
+            _field("ip.form", ["infusion_iv"]),
+        ]
+        assert compute_placebo_assumption(inputs).value == PLACEBO_OPEN_LABEL
+
+    def test_a_split_staff_answer_matters_only_when_matching_is_stated(self) -> None:
+        staff_rows = [
+            _field("blinding.unblinded_staff_stated", "true"),
+            _field("blinding.unblinded_staff_stated", "false"),
+        ]
+        stated = _inputs(design="double_blind", matching="matching_stated")
+        stated["blinding.unblinded_staff_stated"] = staff_rows
+        assert compute_placebo_assumption(stated).value == PLACEBO_INPUTS_DISAGREE
+
+        silent = _inputs(design="double_blind", forms=["oral_tablet"])
+        silent["blinding.unblinded_staff_stated"] = staff_rows
+        assert compute_placebo_assumption(silent).value == PLACEBO_ORAL_NOT_STATED
+
+    def test_a_not_found_row_beside_a_real_answer_is_not_a_disagreement(self) -> None:
+        inputs = _inputs(design="double_blind")
+        inputs["ip.form"] = [
+            _field("ip.form", None, status="not_found", confidence=0.0),
+            _field("ip.form", ["infusion_iv"]),
+        ]
+        assert compute_placebo_assumption(inputs).value == PLACEBO_INJECTED_NOT_STATED

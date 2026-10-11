@@ -7,6 +7,7 @@ landed where it did and disagree with it.
 
 from __future__ import annotations
 
+from collections import Counter
 from dataclasses import dataclass, field
 from typing import Literal
 
@@ -70,6 +71,11 @@ PLACEBO_ORAL_NOT_STATED = (
 PLACEBO_CONTRADICTION = (
     "the documents contradict each other: ask the sponsor whether the placebo matches"
 )
+# An input whose rows give different answers, where the rule reached needs that
+# input. The rubric does not choose one of them (approved by Oliver, 2026-10-11).
+PLACEBO_INPUTS_DISAGREE = (
+    "the documents give more than one answer to a question this depends on: ask the sponsor"
+)
 
 
 @dataclass
@@ -81,24 +87,46 @@ class RubricResult:
     explanation: str = ""
 
 
-def compute_visit_intensity(inputs: dict[str, ResolvedField | None]) -> RubricResult:
+def _usable(rows: list[ResolvedField]) -> list[ResolvedField]:
+    """The rows that carry an answer. A `not_found` or `not_specified` row is
+    treated as absent, because a rubric reading a missing answer as a real one
+    is how an inference becomes a fact."""
+    return [r for r in rows if r.status not in ("not_found", "not_specified")]
+
+
+def _sources_of(rows: list[ResolvedField]) -> list[Provenance]:
+    """Every row's pages, each page once, in the order the rows came."""
+    out: list[Provenance] = []
+    for r in rows:
+        out.extend(p for p in r.sources if p not in out)
+    return out
+
+
+def compute_visit_intensity(inputs: dict[str, list[ResolvedField]]) -> RubricResult:
     """Score `visits.intensity_evidence` flags into a low/moderate/high rating.
 
     `inputs` is keyed by the field ids in visits.intensity_rating's
-    `derived_from` (ARCHITECTURE.md §4.8: evidence, frequency, count).
-    Only `visits.intensity_evidence` currently drives the score — see the
-    module docstring on VISIT_INTENSITY_WEIGHTS for why frequency/count
-    aren't independently scored: the evidence enum already carries a
-    `frequent_early_visits` flag for that signal.
-    """
-    evidence = inputs.get("visits.intensity_evidence")
-    if evidence is None or evidence.status != "needs_review":
-        return RubricResult(value="not_specified", status="not_specified", confidence=0.0)
-    if not isinstance(evidence.value, list):
-        return RubricResult(value="not_specified", status="not_specified", confidence=0.0)
+    `derived_from` (ARCHITECTURE.md §4.8: evidence, frequency, count), each with
+    every row DERIVE did not leave out. Only `visits.intensity_evidence`
+    currently drives the score — see the module docstring on
+    VISIT_INTENSITY_WEIGHTS for why frequency/count aren't independently
+    scored: the evidence enum already carries a `frequent_early_visits` flag
+    for that signal.
 
-    flags: list[str] = [f for f in evidence.value if isinstance(f, str)]
-    if not flags or flags == ["none_found"]:
+    The flags of every evidence row are combined and each is counted once:
+    a "Months 1-3" row names evidence about the same patients as the
+    study-wide row, so it adds to it rather than replacing it (approved by
+    Oliver, 2026-10-11). The confidence is the weakest row's, because the
+    rating rests on all of them.
+    """
+    rows = [
+        r for r in _usable(inputs.get("visits.intensity_evidence", []))
+        if isinstance(r.value, list)
+    ]
+    flags = list(dict.fromkeys(
+        f for r in rows for f in (r.value or []) if isinstance(f, str)
+    ))
+    if all(f == "none_found" for f in flags):
         return RubricResult(value="not_specified", status="not_specified", confidence=0.0)
 
     score = sum(VISIT_INTENSITY_WEIGHTS.get(flag, 0) for flag in flags)
@@ -112,52 +140,79 @@ def compute_visit_intensity(inputs: dict[str, ResolvedField | None]) -> RubricRe
         f"score={score} from {', '.join(contributing) or 'no weighted evidence'} "
         f"(thresholds: 0-3 low, 4-7 moderate, 8+ high)"
     )
+    if len(rows) > 1:
+        # Each scope once, with how many rows had it: a run can hold thirty rows
+        # with no scope, and naming each one buries the scopes that matter.
+        scopes = Counter(f'"{r.scope}"' if r.scope else "no scope stated" for r in rows)
+        explanation += f"; combined {len(rows)} rows: " + ", ".join(
+            f"{scope} ({n})" if n > 1 else scope for scope, n in scopes.items()
+        )
 
     return RubricResult(
         value=rating,
         status="needs_review",  # GATE always sends derived fields to needs_review
-        confidence=evidence.confidence,
-        sources=list(evidence.sources),
+        confidence=min(r.confidence for r in rows),
+        sources=_sources_of(rows),
         explanation=explanation,
     )
 
 
-def _value_of(resolved: ResolvedField | None) -> str | None:
-    """One enum value off a resolved field, or None if there is nothing usable.
+def _answer_key(value: object) -> object:
+    """Two rows give the same answer if they differ only in case or list order."""
+    if isinstance(value, list):
+        return tuple(sorted(str(v).casefold() for v in value))
+    return str(value).casefold()
 
-    A field that came back `not_found` is treated as absent, because a rubric
-    reading a missing answer as a real one is how an inference becomes a fact.
+
+def _agreed(rows: list[ResolvedField]) -> tuple[ResolvedField | None, list[ResolvedField]]:
+    """The one answer an input's rows give, or every row when they differ.
+
+    Returns `(row, [row])` when the usable rows agree — the first stands for
+    them all — and `(None, rows)` when they differ, so the caller cannot use one
+    by accident. With no usable row, the first row (a `not_found` one, say)
+    stands in, so the explanation can still say what came back.
     """
-    if resolved is None or resolved.status in ("not_found", "not_specified"):
+    usable = [r for r in _usable(rows) if r.value is not None]
+    if len({_answer_key(r.value) for r in usable}) > 1:
+        return None, usable
+    first = usable[0] if usable else (rows[0] if rows else None)
+    return first, [first] if first is not None else []
+
+
+def _value_of(resolved: ResolvedField | None) -> str | None:
+    """One enum value off a resolved field, or None if there is nothing usable."""
+    if resolved is None or not _usable([resolved]):
         return None
     return resolved.value if isinstance(resolved.value, str) else None
 
 
 def _forms_of(resolved: ResolvedField | None) -> list[str]:
     """`ip.form` is list[enum], so it arrives as a list and may hold several routes."""
-    if resolved is None or resolved.status in ("not_found", "not_specified"):
+    if resolved is None or not _usable([resolved]):
         return []
     if isinstance(resolved.value, list):
         return [v for v in resolved.value if isinstance(v, str)]
     return [resolved.value] if isinstance(resolved.value, str) else []
 
 
-def _cite(label: str, resolved: ResolvedField | None) -> str:
+def _cite(label: str, rows: list[ResolvedField]) -> str:
     """One input named in an explanation, with its quote when it has one.
 
     Every branch below names the inputs it used, which
     `docs/PLAN_2026-10-02.md` stage 5 item 9 requires: a person has to be able to
-    see which four answers produced the assumption and disagree with it.
+    see which four answers produced the assumption and disagree with it. Where
+    an input's rows disagree, every answer is named.
     """
-    if resolved is None:
+    if not rows:
         return f"{label}=absent"
-    value = resolved.value if resolved.value is not None else resolved.status
-    if resolved.quote:
-        return f'{label}={value} ("{resolved.quote}")'
-    return f"{label}={value}"
+    said = []
+    for resolved in rows:
+        value = resolved.value if resolved.value is not None else resolved.status
+        said.append(f'{value} ("{resolved.quote}")' if resolved.quote else f"{value}")
+    return f"{label}=" + " or ".join(said)
 
 
-def compute_placebo_assumption(inputs: dict[str, ResolvedField | None]) -> RubricResult:
+def compute_placebo_assumption(inputs: dict[str, list[ResolvedField]]) -> RubricResult:
     """What to assume about the placebo, from `docs/ANALYST_PROCEDURE_PROTOCOL.md` section 6.
 
     Rules 1 to 4 in the order the plan sets, with rule 6's contradiction checked
@@ -167,83 +222,104 @@ def compute_placebo_assumption(inputs: dict[str, ResolvedField | None]) -> Rubri
     study nobody is blinded, so unblinded staff and a matching placebo are not in
     tension and there is nothing to ask the sponsor about.
 
+    Each input arrives as every row DERIVE has for it. Rows that agree are one
+    answer. Rows that disagree decide nothing: when the rule reached needs that
+    input, the answer is PLACEBO_INPUTS_DISAGREE, naming every row, rather than
+    one row chosen by position (approved by Oliver, 2026-10-11).
+
     **RECONCILE cannot do this.** It compares values of the same field across
     documents (`reconcile/__init__.py`), and this is a disagreement between two
     different fields. That is why the check lives in a rubric.
     """
-    design = inputs.get("blinding.design")
-    matching = inputs.get("blinding.placebo_matching")
-    staff = inputs.get("blinding.unblinded_staff_stated")
-    form = inputs.get("ip.form")
+    names = (
+        "blinding.design", "blinding.placebo_matching", "blinding.unblinded_staff_stated",
+        "ip.form",
+    )
+    agreed = {name: _agreed(inputs.get(name, [])) for name in names}
+    design, design_rows = agreed["blinding.design"]
+    matching, matching_rows = agreed["blinding.placebo_matching"]
+    staff, staff_rows = agreed["blinding.unblinded_staff_stated"]
+    form, form_rows = agreed["ip.form"]
 
     design_value = _value_of(design)
     matching_value = _value_of(matching)
     staff_value = _value_of(staff)
     forms = _forms_of(form)
 
-    sources = [
-        provenance
-        for resolved in (design, matching, staff, form)
-        if resolved is not None
-        for provenance in resolved.sources
-    ]
-    confidence = min(
-        (r.confidence for r in (design, matching, staff, form) if r is not None),
-        default=0.0,
-    )
+    every_row = [r for name in names for r in inputs.get(name, [])]
+    sources = _sources_of(every_row)
+    confidence = min((r.confidence for r in every_row), default=0.0)
 
-    def result(value: str, *used: tuple[str, ResolvedField | None]) -> RubricResult:
+    def result(value: str, *used: tuple[str, list[ResolvedField]]) -> RubricResult:
         return RubricResult(
             value=value,
             status="needs_review",  # GATE always sends derived fields to needs_review
             confidence=confidence,
             sources=sources,
-            explanation="; ".join(_cite(label, resolved) for label, resolved in used),
+            explanation="; ".join(_cite(label, rows) for label, rows in used),
         )
+
+    def split(name: str) -> bool:
+        return agreed[name][0] is None and len(agreed[name][1]) > 1
+
+    def disagree(name: str) -> RubricResult:
+        return result(PLACEBO_INPUTS_DISAGREE, (name, agreed[name][1]))
+
+    if split("blinding.design"):
+        return disagree("blinding.design")
 
     # Rule 1. Open-label: whether the placebo matches does not matter.
     if design_value == "open_label":
-        return result(PLACEBO_OPEN_LABEL, ("blinding.design", design))
+        return result(PLACEBO_OPEN_LABEL, ("blinding.design", design_rows))
+
+    if split("blinding.placebo_matching"):
+        return disagree("blinding.placebo_matching")
+    # Rule 6 turns on the staff answer only when matching is stated.
+    if matching_value == "matching_stated" and split("blinding.unblinded_staff_stated"):
+        return disagree("blinding.unblinded_staff_stated")
 
     # Rule 6. Stated matching and stated unblinded staff cannot both be right.
     if matching_value == "matching_stated" and staff_value in _STAFF_STATED_YES:
         return result(
             PLACEBO_CONTRADICTION,
-            ("blinding.placebo_matching", matching),
-            ("blinding.unblinded_staff_stated", staff),
+            ("blinding.placebo_matching", matching_rows),
+            ("blinding.unblinded_staff_stated", staff_rows),
         )
 
     # Rule 2. The document says: use what it says.
     if matching_value == "matching_stated":
         return result(
             "the document says the placebo matches as supplied",
-            ("blinding.placebo_matching", matching),
+            ("blinding.placebo_matching", matching_rows),
         )
     if matching_value == "not_matching_stated":
         return result(
             "the document says the placebo does not match; unblinded handling likely",
-            ("blinding.placebo_matching", matching),
-            ("blinding.unblinded_staff_stated", staff),
+            ("blinding.placebo_matching", matching_rows),
+            ("blinding.unblinded_staff_stated", staff_rows),
         )
+
+    if split("ip.form"):
+        return disagree("ip.form")
 
     # Rules 3 and 4. The document does not say, so the route decides.
     # Injected wins a document stating both routes: the liquid is the one that
     # cannot be colour-matched, and under-pricing unblinded staff costs more than
     # pricing them needlessly.
     if any(f in _INJECTED_FORMS for f in forms):
-        return result(PLACEBO_INJECTED_NOT_STATED, ("ip.form", form))
+        return result(PLACEBO_INJECTED_NOT_STATED, ("ip.form", form_rows))
     if any(f in _ORAL_FORMS for f in forms):
-        return result(PLACEBO_ORAL_NOT_STATED, ("ip.form", form))
+        return result(PLACEBO_ORAL_NOT_STATED, ("ip.form", form_rows))
 
     if not forms:
         return result(
             "matching not stated and the document does not say how the drug is given; "
             "ask the sponsor",
-            ("blinding.placebo_matching", matching),
-            ("ip.form", form),
+            ("blinding.placebo_matching", matching_rows),
+            ("ip.form", form_rows),
         )
     return result(
         "matching not stated and the route of administration does not decide it; "
         "ask the sponsor",
-        ("ip.form", form),
+        ("ip.form", form_rows),
     )

@@ -4,6 +4,53 @@ Every `### Done` entry that was in `CLAUDE.md`, moved here unedited on 2026-10-0
 entries were 74% of `CLAUDE.md` and were loaded into every session. Newest first. Nothing in this
 file is current state: `CLAUDE.md` holds current state, and where the two disagree, `CLAUDE.md` wins.
 
+### Done 2026-10-11: the visit-intensity rating reads every row
+
+Live run `r-20261011-fix1` rated visit intensity low. Its study-wide `visits.intensity_evidence` row
+named nine kinds of evidence (score 14, high), and a second row, scope "Months 1-3", named one (score
+2). **The cause was in DERIVE:** `derive/__init__.py` built `{r.field_id: r for r in state.resolved}`,
+so of several rows for one input the last one silently won. It was not new: 15 of the 29 runs under
+`runs/` have several evidence rows, and 13 of them reported lower than their rows together support
+(12 low, one moderate; all 13 are high with every row). The rule Oliver approved:
+- Every rubric now receives every row of each input. The visit-intensity rubric combines the flags of
+  all evidence rows, each counted once; its confidence is the weakest row's, its sources every row's
+  pages once each, and its note names the scopes it combined, each scope once with a count.
+- Oliver's one exception: rows whose scope is patients who stopped treatment early are held back,
+  because `docs/ANALYST_PROCEDURE_PROTOCOL.md` section 9 says that schedule is budgeted apart from the
+  main count. The phrases are `leave_out_scopes` on `visits.intensity_rating` in `config/fields.yaml`
+  (new registry key, `ScopeLeftOut` in `domain/registry.py`; valid only on a derived field, and a
+  phrase must have words). A phrase matches when its words appear in the scope one after another.
+  The note names each row held back, grouped by field and scope, with its pages and the reason.
+  Bare "early termination" and "early treatment discontinuation" are deliberately **not** phrases:
+  "End of Treatment / Early Termination visit" and "early treatment discontinuation visit" name the
+  last visit of the main schedule, which every patient has, and those rows still count. Checked
+  against every `visits.intensity_evidence` and `visits.frequency_by_period` scope in `runs/`: 114
+  rows (92 distinct scopes) are held back, every one a dropout schedule, and none of the
+  end-of-treatment visit scopes ("End of Treatment / Early Termination", "EOT/ETD", "EOT/ETD Visit")
+  is. One scope is **not** held back and may be one: "Post-treatment follow-up" in
+  `r-20261001-032936` (a frequency row, amendment p.79, quoting phone calls every 3 months to subjects
+  "no longer receiving study drug"). Whether that wording means dropouts only is Oliver's call; it
+  feeds no score, so no rating moves either way.
+- The visit-intensity rubric used to read the evidence row only when its status was `needs_review`;
+  it now reads any row whose status is not `not_found` or `not_specified`, as the placebo rubric
+  already did. On a live run nothing changes, because DERIVE runs before GATE and every row is then
+  `needs_review` or one of those two. It lets `--rederive` work on a saved run, whose rows GATE has
+  mostly marked `confirmed`. Re-deriving all 29 runs, every run with one evidence row keeps its rating.
+- The placebo rubric uses an input's rows when they agree (ignoring case and list order). When they
+  give different answers and the rule reached needs that input, the value is
+  `PLACEBO_INPUTS_DISAGREE` ("the documents give more than one answer to a question this depends on:
+  ask the sponsor") and the explanation names every answer. A split the rule reached does not need,
+  such as `ip.form` on an open-label study, changes nothing.
+
+**Effect on saved runs**, re-derived with no model call: leaving the dropout rows out changes none of
+the 13 ratings, and none of their scores (14 to 17). Evidence rows were held back in three runs
+(`r-20260827-180418`, `r-20260901-172918`, `r-20260923-131601`); in each, every flag on the dropout
+rows also appears on a main-schedule row. In the other runs the rows held back are
+`visits.frequency_by_period` rows, which the score does not read, but they are named in the note all
+the same. The placebo answer is unchanged in all 10 runs that have one. `scripts/rerender_report.py`
+gained `--rederive`, which drops the saved derived rows and runs DERIVE again; the re-rendered
+`runs/r-20261011-fix1/report-rerender.pdf` reads High, score 14.
+
 ### Done 2026-10-11: fix 2 of the 2026-10-09 brief — pages beside a value must state it
 
 Run `r-20261009-225414`'s report printed "Number of interim analyses: 0 — Amendment p.98; RFP p.4",

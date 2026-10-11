@@ -8,10 +8,18 @@ hardcode a field") cannot be fully honored, because a rubric is inherently
 bespoke logic, not something a YAML edit alone can express. A derived field
 with no registered rubric degrades to not_specified rather than crashing
 the run, and is logged as an error so the gap is visible.
+
+A rubric receives every row of each input, never one picked for it. Until
+2026-10-11 DERIVE kept one row per field id and the last row won, so a small
+"Months 1-3" row replaced the study's nine-item evidence row and the visit
+intensity read low instead of high — in 13 of the 29 runs then in runs/. The
+only rows held back are those the derived field's `leave_out_scopes` in
+config/fields.yaml names, and the derived row's note says which and why.
 """
 
 from __future__ import annotations
 
+import re
 from collections.abc import Callable
 from typing import Any
 
@@ -22,12 +30,12 @@ from rfp_intake.derive.rubric import (
     compute_placebo_assumption,
     compute_visit_intensity,
 )
-from rfp_intake.domain.registry import get_registry
+from rfp_intake.domain.registry import Registry, ScopeLeftOut, get_registry
 from rfp_intake.domain.schemas import ResolvedField, RunError, RunState
 
 logger = structlog.get_logger()
 
-DERIVE_RUBRICS: dict[str, Callable[[dict[str, ResolvedField | None]], RubricResult]] = {
+DERIVE_RUBRICS: dict[str, Callable[[dict[str, list[ResolvedField]]], RubricResult]] = {
     "visits.intensity_rating": compute_visit_intensity,
     "blinding.placebo_assumption": compute_placebo_assumption,
 }
@@ -36,7 +44,9 @@ DERIVE_RUBRICS: dict[str, Callable[[dict[str, ResolvedField | None]], RubricResu
 def derive_node(state: RunState) -> dict[str, Any]:
     """DERIVE graph node. Reads state.resolved, appends computed ResolvedFields."""
     registry = get_registry()
-    resolved_by_id = {r.field_id: r for r in state.resolved}
+    rows_by_id: dict[str, list[ResolvedField]] = {}
+    for r in state.resolved:
+        rows_by_id.setdefault(r.field_id, []).append(r)
     errors: list[RunError] = []
     computed: list[ResolvedField] = []
 
@@ -62,8 +72,19 @@ def derive_node(state: RunState) -> dict[str, Any]:
             continue
 
         try:
-            inputs = {dep: resolved_by_id.get(dep) for dep in (field_def.derived_from or [])}
+            inputs: dict[str, list[ResolvedField]] = {}
+            left_out: list[ResolvedField] = []
+            for dep in field_def.derived_from or []:
+                inputs[dep] = []
+                for r in rows_by_id.get(dep, []):
+                    if _is_left_out(r.scope, field_def.leave_out_scopes):
+                        left_out.append(r)
+                    else:
+                        inputs[dep].append(r)
             result = rubric(inputs)
+            notes = [result.explanation] if result.explanation else []
+            if left_out and field_def.leave_out_scopes is not None:
+                notes.append(_left_out_note(left_out, field_def.leave_out_scopes, registry))
             computed.append(ResolvedField(
                 field_id=field_def.id,
                 value=result.value,
@@ -71,7 +92,7 @@ def derive_node(state: RunState) -> dict[str, Any]:
                 confidence=result.confidence,
                 sources=result.sources,
                 derived_from=field_def.derived_from or [],
-                notes=result.explanation or None,
+                notes="; ".join(notes) or None,
             ))
         except Exception as e:
             logger.error("derive_field_failed", field_id=field_def.id, error=str(e))
@@ -91,3 +112,41 @@ def derive_node(state: RunState) -> dict[str, Any]:
     logger.info("derive_complete", run_id=state.run_id, computed=len(computed))
 
     return {"resolved": state.resolved + computed, "errors": errors}
+
+
+def _words(text: str) -> list[str]:
+    return re.findall(r"[a-z0-9]+", text.lower())
+
+
+def _is_left_out(scope: str | None, leave_out: ScopeLeftOut | None) -> bool:
+    """Whether a row's scope contains one of the phrases, word for word."""
+    if scope is None or leave_out is None:
+        return False
+    words = _words(scope)
+    for phrase in leave_out.phrases:
+        want = _words(phrase)
+        if any(words[i:i + len(want)] == want for i in range(len(words) - len(want) + 1)):
+            return True
+    return False
+
+
+def _left_out_note(rows: list[ResolvedField], leave_out: ScopeLeftOut, registry: Registry) -> str:
+    """Names every row the rubric did not read, where it came from, and why.
+
+    Rows with the same field and the same scope are named once, with all their
+    pages, each page once: a schedule split into five rows is one thing a
+    reviewer has to check, not five.
+    """
+    pages: dict[tuple[str, str], list[str]] = {}
+    for r in rows:
+        cited = pages.setdefault((r.field_id, r.scope or ""), [])
+        for p in r.sources:
+            page = f"{p.doc_kind} p.{p.page}"
+            if page not in cited:
+                cited.append(page)
+    named = [
+        f'{registry.get_field(field_id).label} for "{scope}"'
+        + (f" ({', '.join(cited)})" if cited else "")
+        for (field_id, scope), cited in pages.items()
+    ]
+    return f"left out {'; '.join(named)}: {leave_out.reason}"
