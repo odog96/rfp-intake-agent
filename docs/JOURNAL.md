@@ -4,6 +4,39 @@ Every `### Done` entry that was in `CLAUDE.md`, moved here unedited on 2026-10-0
 entries were 74% of `CLAUDE.md` and were loaded into every session. Newest first. Nothing in this
 file is current state: `CLAUDE.md` holds current state, and where the two disagree, `CLAUDE.md` wins.
 
+### Built 2026-10-11, live run still to do: fix 1 of the 2026-10-09 brief — Site selection visits
+
+Run `r-20261009-225414` reported Site selection visits as Not found, though the synthetic RFP states
+them. **The cause was quote validation, not the hints.** EXTRACT's RFP call for `operational_metrics`
+did return a record for `ops.visits_site_selection`, in that run and in the baseline
+`r-20261008-review2-run3`, and both its first quote and its repair-retry quote failed with
+`quote_not_found_in_excerpt`. The alias "site qualification visit" was already in `config/fields.yaml`
+and in the prompt. The row is on PDF page 3 (printed p.10), not page 4 as the brief said, and it is
+two columns of preformatted text: the label's second line, "Time on Site", sits between the value's
+words in the extracted text, so "a total of 80 visits to qualify 75 sites" is not in the excerpt. The
+rejected quote was not saved anywhere, so what the model wrote is inferred, not observed. PyMuPDF puts
+the whole overview in one block with no consistent column edge, so rebuilding the columns was not
+attempted.
+
+Built, on Oliver's condition that code never makes a quote for the model:
+- **The retry shows the nearest passage.** `extract/validate.py:nearest_passage` finds the unbroken
+  stretch of the excerpt sharing most words with the failed quote — never across a page marker, and
+  nothing at all below half the quote's words — and `extract/prompt.py:describe_violation` adds it to
+  the retry's violation line as "reads exactly: …". The retry's quote goes through `validate_quote`
+  unchanged; a mutation that let the passage stand in as the quote fails
+  `tests/extract/test_repair_retry.py`.
+- **A dropped record keeps its answer.** `RunError.rejected_value` and `rejected_quote` are set when a
+  record fails after the retry, so the next error of this kind can be read rather than inferred.
+
+Two gaps in the same retry were seen and **not** changed, because neither is in the brief: a field
+whose first record failed and which the retry does not return at all is lost with no error, and the
+retry's records are added to the first call's valid ones without removing repeats.
+
+**Model calls made by mistake on 2026-10-11.** The first offline INGEST-to-PLAN script set
+`LLM_BACKEND=mock`, which the settings ignore — the variable is `RFP_INTAKE_LLM_BACKEND`. CLASSIFY and
+MARK_OTHER_STUDY therefore sent the two sample documents' text to Bedrock. Every call was refused
+because the access credentials had expired; none was retried, and Oliver was told.
+
 ### Done 2026-10-08: the seven changes Oliver and Angus agreed after reviewing report `r-20261007-140411`
 
 Oliver Zarate and Angus Gray (IQVIA Delivery Strategy & Budgeting) reviewed the report from run

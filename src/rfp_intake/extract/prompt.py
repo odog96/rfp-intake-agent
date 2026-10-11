@@ -33,6 +33,24 @@ Fix the following issues and return the corrected extraction:
 {violations}
 """
 
+# Added beneath a quote_not_found_in_excerpt violation when
+# `validate.nearest_passage` finds the text the quote was probably taken from.
+# It shows the model that text and nothing more; the quote the model then
+# returns is checked word for word like the first one. Fix 1 of the 2026-10-09
+# brief.
+NEAREST_PASSAGE_NOTE = """
+  The closest passage in the excerpt reads exactly: "{passage}"
+  Copy the quote character-for-character from the excerpt. If other text \
+interrupts the words you need, quote one unbroken piece of the excerpt instead."""
+
+
+def describe_violation(field_id: str, reason: str, passage: str | None = None) -> str:
+    """One line of the repair prompt's violation list, with the nearest passage if any."""
+    line = f"{field_id}: {reason}"
+    if passage:
+        line += NEAREST_PASSAGE_NOTE.format(passage=passage)
+    return line
+
 
 def build_extract_prompt(
     task: ExtractionTask,

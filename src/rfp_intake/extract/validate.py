@@ -10,6 +10,7 @@ Non-negotiable per ARCHITECTURE.md §4.4:
 from __future__ import annotations
 
 import re
+from collections import Counter
 
 from rfp_intake.domain.dynamic import FieldExtractionItem
 from rfp_intake.domain.registry import FieldDef
@@ -27,6 +28,65 @@ def validate_quote(quote: str, excerpt: str) -> bool:
     if not norm_quote:
         return False
     return norm_quote in norm_excerpt
+
+
+# The block markers `extract/prompt.py` writes: one per page of text, one per table.
+_PAGE_MARKER = re.compile(r"--- (?:Page \d+|Table \(page \d+\)) ---")
+_WORD = re.compile(r"[a-z0-9]+")
+
+
+def _word_key(word: str) -> str:
+    return "".join(_WORD.findall(word.lower()))
+
+
+def nearest_passage(quote: str, excerpt: str, context_words: int = 4) -> str | None:
+    """The unbroken stretch of the excerpt that shares most words with a failed quote.
+
+    Used only to word the repair retry: the model is shown this text and asked
+    to copy its quote from it. It is never used as a quote. The retry's quote
+    goes through `validate_quote` like any other, so the check itself is
+    unchanged. Fix 1 of the 2026-10-09 brief: the synthetic RFP's two-column
+    rows put the label's second line between the value's words, so the
+    sentence the model reads is not one the excerpt contains, and the retry,
+    told only "quote_not_found_in_excerpt", failed the same way.
+
+    The result is words of `_normalize_whitespace(excerpt)` joined by single
+    spaces, so it is itself a substring `validate_quote` accepts. It never
+    crosses a "--- Page N ---" or "--- Table (page N) ---" marker, so it is
+    text from one page or one table. None when
+    no stretch shares at least half the quote's words, so the retry is never
+    pointed at an unrelated passage.
+    """
+    quote_keys = [k for k in (_word_key(w) for w in quote.split()) if k]
+    if not quote_keys:
+        return None
+    wanted = Counter(quote_keys)
+    width = len(quote_keys) + len(quote_keys) // 2 + 2
+    needed = max(2, (len(quote_keys) + 1) // 2)
+
+    best_score = 0
+    best: tuple[list[str], int, int] | None = None
+    for block in _PAGE_MARKER.split(excerpt):
+        words = _normalize_whitespace(block).split(" ")
+        keys = [_word_key(w) for w in words]
+        for start in range(len(words)):
+            if keys[start] not in wanted:
+                continue
+            window = Counter(keys[start:start + width])
+            score = sum(min(n, wanted[k]) for k, n in window.items() if k in wanted)
+            if score > best_score:
+                last = max(
+                    i for i in range(start, min(start + width, len(words)))
+                    if keys[i] in wanted
+                )
+                best_score, best = score, (words, start, last)
+
+    if best is None or best_score < needed:
+        return None
+    words, start, last = best
+    lo = max(0, start - context_words)
+    hi = min(len(words), last + 1 + context_words)
+    return " ".join(words[lo:hi])
 
 
 def validate_page(page: int, page_window: tuple[int, int]) -> bool:

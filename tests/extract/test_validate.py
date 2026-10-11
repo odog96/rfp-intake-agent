@@ -5,6 +5,7 @@ from __future__ import annotations
 from rfp_intake.domain.dynamic import FieldExtractionItem
 from rfp_intake.domain.registry import FieldDef
 from rfp_intake.extract.validate import (
+    nearest_passage,
     validate_numeric,
     validate_page,
     validate_quote,
@@ -126,3 +127,54 @@ class TestValidateRecord:
         valid, reason = validate_record(item, excerpt, (3, 8), field_def)
         assert not valid
         assert "numeric_field_no_digits" in reason  # type: ignore[operator]
+
+
+# The synthetic RFP's Site Qualification row as the excerpt holds it: the
+# label's second line, "Time on Site", falls between the value's words.
+_TWO_COLUMN_EXCERPT = (
+    "--- Page 2 ---\nEnrolment will be completed in 9 months across 75 sites.\n\n"
+    "--- Page 3 ---\n"
+    "Site Qualification Visits &      1 visit per site; a total of 80 visits to \n \n"
+    "Time on Site                     qualify 75 sites; an average of 5 hours \n \n"
+    "                                 per visit\n"
+    "Site Initiation Visits           1 visit per site"
+)
+
+
+class TestNearestPassage:
+    """`nearest_passage` words the repair retry. It is never used as a quote."""
+
+    def test_finds_the_row_a_two_column_layout_split(self) -> None:
+        quote = "a total of 80 visits to qualify 75 sites"
+        assert not validate_quote(quote, _TWO_COLUMN_EXCERPT)
+
+        passage = nearest_passage(quote, _TWO_COLUMN_EXCERPT)
+
+        assert passage is not None
+        assert "80 visits to Time on Site qualify 75 sites" in passage
+
+    def test_the_passage_is_text_the_quote_check_accepts(self) -> None:
+        # So a quote copied from it validates — and one that is not, does not.
+        passage = nearest_passage("a total of 80 visits to qualify 75 sites", _TWO_COLUMN_EXCERPT)
+        assert passage is not None
+        assert validate_quote(passage, _TWO_COLUMN_EXCERPT)
+
+    def test_never_crosses_a_page_marker(self) -> None:
+        passage = nearest_passage("75 sites Site Qualification Visits", _TWO_COLUMN_EXCERPT)
+        assert passage is not None
+        assert "--- Page" not in passage
+
+    def test_never_crosses_a_table_marker(self) -> None:
+        excerpt = (
+            "--- Page 3 ---\nThe last line of page text reads 80 visits to\n\n"
+            "--- Table (page 3) ---\n| qualify 75 sites |"
+        )
+        passage = nearest_passage("80 visits to qualify 75 sites", excerpt)
+        assert passage is not None
+        assert "Table" not in passage
+
+    def test_an_unrelated_quote_gets_no_passage(self) -> None:
+        assert nearest_passage("placebo matched in colour and taste", _TWO_COLUMN_EXCERPT) is None
+
+    def test_an_empty_quote_gets_no_passage(self) -> None:
+        assert nearest_passage("  ;  ", _TWO_COLUMN_EXCERPT) is None

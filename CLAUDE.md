@@ -68,7 +68,7 @@ Source: `/home/cdsw/how_to_resond.txt`, adapted for this project.
 19. **When told "unclear" or "too dense", rewrite with the missing pieces filled in.**
     Do not defend the original or apologise at length.
 
-## Current status (as of 2026-10-08)
+## Current status (as of 2026-10-11)
 
 **The seven changes Oliver and Angus agreed on 2026-10-07, after reviewing the report from run
 `r-20261007-140411`, are built and measured.** Read the 2026-10-08 entry in `docs/JOURNAL.md` for what
@@ -100,7 +100,8 @@ which waits until the single-study report is accepted.
 
 Three things from that work are still open, none of them blocking: `Site selection visits` reads Not
 found because the synthetic RFP calls them "Site Qualification Visits" across three lines of a
-two-column table; where a real conflict remains, the page on which a document said "not specified" is
+two-column table (fix 1 of the 2026-10-09 brief is built — the repair retry now shows the model the
+nearest passage — and waits for a live run; see the 2026-10-11 entry in `docs/JOURNAL.md`); where a real conflict remains, the page on which a document said "not specified" is
 no longer cited in the Disagreements positions, though the record itself is still in `extraction.json`;
 and the report shows the reader raw field ids in two derived rows (`ip.form=['infusion_iv']` and the
 visit-intensity rubric line), which predates this work.
@@ -112,13 +113,14 @@ run, and what remains is PLAN keeping only three sections per field group. Read 
 in `docs/JOURNAL.md` before trusting `blinding.placebo_matching` or `blinding.unblinded_staff_stated`.
 Graph topology today:
 `INGEST → CLASSIFY → FIND_SECTIONS → SET_ASIDE_SECTIONS → MARK_OTHER_STUDY → PLAN → EXTRACT → NORMALIZE → RECONCILE → ADJUDICATE → DERIVE → GATE`,
-then RENDER runs after the graph finishes (see the deviations below). 963 tests passing, 1 skipped, on
+then RENDER runs after the graph finishes (see the deviations below). 973 tests passing, 1 skipped, on
 2026-10-11 — the count moves with `runs/`, because `test_nothing_lost_on_a_real_run` runs once per run folder.
 Pushed to https://github.com/odog96/rfp-intake-agent.git. The push is done from a terminal by
-Oliver, from inside the repository directory — this session's credentials cannot do it. **The seven
-changes of the 2026-10-07 review are not committed**: 27 changed and 6 new files sit in the working
-tree, HEAD is still `64c042b`, and `main` is one commit behind `origin/main` — `dab43e0`, Oliver's
-2026-10-06 edit to `.project-metadata.yaml` on GitHub, which this work does not touch.
+Oliver, from inside the repository directory — this session's credentials cannot do it. The seven
+changes of the 2026-10-07 review were committed on 2026-10-11 as `c4ecd75`, on top of `dab43e0`
+(Oliver's 2026-10-06 edit to `.project-metadata.yaml` on GitHub), with `GATE_OFF=1` approved by Oliver
+because the session's gate hooks were not loaded. Fix 1 of the 2026-10-09 brief is committed after
+it. **Neither is pushed.**
 
 Every `### Done` entry that used to be in this file is now in `docs/JOURNAL.md`, newest first, unedited.
 Nothing in `docs/JOURNAL.md` is current state; where the two disagree, this file wins.

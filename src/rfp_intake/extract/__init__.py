@@ -19,8 +19,13 @@ from rfp_intake.domain.schemas import (
     RunError,
     RunState,
 )
-from rfp_intake.extract.prompt import build_excerpt, build_extract_prompt, build_repair_prompt
-from rfp_intake.extract.validate import validate_record
+from rfp_intake.extract.prompt import (
+    build_excerpt,
+    build_extract_prompt,
+    build_repair_prompt,
+    describe_violation,
+)
+from rfp_intake.extract.validate import nearest_passage, validate_record
 from rfp_intake.llm.provider import get_llm
 from rfp_intake.llm.structured import get_structured_output_for_role
 
@@ -87,7 +92,12 @@ def extract_group(
         if is_valid:
             valid_records.append(record)
         else:
-            violations.append(f"{record.field_id}: {reason}")
+            reason = reason or "invalid"
+            passage = (
+                nearest_passage(record.quote, excerpt)
+                if reason == "quote_not_found_in_excerpt" else None
+            )
+            violations.append(describe_violation(record.field_id, reason, passage))
             failed_records.append(record)
 
     errors: list[RunError] = []
@@ -127,6 +137,8 @@ def extract_group(
                         task_id=f"{task.doc_id}:{task.group}:{record.field_id}",
                         error=f"Validation failed after retry: {reason}",
                         kind="validation",
+                        rejected_value=record.raw_value,
+                        rejected_quote=record.quote,
                     ))
         except Exception as e:
             logger.error("repair_retry_failed", error=str(e), task=task.group)

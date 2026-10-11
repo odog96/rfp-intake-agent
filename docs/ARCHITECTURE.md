@@ -756,7 +756,12 @@ Where two sections share a page, the table may belong to the other one. Accepted
 
 **Post-call validation, in code, non-negotiable:**
 1. `quote` must be a substring of the excerpt (normalized whitespace). Fail → one repair retry with the
-   violation named → still fail → drop the record and log to `errors`.
+   violation named → still fail → drop the record and log to `errors`, with the rejected value and
+   quote (`RunError.rejected_value` / `rejected_quote`). Since 2026-10-11 the retry also shows the model
+   the passage of the excerpt nearest the failed quote (`validate.nearest_passage`), word for word,
+   because a two-column layout can put other text between a value's words. The passage only words the
+   retry: the model's new quote is checked exactly like the first, and code never uses the passage as
+   a quote.
 2. `page` must fall inside the task window.
 3. Enum values must be in the registry's allowed set.
 4. Numeric fields must parse.

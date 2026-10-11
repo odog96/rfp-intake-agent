@@ -263,6 +263,12 @@ class RunError(BaseModel):
     # because the documents were silent from one that extracted nothing because
     # every LLM call failed.
     kind: Literal["call_failed", "validation"] = "call_failed"
+    # The answer EXTRACT threw away, kept so a dropped record can be read
+    # rather than inferred. Set only for a record that failed validation after
+    # the repair retry. Before 2026-10-11 only the reason was kept, so the quote
+    # behind run r-20261009-225414's Site selection error could not be shown.
+    rejected_value: str | None = None
+    rejected_quote: str | None = None
     timestamp: datetime = Field(default_factory=datetime.now)
 
 
