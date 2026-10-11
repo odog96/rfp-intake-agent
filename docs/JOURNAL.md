@@ -4,7 +4,72 @@ Every `### Done` entry that was in `CLAUDE.md`, moved here unedited on 2026-10-0
 entries were 74% of `CLAUDE.md` and were loaded into every session. Newest first. Nothing in this
 file is current state: `CLAUDE.md` holds current state, and where the two disagree, `CLAUDE.md` wins.
 
-### Built 2026-10-11, live run still to do: fix 1 of the 2026-10-09 brief — Site selection visits
+### Done 2026-10-11: fix 2 of the 2026-10-09 brief — pages beside a value must state it
+
+Run `r-20261009-225414`'s report printed "Number of interim analyses: 0 — Amendment p.98; RFP p.4",
+and RFP p.4 says 1. Appendix A held only the amendment's quote, so the RFP's 1 had no quote anywhere
+in the report. **The cause is in ADJUDICATE's output, and the fix is in RENDER.** For a `conflict` or
+`reconcilable` verdict, `adjudicate/_handle_conflict` and `_handle_reconcilable` write one
+`ResolvedField` with the chosen value and quote but `sources` naming every record's page, whichever
+value the record held; `render/report_model.py` printed `sources` as the pages of the value. Nine rows
+in that run cited a page that does not state their value: study.population, study.primary_objective,
+interim.count, visits.schedule_present, timeline.total_duration [study] and [subject],
+blinding.placebo_matching, monitoring.unblinded_rationale and ops.subjects_total (amendment p.24 says
+236). On two more, both ops.crf_pages rows, the RFP's "80 pages per subject" record had no Appendix A
+line. The fix is in `render/report_model.py` only, so it shows on a re-render of the existing
+`extraction.json` with no run:
+- `_stating` keeps, beside a value chosen from a disagreement, only the pages of records whose value
+  reads the same. A row where no value won (`timeline.total_duration` [study],
+  `blinding.placebo_matching`) prints "—" with no page.
+- `_evidence` lists each record of such a disagreement in Appendix A with its own value, page, quote
+  and confidence. Appendix A on that run grew from 100 lines to 122; the report stayed 17 pages.
+- A borrowed disagreement (`interim.timing` carries `interim.count`'s) and a `not_a_conflict` verdict,
+  which already gets one row per record, are unchanged.
+
+**Why `assert_nothing_lost` missed it.** It checked one direction only: every page in `rf.sources`
+is cited beside the value. It never checked that a cited page states the value, and since
+`rf.sources` held the other side's page, the check *required* the wrong citation. It also looked for
+the chosen value's quote in Appendix A and never for the other records'. Its hand-built conflict
+tests built the row with both pages, which encoded the bug as expected. It now checks both
+directions and every record's Appendix A line; before the fix it fails on 23 of the 29 runs under
+`runs/` and on four hand-built tests, and `test_each_side_of_a_disagreement_keeps_its_own_page_and_quote`
+pins the brief's done-condition on `r-20261009-225414`. Because `runs/` is not in git, that test is
+skipped on a clean checkout, so `TestNothingLost.test_each_side_of_a_conflict_keeps_its_own_page_and_quote`
+builds the same case by hand; it too fails without the fix. The check also now fails a value that
+came with pages but is shown with none, so it cannot pass by the code dropping every page.
+
+**What the check still does not catch.** "Both directions" is exact only for a row ADJUDICATE wrote
+from a conflict or reconcilable verdict, where the records say which page states which value. For
+any other row the check takes `rf.sources` as the pages that state it, so a page RECONCILE added for
+a document that said "not specified" (`reconcile/__init__.py:176`) still passes. That is open item 3
+in `CLAUDE.md`.
+
+The report-usability reviewer read `runs/r-20261009-225414/report-rerender.pdf` and confirmed the
+done-condition. Its findings that are not fix 2's to change, recorded as open items in `CLAUDE.md`:
+Appendix A now shows a losing value (the RFP's 1, the protocol's 236, "No" for the schedule) with
+nothing saying it was not used, beside a row that says "checked, the same answer"; and the derived
+row "What to assume about the placebo" cites RFP p.3, which says the opposite of its value, which
+predates fix 2. Its finding that two identical records at one page showed the lower confidence was
+made deterministic: duplicate Appendix A lines now always keep the lower one.
+
+Seen while measuring and **not** changed: on three older runs (`r-20260918-141940`,
+`r-20260923-131601`, `r-20261001-032936`) a conflict's value and quote come from different records
+of one document, because `_handle_conflict` looks the quote up by document. Appendix A lists the
+row's own line as well there.
+
+### Built 2026-10-11, failed its live run: fix 1 of the 2026-10-09 brief — Site selection visits
+
+**Live run `r-20261011-fix1` (2026-10-11): Site selection visits is still Not found.** The record
+failed again after the retry; `RunError.rejected_quote` now shows what the model wrote —
+"1 visit per site; a total of 80 visits to\n\n qualify 75 sites; an average of 5 hours\n\n per visit",
+the label's "Time on Site" left out of the middle. Run offline on page 3, `nearest_passage` returns
+the passage with "Time on Site" in it, but the retry prompt is not logged, so whether the model was
+shown it and ignored it is not observed. EXTRACT errors fell from 16 to 11, and
+`scripts/check_review_2026_10_07.py` reports 8 pass, 0 fail. 23 of the 43 fields changed value,
+wording or pages against `r-20261008-review2-run3`. One of them, `visits.intensity_rating` going from
+high to low, is a DERIVE defect and not model variation: see the open item in `CLAUDE.md`. Oliver's
+decision for the second attempt is to look at the parsing side — whether the RFP's two-column table
+can be parsed as a table — rather than at another model retry.
 
 Run `r-20261009-225414` reported Site selection visits as Not found, though the synthetic RFP states
 them. **The cause was quote validation, not the hints.** EXTRACT's RFP call for `operational_metrics`

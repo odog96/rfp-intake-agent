@@ -14,7 +14,7 @@ from pathlib import Path
 
 import pytest
 
-from rfp_intake.domain.registry import Registry, get_registry
+from rfp_intake.domain.registry import FieldDef, Registry, get_registry
 from rfp_intake.domain.schemas import (
     Contradiction,
     Document,
@@ -83,12 +83,52 @@ def assert_nothing_lost(state: RunState, registry: Registry, model: ReportModel)
         assert _STATUS_RANK[line.status] <= _STATUS_RANK[rf.status]
         assert _STATUS_RANK[row.status] <= _STATUS_RANK[rf.status]
         assert line.confidence <= rf.confidence
-        # Every page the entry was found on is cited, against the right document.
+        # The pages beside a value are exactly the pages that state it, checked
+        # both ways. Until fix 2 of the 2026-10-09 brief this checked only that
+        # every page in `rf.sources` was cited — never that a cited page says
+        # the value — and ADJUDICATE puts every record's page in `rf.sources`.
+        # So run r-20261009-225414 passed while printing "0" interim analyses
+        # beside RFP p.4, which says 1: the old check asked for that page.
         cited = _parse_sources(line.sources)
-        for p in rf.sources:
-            assert p.page in cited.get(codes[p.doc_id], set()), (
-                f"{rf.field_id}: {codes[p.doc_id]} p.{p.page} not in {line.sources!r}"
+        # A value that came with pages keeps at least one, so the check below
+        # cannot pass by the code dropping every page.
+        if rf.value is not None and rf.sources:
+            assert cited, f"{rf.field_id} [{rf.scope}] {want!r} cites no page"
+        stating = _stating_pages(rf, fd, codes, want)
+        for code, page in stating:
+            assert page in cited.get(code, set()), (
+                f"{rf.field_id}: {code} p.{page} not in {line.sources!r}"
             )
+        allowed = {
+            p for e in line.entries
+            for p in _stating_pages(
+                e, fd, codes,
+                "; ".join(format_value(e.value, fd)) if e.status != "not_found" else "—",
+            )
+        }
+        for code, pages in cited.items():
+            for page in pages:
+                assert (code, page) in allowed, (
+                    f"{rf.field_id} [{rf.scope}] {line.text!r}: {code} p.{page} "
+                    "is cited but does not state this value"
+                )
+        # Every record of the disagreement this value was chosen from has its
+        # own Appendix A line: its value, its page and its quote, whichever
+        # value won — the losing side included, and on a row where none did.
+        if _own_disagreement_of(rf) is not None:
+            assert rf.contradiction is not None
+            for r in rf.contradiction.records:
+                said = "; ".join(format_value(
+                    r.value if r.value is not None else r.raw_value, fd))
+                assert any(
+                    e.field_id == rf.field_id and e.value == said and e.quote == r.quote
+                    and _parse_sources(e.sources)
+                    == {codes[r.provenance.doc_id]: {r.provenance.page}}
+                    for e in model.evidence
+                ), (
+                    f"{rf.field_id}: {said!r} from {codes[r.provenance.doc_id]} "
+                    f"p.{r.provenance.page} has no Appendix A line of its own"
+                )
         # A folded rewording was checked, and its text and quote are in Appendix A.
         if line in row.folded:
             assert row.verdict == "not_a_conflict" and not row.budget_driver
@@ -108,12 +148,12 @@ def assert_nothing_lost(state: RunState, registry: Registry, model: ReportModel)
         if c.verdict in NEEDS_DECISION:
             assert c.field_id in decided
             d = next(d for d in model.decisions if d.signature == _signature(c))
-            cited: dict[str, set[int]] = {}
+            in_positions: dict[str, set[int]] = {}
             for pos in d.positions:
                 for code, pages in _parse_sources(pos.sources).items():
-                    cited.setdefault(code, set()).update(pages)
+                    in_positions.setdefault(code, set()).update(pages)
             for r in c.records:
-                assert r.provenance.page in cited[codes[r.provenance.doc_id]]
+                assert r.provenance.page in in_positions[codes[r.provenance.doc_id]]
         else:
             assert c.field_id in dismissed
     needing = [c for c in adjudicated if c.verdict in NEEDS_DECISION]
@@ -123,6 +163,40 @@ def assert_nothing_lost(state: RunState, registry: Registry, model: ReportModel)
     for row in rows:
         if row.verdict in NEEDS_DECISION:
             assert row.decision_no is not None
+
+
+def _own_disagreement_of(rf: ResolvedField) -> Contradiction | None:
+    """The disagreement ADJUDICATE wrote this entry from as one row citing every
+    record's page. Written out here rather than imported, so the test does not
+    take the rule from the code it is checking."""
+    c = rf.contradiction
+    if c is None or c.field_id != rf.field_id or c.verdict not in ("conflict", "reconcilable"):
+        return None
+    return c
+
+
+def _stating_pages(
+    rf: ResolvedField, fd: FieldDef | None, codes: dict[str, str], want: str,
+) -> set[tuple[str, int]]:
+    """(document code, page) for every page that states `want`, this entry's value.
+
+    For an entry written from a disagreement, the pages of the records whose
+    value reads as `want` — none when no value won and `want` is "—". For any
+    other entry, the pages in its own `sources`, which each say its value.
+    """
+    c = _own_disagreement_of(rf)
+    if c is None:
+        return {(codes[p.doc_id], p.page) for p in rf.sources}
+    if rf.value is None:
+        return set()
+    return {
+        (codes[r.provenance.doc_id], r.provenance.page)
+        for r in c.records
+        # Compared joined the way `want` was, so a value of several items
+        # matches itself rather than failing on the separator.
+        if _same_key(["; ".join(format_value(
+            r.value if r.value is not None else r.raw_value, fd))]) == _same_key([want])
+    }
 
 
 # One cited page: its position in the file, and the number printed on it where
@@ -257,6 +331,23 @@ class TestNothingLost:
         ]
         [row] = [r for r in model.all_rows() if r.field_id == "interim.count"]
         assert row.decision_no == d.no == 1
+
+    def test_each_side_of_a_conflict_keeps_its_own_page_and_quote(self) -> None:
+        """Fix 2 of the 2026-10-09 brief, built by hand so it runs on a clean
+        checkout, where `runs/` is not present. ADJUDICATE cites both records'
+        pages on the one row; the row shows only the page that states 0."""
+        c = _contradiction("interim.count", "conflict",
+                           [("0", 98, "d-prot"), ("1", 4, "d-rfp")])
+        rf = _rf("interim.count", 0, status="needs_review", contradiction=c, quote="0")
+        rf.sources = [_prov(98), _prov(4, "d-rfp", "rfp")]
+        state = RunState(run_id="r-1", resolved=[rf], contradictions=[c])
+        model = build_report_model(state, get_registry())
+        assert_nothing_lost(state, get_registry(), model)
+        [row] = [r for r in model.all_rows() if r.field_id == "interim.count"]
+        assert [(v.text, v.sources) for v in row.values] == [("0", "Protocol p.98")]
+        assert sorted(
+            (e.value, e.sources, e.quote) for e in model.evidence if e.field_id == "interim.count"
+        ) == [("0", "Protocol p.98", "0"), ("1", "RFP p.4", "1")]
 
     def test_two_rows_sharing_one_disagreement_share_its_number(self) -> None:
         """Change 4 of the 2026-10-07 review: the timing row follows the count.
@@ -711,3 +802,39 @@ def test_nothing_lost_on_a_real_run(run: Path) -> None:
     state = load_run_state(run)
     model = build_report_model(state, get_registry())
     assert_nothing_lost(state, get_registry(), model)
+
+
+# The run fix 2 of the 2026-10-09 brief was found on. Kept by name because the
+# brief's "done" is stated against it: Appendix A lists the amendment's 0 and the
+# RFP's 1 separately, each with its own quote, and the All variables row lists
+# only the page that says 0.
+BRIEF_RUN = RUNS_DIR / "r-20261009-225414"
+
+
+@pytest.mark.skipif(not (BRIEF_RUN / "extraction.json").is_file(),
+                    reason="run r-20261009-225414 is not on this machine")
+def test_each_side_of_a_disagreement_keeps_its_own_page_and_quote() -> None:
+    state = load_run_state(BRIEF_RUN)
+    model = build_report_model(state, get_registry())
+    [c] = [c for c in state.contradictions if c.field_id == "interim.count"]
+    quotes = {r.raw_value: r.quote for r in c.records}
+
+    [row] = [r for r in model.all_rows() if r.field_id == "interim.count"]
+    assert [(v.text, _parse_sources(v.sources)) for v in row.values] == [
+        ("0", {"Amendment": {98}}),
+    ]
+    assert [
+        (e.value, _parse_sources(e.sources), e.quote)
+        for e in model.evidence if e.field_id == "interim.count"
+    ] == [
+        ("0", {"Amendment": {98}}, quotes["0"]),
+        ("1", {"RFP": {4}}, quotes["1"]),
+    ]
+
+    # The two rows where no value won print "—" with no page beside it, and
+    # their records are all in Appendix A.
+    for field_id, scope in (("timeline.total_duration", "study"),
+                            ("blinding.placebo_matching", None)):
+        [row] = [r for r in model.all_rows()
+                 if r.field_id == field_id and r.scope == scope]
+        assert [(v.text, v.sources) for v in row.values] == [("—", "")]

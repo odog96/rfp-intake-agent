@@ -27,7 +27,13 @@ from pathlib import PurePath
 from typing import Any
 
 from rfp_intake.domain.registry import FieldDef, GroupDef, Registry
-from rfp_intake.domain.schemas import Contradiction, Provenance, ResolvedField, RunState
+from rfp_intake.domain.schemas import (
+    Contradiction,
+    FieldRecord,
+    Provenance,
+    ResolvedField,
+    RunState,
+)
 from rfp_intake.gate import CONFIDENCE_CONFIRMED, DISMISSED_VERDICTS
 from rfp_intake.normalize.scope import normalize_scope
 
@@ -614,7 +620,7 @@ def _rows_for(
                 if _STATUS_RANK.get(rf.status, 0) < _STATUS_RANK.get(line.status, 0):
                     line.status = rf.status
         for line in values.values():
-            line.sources = docs.pages([p for rf in line.entries for p in rf.sources])
+            line.sources = docs.pages([p for rf in line.entries for p in _stating(rf, fd)])
 
         lines = list(values.values())
         verdicts = [rf.contradiction.verdict for rf in group if rf.contradiction]
@@ -646,6 +652,55 @@ def _rows_for(
             follows_label=borrowed,
         )))
     return rows
+
+
+# The verdicts on which ADJUDICATE writes ONE row for a whole disagreement:
+# adjudicate/_handle_reconcilable and _handle_conflict give that row the chosen
+# value and quote, but `sources` naming every record's page, whichever value the
+# record held. A "not_a_conflict" verdict gets one row per record instead, each
+# citing only its own page, so its rows need none of what follows.
+_ONE_ROW_VERDICTS = ("conflict", "reconcilable")
+
+
+def _own_disagreement(rf: ResolvedField) -> Contradiction | None:
+    """The disagreement this entry's value was chosen from, when ADJUDICATE wrote
+    it as one row. Not a disagreement borrowed through `follows_conflict_of`
+    (interim.timing carries interim.count's): those records are about another
+    variable, so they say nothing about which pages state this one's value."""
+    c = rf.contradiction
+    if c is None or c.field_id != rf.field_id or c.verdict not in _ONE_ROW_VERDICTS:
+        return None
+    return c
+
+
+def _record_items(record: FieldRecord, fd: FieldDef | None) -> list[str]:
+    return format_value(record.value if record.value is not None else record.raw_value, fd)
+
+
+def _stating(rf: ResolvedField, fd: FieldDef | None) -> list[Provenance]:
+    """The pages that state this entry's value — the only pages printed beside it.
+
+    Fix 2 of the 2026-10-09 brief. Run r-20261009-225414 printed "0" for the
+    number of interim analyses beside "Amendment p.98; RFP p.4", and RFP p.4
+    says 1: the row cited every record of the disagreement, because that is
+    what ADJUDICATE puts in `sources` (see _ONE_ROW_VERDICTS). Here only the
+    pages of records whose value reads the same as the entry's are kept. A row
+    where no value won (value None, printed "—") keeps none, since no page says
+    "—". The other side's page is not lost: every record has its own line in
+    Appendix A (_evidence), and a conflict's positions are in the Disagreements
+    table.
+    """
+    c = _own_disagreement(rf)
+    if c is None:
+        return list(rf.sources)
+    if rf.value is None:
+        return []
+    want = _same_key(format_value(rf.value, fd))
+    pages = {
+        (r.provenance.doc_id, r.provenance.page)
+        for r in c.records if _same_key(_record_items(r, fd)) == want
+    }
+    return [p for p in rf.sources if (p.doc_id, p.page) in pages]
 
 
 def _fold_rewordings(fd: FieldDef, row: Row) -> Row:
@@ -874,25 +929,67 @@ def _dismissed(
 def _evidence(
     state: RunState, field_by_id: dict[str, FieldDef], docs: _Docs
 ) -> list[Evidence]:
-    """Every entry's quote, once. Registry order, so it reads like the main table."""
+    """Every entry's quote, once. Registry order, so it reads like the main table.
+
+    An entry chosen from a disagreement (_own_disagreement) is listed as its
+    records instead, each with its own value, page and quote. Before fix 2 of
+    the 2026-10-09 brief only the chosen value's quote was here, beside every
+    record's page, so in run r-20261009-225414 the RFP's "1" interim analysis
+    had no quote anywhere in the appendix and its page sat beside the
+    amendment's "0". The entry itself is then listed only if no record already
+    shows its value and quote. Usually one does; on three of the 29 runs under
+    runs/ on 2026-10-11 a conflict's value and quote came from different records
+    of one document, because adjudicate/_handle_conflict looks the quote up by
+    document, and there the entry is listed as well.
+    """
     order = {f.id: i for i, f in enumerate(field_by_id.values())}
-    seen: set[tuple[str, str | None, str, str]] = set()
+    seen: dict[tuple[str, str | None, str, str, str], Evidence] = {}
     out = []
+
+    def add(e: Evidence) -> None:
+        # The pages are in the key so that two records with one wording on
+        # different pages are both listed. Two that are the same line keep the
+        # lower confidence, the rule the main table follows (_rows_for).
+        key = (e.field_id, normalize_scope(e.scope), e.value.casefold(),
+               (e.quote or "").strip(), e.sources)
+        if key in seen:
+            seen[key].confidence = min(seen[key].confidence, e.confidence)
+        else:
+            seen[key] = e
+            out.append(e)
+
     for rf in sorted(state.resolved, key=lambda r: order.get(r.field_id, len(order))):
+        fd = field_by_id.get(rf.field_id)
+        label = _label(field_by_id, rf.field_id)
+        value = "; ".join(format_value(rf.value, fd))
+        c = _own_disagreement(rf)
+        shown: set[tuple[str, str]] = set()
+        for r in c.records if c is not None else []:
+            said = "; ".join(_record_items(r, fd))
+            shown.add((said.casefold(), r.quote.strip()))
+            add(Evidence(
+                field_id=rf.field_id,
+                label=label,
+                scope=rf.scope,
+                value=said,
+                sources=docs.pages([r.provenance]),
+                confidence=r.confidence,
+                quote=r.quote,
+                derived_from=[],
+                # ADJUDICATE's explanation, which is all `notes` holds on these
+                # rows, is printed in Appendix B; see the comment below.
+                notes=None,
+            ))
         if not rf.quote and not rf.derived_from:
             continue
-        fd = field_by_id.get(rf.field_id)
-        value = "; ".join(format_value(rf.value, fd))
-        key = (rf.field_id, normalize_scope(rf.scope), value.casefold(), (rf.quote or "").strip())
-        if key in seen:
+        if (value.casefold(), (rf.quote or "").strip()) in shown:
             continue
-        seen.add(key)
-        out.append(Evidence(
+        add(Evidence(
             field_id=rf.field_id,
-            label=_label(field_by_id, rf.field_id),
+            label=label,
             scope=rf.scope,
             value=value,
-            sources=docs.pages(rf.sources),
+            sources=docs.pages(_stating(rf, fd)),
             confidence=rf.confidence,
             quote=rf.quote,
             derived_from=rf.derived_from,
