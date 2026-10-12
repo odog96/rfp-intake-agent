@@ -171,11 +171,40 @@ class FieldDef(BaseModel):
     model_config = {"populate_by_name": True}
 
 
+class ReportWording(BaseModel):
+    """Phrases report.pdf prints that belong to no one field, `report_wording` in
+    config/fields.yaml.
+
+    Added 2026-10-12 for CLAUDE.md open item 3: the Appendix A line saying which
+    side of a disagreement the report used. It lives in YAML, like `plain`, so a
+    clinical reviewer can have it corrected without a code change. `{n}` stands
+    for the Disagreement number, and the two phrases that send the reader to a
+    Disagreement must contain it.
+    """
+
+    shown_provisional: str = Field(min_length=1)
+    not_used: str = Field(min_length=1)
+    no_value_chosen: str = Field(min_length=1)
+
+    @field_validator("not_used", "no_value_chosen")
+    @classmethod
+    def _names_the_disagreement(cls, v: str) -> str:
+        if "{n}" not in v:
+            raise ValueError("must contain {n}, the Disagreement number")
+        return v
+
+    @staticmethod
+    def fill(phrase: str, n: int) -> str:
+        # replace, not str.format: a brace elsewhere in the wording must not break a report.
+        return phrase.replace("{n}", str(n))
+
+
 class Registry(BaseModel):
     version: int
     groups: list[GroupDef]
     fields: list[FieldDef]
     registry_version: str
+    report_wording: ReportWording
 
     def get_group(self, group_id: str) -> GroupDef:
         for g in self.groups:
@@ -319,6 +348,13 @@ def load_registry(path: Path | None = None) -> Registry:
 
     _validate_registry(groups, fields)
 
+    if "report_wording" not in data:
+        raise RegistryValidationError(f"{path} has no report_wording section")
+    try:
+        report_wording = ReportWording.model_validate(data["report_wording"])
+    except ValueError as e:
+        raise RegistryValidationError(f"report_wording in {path}: {e}") from e
+
     registry_version = f"v{version}:{content_hash}"
 
     return Registry(
@@ -326,6 +362,7 @@ def load_registry(path: Path | None = None) -> Registry:
         groups=groups,
         fields=fields,
         registry_version=registry_version,
+        report_wording=report_wording,
     )
 
 

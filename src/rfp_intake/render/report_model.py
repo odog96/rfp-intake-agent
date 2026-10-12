@@ -27,7 +27,7 @@ from dataclasses import dataclass, field
 from pathlib import PurePath
 from typing import Any
 
-from rfp_intake.domain.registry import FieldDef, GroupDef, Registry
+from rfp_intake.domain.registry import FieldDef, GroupDef, Registry, ReportWording
 from rfp_intake.domain.schemas import (
     Contradiction,
     FieldRecord,
@@ -204,6 +204,10 @@ class Evidence:
     quote: str | None
     derived_from: list[str]
     notes: str | None
+    # Which side of a numbered Disagreement this passage is on, in the wording of
+    # `report_wording` in config/fields.yaml. None for a passage that is not
+    # behind one. CLAUDE.md open item 3, 2026-10-12.
+    marker: str | None = None
 
 
 @dataclass
@@ -541,7 +545,7 @@ def build_report_model(state: RunState, registry: Registry) -> ReportModel:
         groups=sections,
         decisions=decisions,
         dismissed=_dismissed(state, field_by_id, docs),
-        evidence=_evidence(state, field_by_id, docs),
+        evidence=_evidence(state, field_by_id, docs, decision_no, registry.report_wording),
         glossary=[Term(f.label, f.plain) for f in registry.fields if f.plain],
         variables_total=len(registry.fields),
         variables_found=found,
@@ -940,7 +944,11 @@ def _dismissed(
 
 
 def _evidence(
-    state: RunState, field_by_id: dict[str, FieldDef], docs: _Docs
+    state: RunState,
+    field_by_id: dict[str, FieldDef],
+    docs: _Docs,
+    decision_no: dict[tuple[object, ...], int],
+    wording: ReportWording,
 ) -> list[Evidence]:
     """Every entry's quote, once. Registry order, so it reads like the main table.
 
@@ -950,10 +958,14 @@ def _evidence(
     record's page, so in run r-20261009-225414 the RFP's "1" interim analysis
     had no quote anywhere in the appendix and its page sat beside the
     amendment's "0". The entry itself is then listed only if no record already
-    shows its value and quote. Usually one does; on three of the 29 runs under
-    runs/ on 2026-10-11 a conflict's value and quote came from different records
-    of one document, because adjudicate/_handle_conflict looks the quote up by
-    document, and there the entry is listed as well.
+    shows its value and quote. Every run since commit bf038be (2026-10-03) has
+    one that does. In three earlier runs a conflict's value and quote came from
+    different records of one document (CLAUDE.md open item 7), and there the
+    entry is listed as well.
+
+    Each passage behind a numbered Disagreement carries a marker saying which
+    side the report used (CLAUDE.md open item 3, 2026-10-12); see `_marker`.
+    A "reconcilable" disagreement has no number, so its passages carry none.
     """
     order = {f.id: i for i, f in enumerate(field_by_id.values())}
     seen: dict[tuple[str, str | None, str, str, str], Evidence] = {}
@@ -976,6 +988,7 @@ def _evidence(
         label = _label(field_by_id, rf.field_id)
         value = "; ".join(format_value(rf.value, fd))
         c = _own_disagreement(rf)
+        marker = _marker(c, fd, decision_no, wording)
         shown: set[tuple[str, str]] = set()
         for r in c.records if c is not None else []:
             said = "; ".join(_record_items(r, fd))
@@ -992,6 +1005,7 @@ def _evidence(
                 # ADJUDICATE's explanation, which is all `notes` holds on these
                 # rows, is printed in Appendix B; see the comment below.
                 notes=None,
+                marker=marker(r),
             ))
         if not rf.quote and not rf.derived_from:
             continue
@@ -1028,5 +1042,45 @@ def _evidence(
             # note from, so if that ever changes a test says so rather than a
             # report.
             notes=rf.notes if (rf.derived_from or rf.contradiction is None) else None,
+            # The row's own value, so the side the report used.
+            marker=marker(None),
         ))
     return out
+
+
+def _marker(
+    c: Contradiction | None,
+    fd: FieldDef | None,
+    decision_no: dict[tuple[object, ...], int],
+    wording: ReportWording,
+) -> Callable[[FieldRecord | None], str | None]:
+    """The Appendix A marker for each passage of one row's own disagreement.
+
+    Only a disagreement with a number in the Disagreements table gets markers.
+    Where precedence chose no value, every passage says so. Where it chose one,
+    "shown" goes on the record precedence chose (`winning_record_index`, set
+    since 2026-10-12) and on every other passage stating the same value, as the
+    table above groups them (`_same_key`): calling a passage that agrees with
+    the report "not used" would be wrong. Runs made before 2026-10-12 have no
+    `winning_record_index` for a conflict, and the value alone finds the side.
+    Passing None asks for the marker of the row's own entry, the shown value.
+    """
+    n = decision_no.get(_signature(c)) if c is not None else None
+    if c is None or n is None:
+        return lambda _record: None
+    if c.resolved_value is None:
+        return lambda _record: ReportWording.fill(wording.no_value_chosen, n)
+    shown_key = _same_key(format_value(c.resolved_value, fd))
+    index = c.winning_record_index
+    chosen = c.records[index - 1] if index is not None and 1 <= index <= len(c.records) else None
+
+    def marker(record: FieldRecord | None) -> str:
+        if (
+            record is None
+            or record is chosen
+            or _same_key(_record_items(record, fd)) == shown_key
+        ):
+            return ReportWording.fill(wording.shown_provisional, n)
+        return ReportWording.fill(wording.not_used, n)
+
+    return marker

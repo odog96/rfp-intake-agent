@@ -619,6 +619,9 @@ def _evidence_appendix(model: ReportModel, styles: dict) -> list:  # type: ignor
             # passage the rule read; this says why it answers this variable. See
             # reconcile/rules.py.
             line += f' <font color="#757575">{escape(e.notes)}</font>'
+        if e.marker:
+            # Which side of a disagreement the report used (CLAUDE.md open item 3).
+            line += f'<br/><font color="#757575">{escape(e.marker)}</font>'
         story.append(Paragraph(line, styles["evidence"]))
     return story
 

@@ -916,3 +916,88 @@ class TestArmsMatchedAcrossDocuments:
 
         assert scopes == ["arm:Placebo", "arm:Placebo (not matched, Amendment)"]
         assert_nothing_lost(state, get_registry(), model)
+
+
+class TestAppendixAMarkers:
+    """CLAUDE.md open item 3: each Appendix A passage behind a numbered
+    Disagreement says which side the report used. The wording is read from
+    `report_wording` in config/fields.yaml, never from Python."""
+
+    SHOWN = "Shown in the report (provisional, by document precedence)"
+
+    def _state(self, *, resolved_value: object, index: int | None,
+               verdict: str = "conflict") -> RunState:
+        # The amendment states 0 on two pages, the RFP 1 on one.
+        c = _contradiction("interim.count", verdict,
+                           [("0", 98, "d-prot"), ("1", 4, "d-rfp"), ("0", 50, "d-prot")])
+        c = c.model_copy(update={
+            "resolved_value": resolved_value,
+            "winning_doc_id": "d-prot" if resolved_value is not None else None,
+            "winning_record_index": index,
+        })
+        rf = _rf("interim.count", resolved_value, status="needs_review", contradiction=c,
+                 quote="0" if resolved_value is not None else None)
+        rf.sources = [r.provenance for r in c.records]
+        return RunState(run_id="r-1", resolved=[rf], contradictions=[c])
+
+    def _markers(self, model: ReportModel) -> dict[str, str | None]:
+        return {e.sources: e.marker for e in model.evidence if e.field_id == "interim.count"}
+
+    def test_the_chosen_side_is_shown_and_the_other_is_not_used(self) -> None:
+        model = build_report_model(self._state(resolved_value="0", index=1), get_registry())
+        [d] = model.decisions
+        assert self._markers(model) == {
+            "Protocol p.98": self.SHOWN,
+            # Another page stating the shown value agrees with the report, so it
+            # is not "not used".
+            "Protocol p.50": self.SHOWN,
+            "RFP p.4": f"Not used — see Disagreement {d.no}",
+        }
+
+    def test_a_run_made_before_the_record_was_named_is_marked_by_value(self) -> None:
+        """Runs before 2026-10-12 carry no winning_record_index for a conflict."""
+        model = build_report_model(self._state(resolved_value="0", index=None), get_registry())
+        markers = self._markers(model)
+        assert markers["Protocol p.98"] == markers["Protocol p.50"] == self.SHOWN
+        assert markers["RFP p.4"] == "Not used — see Disagreement 1"
+
+    def test_every_passage_says_no_value_was_chosen(self) -> None:
+        model = build_report_model(self._state(resolved_value=None, index=None), get_registry())
+        assert set(self._markers(model).values()) == {"No value chosen — see Disagreement 1"}
+
+    def test_a_reconcilable_disagreement_has_no_number_and_no_marker(self) -> None:
+        """Oliver, 2026-10-12: the 236 subjects and the schedule "No" stay unmarked."""
+        model = build_report_model(
+            self._state(resolved_value="0", index=1, verdict="reconcilable"), get_registry(),
+        )
+        assert model.decisions == []
+        assert set(self._markers(model).values()) == {None}
+
+    def test_the_number_is_the_disagreements_own(self) -> None:
+        """A second, higher-severity disagreement takes number 1."""
+        state = self._state(resolved_value=None, index=None)
+        first = _contradiction("timeline.total_duration", "conflict",
+                               [("42 months", 24, "d-prot"), ("40 months", 3, "d-rfp")])
+        state.contradictions.insert(0, first)
+        state.contradictions[1] = state.contradictions[1].model_copy(update={"severity": "medium"})
+        state.resolved[0].contradiction = state.contradictions[1]
+        model = build_report_model(state, get_registry())
+        [no] = [d.no for d in model.decisions if d.field_id == "interim.count"]
+        assert no == 2
+        assert set(self._markers(model).values()) == {"No value chosen — see Disagreement 2"}
+
+    def test_the_wording_comes_from_the_registry(self) -> None:
+        from rfp_intake.domain.registry import ReportWording
+
+        registry = get_registry().model_copy(update={"report_wording": ReportWording(
+            shown_provisional="Used", not_used="Set aside ({n})", no_value_chosen="Open ({n})",
+        )})
+        model = build_report_model(self._state(resolved_value="0", index=1), registry)
+        assert self._markers(model) == {
+            "Protocol p.98": "Used", "Protocol p.50": "Used", "RFP p.4": "Set aside (1)",
+        }
+
+    def test_a_passage_behind_no_disagreement_has_no_marker(self) -> None:
+        state = RunState(run_id="r-1", resolved=[_rf("ops.sites_total", 75, quote="75 sites")])
+        model = build_report_model(state, get_registry())
+        assert [e.marker for e in model.evidence] == [None]

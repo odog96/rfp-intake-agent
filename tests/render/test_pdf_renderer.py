@@ -9,6 +9,7 @@ missing quotes/sources), and byte-size sensitivity to content growth.
 from __future__ import annotations
 
 import os
+from pathlib import Path
 
 from rfp_intake.domain.registry import Registry
 from rfp_intake.domain.schemas import (
@@ -125,7 +126,7 @@ class TestBuildReportPdf:
 def _pdf_text(pdf: bytes) -> str:
     import pymupdf
 
-    with pymupdf.open(stream=pdf, filetype="pdf") as doc:
+    with pymupdf.open(stream=pdf, filetype="pdf") as doc:  # type: ignore[no-untyped-call]
         return " ".join(" ".join(p.get_text().split()) for p in doc)
 
 
@@ -148,7 +149,7 @@ def _headings(pdf: bytes) -> list[str]:
         "Words used in this report",
     }
     out: list[str] = []
-    with pymupdf.open(stream=pdf, filetype="pdf") as doc:
+    with pymupdf.open(stream=pdf, filetype="pdf") as doc:  # type: ignore[no-untyped-call]
         for page in doc:
             for line in page.get_text().splitlines():
                 line = line.strip()
@@ -159,7 +160,7 @@ def _headings(pdf: bytes) -> list[str]:
     return out
 
 
-def _conflict_state():  # type: ignore[no-untyped-def]
+def _conflict_state() -> RunState:
     from rfp_intake.domain.schemas import Contradiction, FieldRecord, Provenance
 
     def rec(value: int, page: int, doc: str, kind: str) -> FieldRecord:
@@ -215,7 +216,7 @@ class TestReportText:
             assert " ".join(f.label.split()) in text, f.label
 
     def test_the_five_sections_are_in_the_order_the_customer_asked_for(
-        self, fields_yaml_path  # type: ignore[no-untyped-def]
+        self, fields_yaml_path: Path,
     ) -> None:
         """Variables first, then the two review sections. See pdf_renderer's docstring.
 
@@ -241,7 +242,7 @@ class TestReportText:
         ]
 
     def test_appendix_c_appears_after_appendix_b_and_before_the_word_list(
-        self, fields_yaml_path  # type: ignore[no-untyped-def]
+        self, fields_yaml_path: Path,
     ) -> None:
         """Where stage 4's appendix sits, and that it does not displace anything.
 
@@ -277,7 +278,7 @@ class TestReportText:
         ]
 
     def test_appendix_c_names_the_section_the_pages_and_the_reason(
-        self, fields_yaml_path  # type: ignore[no-untyped-def]
+        self, fields_yaml_path: Path,
     ) -> None:
         """What a reviewer needs to overturn the decision: where it was, and why.
 
@@ -337,7 +338,7 @@ class TestReportText:
         assert headings.index("Appendix A") < headings.index("Words used in this report")
 
     def test_a_disagreement_is_named_on_its_variable_row_and_tabled_in_full(
-        self, fields_yaml_path  # type: ignore[no-untyped-def]
+        self, fields_yaml_path: Path,
     ) -> None:
         """The variables table flags the row and points at the numbered table."""
         _use_real_registry(fields_yaml_path)
@@ -419,3 +420,13 @@ class TestReportText:
         evidence = text[text.index("Appendix A — Evidence"):]
         assert '"75 sites total"' in evidence
         assert "RFP p.5, 92%" in evidence
+
+    def test_each_side_of_a_disagreement_says_whether_the_report_used_it(
+        self, fields_yaml_path: Path,
+    ) -> None:
+        """CLAUDE.md open item 3. The fixture's conflict has no provisional value."""
+        _use_real_registry(fields_yaml_path)
+        text = _pdf_text(build_report_pdf(_conflict_state(), _registry(), generated_at="t"))
+        start = text.index("Appendix A — Evidence")
+        evidence = text[start:text.index("Appendix B — Disagreements", start)]
+        assert evidence.count("No value chosen — see Disagreement 1") == 2

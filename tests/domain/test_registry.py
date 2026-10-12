@@ -262,6 +262,13 @@ def test_validates_derived_missing_derived_from(tmp_path: Path) -> None:
         load_registry(p)
 
 
+_WORDING = {
+    "shown_provisional": "Shown",
+    "not_used": "Not used, see {n}",
+    "no_value_chosen": "None chosen, see {n}",
+}
+
+
 def _with_leave_out(tmp_path: Path, *, derived: bool, phrases: list[str]) -> Path:
     data = {
         "version": 1,
@@ -279,6 +286,7 @@ def _with_leave_out(tmp_path: Path, *, derived: bool, phrases: list[str]) -> Pat
                 "leave_out_scopes": {"reason": "a separate schedule", "phrases": phrases},
             },
         ],
+        "report_wording": _WORDING,
     }
     p = tmp_path / "fields.yaml"
     p.write_text(yaml.dump(data))
@@ -315,6 +323,7 @@ def _with_scope_check(tmp_path: Path, *, derived: bool) -> Path:
         "version": 1,
         "groups": [{"id": "g1", "label": "Group 1"}],
         "fields": [{"id": "g1.base", "group": "g1", "label": "Base", "type": "int"}, field],
+        "report_wording": _WORDING,
     }
     p = tmp_path / "fields.yaml"
     p.write_text(yaml.dump(data))
@@ -456,3 +465,42 @@ class TestTheMonitoringVisitRowsAfterThe20261007Review:
         assert "do no arithmetic" in hint, "no percentage turned into a count"
         assert "remotely" in hint, "the on-site versus remote split lives on this row now"
         assert field.plain, "the glossary needs an entry for every row"
+
+
+class TestReportWording:
+    """CLAUDE.md open item 3: the Appendix A markers are worded in config/fields.yaml."""
+
+    def _write(self, tmp_path: Path, wording: dict[str, str] | None) -> Path:
+        data: dict[str, object] = {
+            "version": 1,
+            "groups": [{"id": "g1", "label": "Group 1"}],
+            "fields": [{"id": "g1.a", "group": "g1", "label": "A", "type": "text"}],
+        }
+        if wording is not None:
+            data["report_wording"] = wording
+        p = tmp_path / "fields.yaml"
+        p.write_text(yaml.dump(data, allow_unicode=True))
+        return p
+
+    def test_the_real_registry_carries_the_three_phrases(self, fields_yaml_path: Path) -> None:
+        wording = load_registry(fields_yaml_path).report_wording
+        assert wording.shown_provisional == (
+            "Shown in the report (provisional, by document precedence)"
+        )
+        assert wording.not_used == "Not used — see Disagreement {n}"
+        assert wording.no_value_chosen == "No value chosen — see Disagreement {n}"
+
+    def test_a_registry_without_the_section_does_not_load(self, tmp_path: Path) -> None:
+        with pytest.raises(RegistryValidationError, match="no report_wording section"):
+            load_registry(self._write(tmp_path, None))
+
+    @pytest.mark.parametrize("key", ["not_used", "no_value_chosen"])
+    def test_a_pointer_phrase_must_name_the_disagreement(self, tmp_path: Path, key: str) -> None:
+        wording = dict(_WORDING, **{key: "see the Disagreements table"})
+        with pytest.raises(RegistryValidationError, match="must contain"):
+            load_registry(self._write(tmp_path, wording))
+
+    def test_fill_puts_in_the_number_and_leaves_other_braces(self) -> None:
+        from rfp_intake.domain.registry import ReportWording
+
+        assert ReportWording.fill("see {n} {not a field}", 3) == "see 3 {not a field}"

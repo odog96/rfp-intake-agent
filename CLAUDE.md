@@ -122,9 +122,15 @@ one row of several was item 1 until it was fixed on 2026-10-11; see `docs/JOURNA
    provenance on the row, so the report cannot tell those pages apart; the fix belongs in RECONCILE.
    Separately, where a real conflict remains, the "not specified" page is no longer cited in the
    Disagreements positions, though the record is still in `extraction.json`.
-3. **Losing values in Appendix A carry no "not used" marker.** Since fix 2, each side of a
-   disagreement has its own Appendix A entry, but nothing tells the reader which side the report
-   used (report-usability-reviewer, 2026-10-11).
+3. ~~**Losing values in Appendix A carry no "not used" marker.**~~ **Done 2026-10-12, for numbered
+   Disagreements.** Each Appendix A passage behind one now says "Shown in the report (provisional, by
+   document precedence)" if it states the value precedence chose, "Not used — see Disagreement N" if
+   not, or "No value chosen — see Disagreement N" on every passage where precedence chose nothing
+   (`render/report_model.py:_marker`). The wording is `report_wording` in `config/fields.yaml`. Every
+   passage stating the shown value is marked shown, not only the chosen record, approved by Oliver.
+   Still unmarked, by Oliver's decision of 2026-10-12, and on Angus's list of known problems: the
+   `reconcilable` disagreements in Appendix B, such as the protocol's 236 subjects and the schedule
+   "No", which have no Disagreement number.
 4. **The derived row "What to assume about the placebo" cites RFP p.3, a page that contradicts its
    value.** This predates fix 2.
 5. **The report shows the reader raw field ids in two derived rows** (`ip.form=['infusion_iv']` and the
@@ -180,7 +186,7 @@ run, and what remains is PLAN keeping only three sections per field group. Read 
 in `docs/JOURNAL.md` before trusting `blinding.placebo_matching` or `blinding.unblinded_staff_stated`.
 Graph topology today:
 `INGEST → CLASSIFY → FIND_SECTIONS → SET_ASIDE_SECTIONS → MARK_OTHER_STUDY → PLAN → EXTRACT → NORMALIZE → RECONCILE → ADJUDICATE → DERIVE → GATE`,
-then RENDER runs after the graph finishes (see the deviations below). 1044 tests passing, 1 skipped, on
+then RENDER runs after the graph finishes (see the deviations below). 1057 tests passing, 1 skipped, on
 2026-10-12 — the count moves with `runs/`, because `test_nothing_lost_on_a_real_run` runs once per run folder.
 Pushed to https://github.com/odog96/rfp-intake-agent.git. The push is done from a terminal by
 Oliver, from inside the repository directory — this session's credentials cannot do it. The seven

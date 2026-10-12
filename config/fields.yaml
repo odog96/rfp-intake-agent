@@ -51,9 +51,23 @@
 #                  genuinely spread across more sections than that, and say in a
 #                  comment which sections and which run measured it — every extra
 #                  section is sent to the model on every run of every document.
+#
+# REPORT WORDING
+#   report_wording phrases report.pdf prints that belong to no one field. Written for the
+#                  person reading the report and NEVER sent to a model, like `plain`.
+#                  `{n}` is replaced by the Disagreement number.
 # =============================================================================
 
 version: 1
+
+report_wording:
+  # Appendix A, under each passage behind a numbered Disagreement (CLAUDE.md open item 3).
+  # On every passage stating the value the report shows, where precedence chose one:
+  shown_provisional: "Shown in the report (provisional, by document precedence)"
+  # On every other passage of that disagreement:
+  not_used: "Not used — see Disagreement {n}"
+  # On every passage, where precedence could not choose and the report shows no value:
+  no_value_chosen: "No value chosen — see Disagreement {n}"
 
 groups:
   - id: study_design

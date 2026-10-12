@@ -1002,7 +1002,11 @@ is what makes the whole pipeline testable without a filesystem.
   MVP); (4) **Flagged for review** — every other value needing a look, each with the reason it is flagged;
   (5) **Schedules** — the many-row variables (visit schedule, timeline components), one table each. Then
   Appendix A quotes every source passage, Appendix B holds the adjudicator's reasoning and the dismissed
-  disagreements, and the plain-English word list is last.
+  disagreements, and the plain-English word list is last. Since 2026-10-12 each Appendix A passage behind a
+  numbered disagreement says which side the report used: "shown" on every passage stating the value
+  precedence chose, "not used" on the rest, or "no value chosen" on all of them where precedence could not
+  choose. The phrases are `report_wording` in `config/fields.yaml`. A `reconcilable` disagreement has no
+  number and its passages carry no marker.
   *Deviation, 2026-09-18:* the quote moved from beside each value to Appendix A after a customer found
   the 15-page report too long to read. What is shown where is decided in `render/report_model.py`, and
   `tests/render/test_report_model.py::assert_nothing_lost` fails if any variable, value, page, status,
