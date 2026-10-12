@@ -135,10 +135,17 @@ one row of several was item 1 until it was fixed on 2026-10-11; see `docs/JOURNA
    Since 2026-10-12 `report.xlsx` also prints the scope raw (`render/xlsx_renderer.py:81`), so a
    `design.parts` row RECONCILE did not match would show "(not matched, doc-…)" with the raw document
    id, and the workbook does not print `review_note` at all.
-7. **In 3 of the 29 runs a disagreement row's quote comes from a different record than its value.**
-   ADJUDICATE's `_handle_conflict` looks the quote up by document, not by value
-   (`adjudicate/__init__.py:179,215`). Fix 2's Appendix A lines for each record are right; the row's own
-   extra line still pairs the two. The fix belongs in ADJUDICATE.
+7. ~~**In 3 of the 29 runs a disagreement row's quote comes from a different record than its
+   value.**~~ **Corrected and safeguarded 2026-10-12.** The mismatch appears only in runs made before
+   `bf038be` (2026-10-03): `r-20260918-141940`, `r-20260923-131601` and `r-20261001-032936`, where
+   "Total study duration" shows amendment p.24's 42 months with amendment p.15's quote, because
+   `_find_record` then took the winning document's first record. All 30 saved runs were scanned on
+   2026-10-12 and no other run has it. Code from `bf038be` on cannot produce
+   it: each precedence rule only picks a record that is also the best of its own document. Since
+   2026-10-12 `reconcile/precedence.py` returns the winning record itself, `_handle_conflict` takes
+   value, quote and confidence from it and records it in `winning_record_index`, and `_find_record`
+   is gone, so a future precedence rule cannot bring the mismatch back. A re-render of those three
+   runs still shows the old pairing, because the quote is stored on the row by ADJUDICATE.
 8. **A "Columns (page N)" block for two-column tables — proposed 2026-10-12, not built.** No PDF
    reader in the stack reads RFP p.3's table as a table: pdfplumber and PyMuPDF `find_tables` find
    none with their defaults and cut through words ("Site Qualific | ation Visit") with the text
@@ -173,7 +180,7 @@ run, and what remains is PLAN keeping only three sections per field group. Read 
 in `docs/JOURNAL.md` before trusting `blinding.placebo_matching` or `blinding.unblinded_staff_stated`.
 Graph topology today:
 `INGEST → CLASSIFY → FIND_SECTIONS → SET_ASIDE_SECTIONS → MARK_OTHER_STUDY → PLAN → EXTRACT → NORMALIZE → RECONCILE → ADJUDICATE → DERIVE → GATE`,
-then RENDER runs after the graph finishes (see the deviations below). 1042 tests passing, 1 skipped, on
+then RENDER runs after the graph finishes (see the deviations below). 1044 tests passing, 1 skipped, on
 2026-10-12 — the count moves with `runs/`, because `test_nothing_lost_on_a_real_run` runs once per run folder.
 Pushed to https://github.com/odog96/rfp-intake-agent.git. The push is done from a terminal by
 Oliver, from inside the repository directory — this session's credentials cannot do it. The seven

@@ -88,5 +88,17 @@ class TestApplyPrecedence:
         b = _record(52, "doc-b", doc_kind="protocol", confidence=0.9)
         result = apply_precedence(_field_def("protocol"), [a, b])
         assert result.rule_applied == "no_silent_resolution"
+        assert result.winner is None
         assert result.value is None
         assert result.winning_doc_id is None
+
+    def test_returns_the_winning_record_itself(self) -> None:
+        # CLAUDE.md open item 7: a caller given only the document has to guess
+        # which of that document's records won.
+        first = _record(40, "doc-a", doc_kind="rfp", confidence=0.80)
+        best = _record(52, "doc-a", doc_kind="rfp", confidence=0.95)
+        other = _record(40, "doc-b", doc_kind="protocol", confidence=0.85)
+        result = apply_precedence(_field_def("rfp"), [first, best, other])
+        assert result.rule_applied == "specificity"
+        assert result.winner is best
+        assert (result.value, result.winning_doc_id, result.confidence) == (52, "doc-a", 0.95)

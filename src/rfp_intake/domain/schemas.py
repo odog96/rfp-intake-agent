@@ -64,9 +64,10 @@ class Contradiction(BaseModel):
     # from, numbered exactly as ADJUDICATE's prompt numbers the candidates.
     # winning_doc_id alone cannot name a record: a 137-page protocol routinely
     # supplies several records for one field, so "the winning document" picked out
-    # the earliest page rather than the best evidence (CLAUDE.md, stage 5). None
-    # for a candidate not yet judged, and for a `conflict`, where
-    # reconcile/precedence.py decides by document and not by record.
+    # the earliest page rather than the best evidence (CLAUDE.md, stage 5). For a
+    # `conflict` it is the record reconcile/precedence.py chose (since 2026-10-12).
+    # None for a candidate not yet judged, and for a `conflict` precedence could
+    # not decide.
     winning_record_index: int | None = None
     severity: Literal["high", "medium", "low"] | None = None
 

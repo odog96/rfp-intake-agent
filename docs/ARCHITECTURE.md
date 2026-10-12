@@ -287,7 +287,8 @@ class Contradiction(BaseModel):
     winning_doc_id: str | None = None
     # 1-based position in `records` the resolved value came from, numbered as §4.7's
     # prompt numbers the candidates. Added 2026-10-02: a document id cannot name one
-    # of several records from the same document. None for a `conflict` verdict.
+    # of several records from the same document. For a `conflict`, the record
+    # precedence chose (2026-10-12); None when precedence could not decide.
     winning_record_index: int | None = None
     severity: Literal["high", "medium", "low"] | None = None   # high = changes the budget
 
@@ -853,6 +854,11 @@ severity. Three verdicts:
   highest-confidence fallback never ran. Where the model names no record, or a number not in the list,
   the highest-confidence record is used.
 - `conflict` — genuinely incompatible. Surface it loudly, do not auto-resolve, force `needs_review`.
+  Where `reconcile/precedence.py` names a provisional winner, it returns the record itself, and the
+  row's value, quote and confidence all come from that one record (`winning_record_index` names it).
+  Changed 2026-10-12: precedence used to return only the winning document, and the quote was then
+  looked up among that document's records, which in runs made before commit `bf038be` (2026-10-03)
+  paired one record's value with another's quote.
 
 `severity: high` when the field feeds a budget driver (site count, subject count, visit count, monitoring
 frequency, duration). Mark this in `fields.yaml` with `budget_driver: true`.

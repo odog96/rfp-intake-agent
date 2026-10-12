@@ -169,23 +169,28 @@ def _handle_conflict(
     contradiction: Contradiction, field_def: FieldDef
 ) -> tuple[Contradiction, list[ResolvedField]]:
     precedence = apply_precedence(field_def, contradiction.records)
+    winner = precedence.winner
+    # By identity: precedence returns one of these record objects.
+    index = (
+        next(i for i, r in enumerate(contradiction.records) if r is winner)
+        if winner is not None else None
+    )
 
     contradiction = contradiction.model_copy(update={
-        "resolved_value": precedence.value,
-        "winning_doc_id": precedence.winning_doc_id,
+        "resolved_value": winner.value if winner else None,
+        "winning_doc_id": winner.provenance.doc_id if winner else None,
+        "winning_record_index": index + 1 if index is not None else None,
     })
-    quote = None
-    if precedence.winning_doc_id is not None:
-        winner = _find_record(contradiction.records, precedence.winning_doc_id)
-        quote = winner.quote if winner else None
 
+    # Value, quote and confidence all come from the one record precedence chose,
+    # so the row can never print one record's value with another's quote.
     rf = ResolvedField(
         field_id=contradiction.field_id,
-        value=precedence.value,
+        value=winner.value if winner else None,
         status="needs_review",
-        confidence=precedence.confidence,
+        confidence=winner.confidence if winner else 0.0,
         sources=[r.provenance for r in contradiction.records],
-        quote=quote,
+        quote=winner.quote if winner else None,
         scope=contradiction.records[0].scope if contradiction.records else None,
         contradiction=contradiction,
         notes=f"CONFLICT (precedence: {precedence.rule_applied}) — {contradiction.explanation}",
@@ -210,19 +215,3 @@ def _winning_index(records: list[FieldRecord], winning_record: int | None) -> in
             record_count=len(records),
         )
     return max(range(len(records)), key=lambda i: records[i].confidence)
-
-
-def _find_record(records: list[FieldRecord], doc_id: str | None) -> FieldRecord | None:
-    """The best record from one document — used for a `conflict`, where
-    reconcile/precedence.py names a document rather than a record.
-
-    Highest confidence wins, not document order: a protocol supplies several
-    records for one field, and taking the first meant the earliest page's quote
-    was printed against a value decided by precedence.
-    """
-    if doc_id is None:
-        return None
-    matches = [r for r in records if r.provenance.doc_id == doc_id]
-    if not matches:
-        return None
-    return max(matches, key=lambda r: r.confidence)

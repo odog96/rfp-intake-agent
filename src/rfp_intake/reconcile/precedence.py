@@ -33,10 +33,23 @@ _AUTHORITY_CAMP: dict[str, str | None] = {
 
 @dataclass
 class PrecedenceResult:
-    value: Any
-    winning_doc_id: str | None
-    confidence: float
+    # The record itself, not just its document: a caller that has only the
+    # document id has to guess which of that document's records won, and can
+    # pair one record's value with another's quote (CLAUDE.md open item 7).
+    winner: FieldRecord | None
     rule_applied: str  # "recency" | "domain_authority" | "specificity" | "no_silent_resolution"
+
+    @property
+    def value(self) -> Any:  # Any: a record's normalized value has no single type
+        return self.winner.value if self.winner else None
+
+    @property
+    def winning_doc_id(self) -> str | None:
+        return self.winner.provenance.doc_id if self.winner else None
+
+    @property
+    def confidence(self) -> float:
+        return self.winner.confidence if self.winner else 0.0
 
 
 def apply_precedence(field_def: FieldDef, records: list[FieldRecord]) -> PrecedenceResult:
@@ -48,16 +61,9 @@ def apply_precedence(field_def: FieldDef, records: list[FieldRecord]) -> Precede
     ):
         winner = winner_fn(records)
         if winner is not None:
-            return PrecedenceResult(
-                value=winner.value,
-                winning_doc_id=winner.provenance.doc_id,
-                confidence=winner.confidence,
-                rule_applied=rule_name,
-            )
+            return PrecedenceResult(winner=winner, rule_applied=rule_name)
 
-    return PrecedenceResult(
-        value=None, winning_doc_id=None, confidence=0.0, rule_applied="no_silent_resolution",
-    )
+    return PrecedenceResult(winner=None, rule_applied="no_silent_resolution")
 
 
 def _parse_date(raw: str | None) -> date | None:

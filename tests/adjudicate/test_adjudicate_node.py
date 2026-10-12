@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+from pathlib import Path
 from typing import Literal
 
 from rfp_intake.adjudicate import (
@@ -180,21 +181,26 @@ class TestHandleConflict:
         assert fields[0].value is None  # no_silent_resolution — do not guess
         assert fields[0].status == "needs_review"
 
-    def test_the_quote_is_the_best_record_from_the_winning_document(
-        self, fields_yaml_path,  # type: ignore[no-untyped-def]
+    def test_value_and_quote_come_from_the_record_precedence_chose(
+        self, fields_yaml_path: Path,
     ) -> None:
-        """Precedence names a document, so the quote has to be chosen among that
-        document's records. Taking the first one printed the earliest page's quote
-        against a value decided by precedence.
+        """CLAUDE.md open item 7: one document holding two different values. The
+        RFP gives 75 sites on one page and 80 on another; the protocol gives 75.
+        Before 2026-10-03 the quote was the winning document's first record, so the
+        row could print 80 beside the sentence that says 75. The row now takes its
+        value, quote and confidence from the one record precedence chose, and
+        names it. Today's precedence rules only choose a record that is also the
+        best of its own document, so the quote assertions held before this change
+        too and are a consistency check; the record index is what failed before.
         """
         _use_real_registry(fields_yaml_path)
         from rfp_intake.domain.registry import get_registry
 
         field_def = get_registry().get_field("ops.sites_total")  # source_priority: rfp
         records = [
-            _record(40, "proto", doc_kind="protocol", confidence=0.9),
-            _record(60, "rfp1", doc_kind="rfp", confidence=0.7, page=3),
-            _record(75, "rfp1", doc_kind="rfp", confidence=0.99, page=9),
+            _record(75, "rfp1", doc_kind="rfp", confidence=0.90, page=3),
+            _record(80, "rfp1", doc_kind="rfp", confidence=0.95, page=4),
+            _record(75, "proto", doc_kind="protocol", confidence=0.85, page=15),
         ]
         c = _candidate(records).model_copy(update={
             "verdict": "conflict", "explanation": "genuine mismatch",
@@ -202,9 +208,31 @@ class TestHandleConflict:
 
         contradiction, fields = _handle_conflict(c, field_def)
 
+        assert contradiction.winning_record_index == 2
+        winner = records[contradiction.winning_record_index - 1]
+        assert (fields[0].value, fields[0].quote, fields[0].confidence) == (
+            winner.value, winner.quote, winner.confidence,
+        )
+        assert fields[0].quote == "quote 80"  # not "quote 75", the first rfp1 record
+        assert contradiction.resolved_value == 80
         assert contradiction.winning_doc_id == "rfp1"
-        assert fields[0].quote == "quote 75"  # not "quote 60", the first rfp1 record
-        assert contradiction.winning_record_index is None  # a conflict names no record
+
+    def test_no_record_is_named_when_precedence_cannot_decide(
+        self, fields_yaml_path: Path,
+    ) -> None:
+        _use_real_registry(fields_yaml_path)
+        from rfp_intake.domain.registry import get_registry
+
+        field_def = get_registry().get_field("ops.sites_total")
+        records = [_record(40, "rfp1", confidence=0.9), _record(75, "rfp2", confidence=0.9)]
+        c = _candidate(records).model_copy(update={"verdict": "conflict", "explanation": "x"})
+
+        contradiction, fields = _handle_conflict(c, field_def)
+
+        assert contradiction.winning_record_index is None
+        assert contradiction.winning_doc_id is None
+        assert fields[0].quote is None
+        assert fields[0].confidence == 0.0
 
 
 class TestThePlaceboDisagreement:
@@ -234,7 +262,7 @@ class TestThePlaceboDisagreement:
         return r
 
     def test_it_is_a_high_severity_conflict_naming_both_sentences(
-        self, fields_yaml_path,  # type: ignore[no-untyped-def]
+        self, fields_yaml_path: Path,
     ) -> None:
         _use_real_registry(fields_yaml_path)
         from rfp_intake.domain.registry import get_registry
@@ -276,7 +304,7 @@ class TestThePlaceboDisagreement:
 
 class TestThePrompt:
     def test_candidates_are_numbered_and_the_model_is_asked_for_a_number(
-        self, fields_yaml_path,  # type: ignore[no-untyped-def]
+        self, fields_yaml_path: Path,
     ) -> None:
         _use_real_registry(fields_yaml_path)
         from rfp_intake.adjudicate.prompt import build_adjudicate_prompt
