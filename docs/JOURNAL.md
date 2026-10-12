@@ -4,6 +4,61 @@ Every `### Done` entry that was in `CLAUDE.md`, moved here unedited on 2026-10-0
 entries were 74% of `CLAUDE.md` and were loaded into every session. Newest first. Nothing in this
 file is current state: `CLAUDE.md` holds current state, and where the two disagree, `CLAUDE.md` wins.
 
+### Done 2026-10-12: one row per arm, matched across documents by treatment
+
+Run `r-20261009-225414` listed four arms for a two-arm study under "Cohorts / arms / dose levels /
+parts" (`design.parts`): `arm:NEOD001` and `arm:Placebo` from the amendment, `arm:Group 1` and
+`arm:Group 2` from the RFP. `r-20261011-fix1` and the baseline `r-20261008-review2-run3` show the same
+four. RECONCILE groups rows by scope, and the two documents named the same arms differently. The rule
+Oliver approved on 2026-10-12:
+- The `design.parts` hint in `config/fields.yaml` asks for arms scoped by treatment
+  ("arm:<treatment>"): no arm number, group letter or background therapy, a dose only when the arms
+  differ by dose, and parts and cohorts keep their own names. Oliver's addition: a control arm is
+  named by its role as the document names it ("placebo", "standard of care alone", "active
+  comparator: <drug>"), never by its substance ("normal saline", "vehicle").
+- Code makes the comparison, with `normalize_scope` as before.
+- A new registry key, `check_scopes_across_documents` (`FieldDef` in `domain/registry.py`, rejected on
+  a derived field), set only on `design.parts`, turns on two checks in RECONCILE. First, an entry
+  whose own value or quote does not contain the words its scope names (`scope_named_in` in
+  `normalize/scope.py`, a pure function; case and punctuation ignored, so "NEOD-001" counts as
+  "NEOD001") is not merged: it gets the scope "<scope> (not matched, <document>)" and a
+  `review_note`. Second, when more than one document lists parts, an arm only one of them lists gets
+  the note "Listed only in <document>, not in <others>."
+- Labels such as "Group 1" never count, in either direction. Subject count is not used.
+- GATE keeps any row with a `review_note` in review, after the multi-value rule; the report prints the
+  note as the row's reason with document ids replaced by names, and `extraction.json` carries it.
+
+**Live run `r-20261012-arms2`** (2026-10-12, 6m45s): 40 of the 43 registry fields found, 112 resolved
+rows, 14 contradiction clusters, 12 EXTRACT errors, against `r-20261008-review2-run3`'s 40 of 43, 115,
+12 and 16. `design.parts` is two rows, `arm:NEOD001` (amendment pp. 11, 15, 19, 42 and RFP p.3) and
+`arm:placebo` (amendment pp. 11, 15, 20, 42 and RFP p.3). Both are in review because each holds several
+values (the existing budget-driver rule), not because of a note: no row in the run has a
+`review_note` or a "(not matched" scope, so only the matching path ran live; the two negative paths
+are covered by `tests/reconcile/test_scopes_across_documents.py`. General study design says two-arm,
+NEOD001 plus standard of care against placebo plus standard of care, which agrees with the arm rows.
+`scripts/check_review_2026_10_07.py r-20261012-arms2` gives 8 pass, 0 fail (check 6 LOOK, its live
+regression half passing). Passing `--baseline r-20261008-review2-run3` makes check 9 print a false
+FAIL ("36 … down from 40"): that baseline already holds change 5's four new fields, so the script
+subtracts them from one side only. Use the default baseline `r-20261007-140411`.
+
+The run-comparison-reviewer found nothing it could tie to this change as a regression. The other
+differences from the baseline (fewer EXTRACT errors, `visits.intensity_evidence` now four scoped rows,
+two extra `not_a_conflict` clusters on `monitoring.strategy_guidance` and `ops.crf_pages`, four RFP
+monitor-visit rows wrongly in `visits.frequency_by_period`) are model variation or the three
+2026-10-11 commits that came after the baseline. The first attempt, `r-20261012-arms`, stopped
+because the Bedrock bearer token had expired; its folder is left as the record.
+
+Three things this does not fix, recorded so nobody assumes otherwise:
+- `ops.subjects_total` still has its separate "per arm" row. It is out of scope and does not set the
+  new key.
+- The check in step 3 reads the model-written value as well as the verbatim quote, as approved
+  ("value or quote"). So a saline-only passage the model labelled "Placebo" in its value would pass;
+  the protection there is the hint. These two documents cannot test it: every arm sentence that says
+  saline also says placebo, and the RFP never says saline. `extraction.json` keeps rows, not records,
+  so the record behind each value cannot be checked after a run.
+- `report.xlsx` prints the raw scope, so an unmatched row would show "(not matched, doc-…)" with the
+  raw document id, and the workbook does not print `review_note` (`render/xlsx_renderer.py:81`).
+
 ### Done 2026-10-11: the visit-intensity rating reads every row
 
 Live run `r-20261011-fix1` rated visit intensity low. Its study-wide `visits.intensity_evidence` row

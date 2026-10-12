@@ -50,3 +50,41 @@ class TestBudgetDriverCollections:
             is_budget_driver=False,
         )
         assert out.status == "confirmed"
+
+
+class TestReviewNote:
+    """A row RECONCILE wrote a review_note on stays in review (2026-10-12)."""
+
+    @staticmethod
+    def _resolved(value, review_note: str | None):  # type: ignore[no-untyped-def]
+        from rfp_intake.domain.schemas import ResolvedField
+
+        return ResolvedField(
+            field_id="design.parts", value=value, status="needs_review", confidence=0.99,
+            sources=[], quote="q", scope="arm:DrugY", review_note=review_note,
+        )
+
+    def test_a_note_keeps_a_confident_row_in_review(self) -> None:
+        from rfp_intake.gate import _gate_field
+
+        out = _gate_field(
+            self._resolved(["Arm B: DrugY"], "Listed only in doc-a, not in doc-b."),
+            None,
+            is_budget_driver=True,
+        )
+        assert out.status == "needs_review"
+        assert out.review_note == "Listed only in doc-a, not in doc-b."
+
+    def test_without_a_note_the_same_row_confirms(self) -> None:
+        from rfp_intake.gate import _gate_field
+
+        out = _gate_field(self._resolved(["Arm B: DrugY"], None), None, is_budget_driver=True)
+        assert out.status == "confirmed"
+
+    def test_the_multi_value_rule_is_unchanged(self) -> None:
+        from rfp_intake.gate import _gate_field
+
+        out = _gate_field(
+            self._resolved(["Arm B: DrugY", "DrugY arm"], None), None, is_budget_driver=True
+        )
+        assert out.status == "needs_review"

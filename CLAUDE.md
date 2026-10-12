@@ -98,6 +98,15 @@ verdict partition). **Two things Angus asked for are deliberately not started**:
 fewer rows, which Oliver is putting to Angus as a proposal first, and supporting two studies in one RFP,
 which waits until the single-study report is accepted.
 
+**The four-arm duplication in "Cohorts / arms / dose levels / parts" (`design.parts`) is fixed** as
+Oliver approved on 2026-10-12. Arms are scoped by treatment, and RECONCILE checks that each entry's own
+words name its scope, under the new registry key `check_scopes_across_documents`. Live run
+`r-20261012-arms2` shows two arm rows, each citing the amendment and RFP p.3: 40 of 43 fields, 112 rows,
+14 clusters, 12 EXTRACT errors, 6m45s, and `scripts/check_review_2026_10_07.py` 8 pass, 0 fail with its
+default baseline. `ops.subjects_total`'s "per arm" row is not fixed by it. Read the 2026-10-12 entry in
+`docs/JOURNAL.md` for the rule, the step-3 limit on placebo scopes, and why `--baseline
+r-20261008-review2-run3` gives check 9 a false FAIL.
+
 Nine things are still open, each its own item. Items 1 to 7 wait for Oliver's decision; item 8 waits
 for more real RFPs; item 9 must be done before production. (The visit-intensity rating computed from
 one row of several was item 1 until it was fixed on 2026-10-11; see `docs/JOURNAL.md`.)
@@ -123,6 +132,9 @@ one row of several was item 1 until it was fixed on 2026-10-11; see `docs/JOURNA
 6. **`report.xlsx` does not follow fix 2's rule.** Its page column is `rf.sources[0]`
    (`render/xlsx_renderer.py:72`), which for a disagreement row can be the losing document's page.
    Fix 2 changed only the PDF report, as the brief asked (pipeline-rules-reviewer, 2026-10-11).
+   Since 2026-10-12 `report.xlsx` also prints the scope raw (`render/xlsx_renderer.py:81`), so a
+   `design.parts` row RECONCILE did not match would show "(not matched, doc-…)" with the raw document
+   id, and the workbook does not print `review_note` at all.
 7. **In 3 of the 29 runs a disagreement row's quote comes from a different record than its value.**
    ADJUDICATE's `_handle_conflict` looks the quote up by document, not by value
    (`adjudicate/__init__.py:179,215`). Fix 2's Appendix A lines for each record are right; the row's own
@@ -161,15 +173,15 @@ run, and what remains is PLAN keeping only three sections per field group. Read 
 in `docs/JOURNAL.md` before trusting `blinding.placebo_matching` or `blinding.unblinded_staff_stated`.
 Graph topology today:
 `INGEST → CLASSIFY → FIND_SECTIONS → SET_ASIDE_SECTIONS → MARK_OTHER_STUDY → PLAN → EXTRACT → NORMALIZE → RECONCILE → ADJUDICATE → DERIVE → GATE`,
-then RENDER runs after the graph finishes (see the deviations below). 1002 tests passing, 1 skipped, on
-2026-10-11 — the count moves with `runs/`, because `test_nothing_lost_on_a_real_run` runs once per run folder.
+then RENDER runs after the graph finishes (see the deviations below). 1042 tests passing, 1 skipped, on
+2026-10-12 — the count moves with `runs/`, because `test_nothing_lost_on_a_real_run` runs once per run folder.
 Pushed to https://github.com/odog96/rfp-intake-agent.git. The push is done from a terminal by
 Oliver, from inside the repository directory — this session's credentials cannot do it. The seven
 changes of the 2026-10-07 review were committed on 2026-10-11 as `c4ecd75`, on top of `dab43e0`
 (Oliver's 2026-10-06 edit to `.project-metadata.yaml` on GitHub), with `GATE_OFF=1` approved by Oliver
 because the session's gate hooks were not loaded. Fix 1 of the 2026-10-09 brief is committed after
 it, fix 2 after that, the visit-intensity fix after that, and the record of open items 8 and 9 after
-that. **None of the five is pushed.**
+that; all five are pushed. The arms fix of 2026-10-12 is committed after them and is not pushed.
 
 Every `### Done` entry that used to be in this file is now in `docs/JOURNAL.md`, newest first, unedited.
 Nothing in `docs/JOURNAL.md` is current state; where the two disagree, this file wins.

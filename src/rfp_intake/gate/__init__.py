@@ -8,6 +8,8 @@ Pure Python, no LLM. See ARCHITECTURE.md §4.9.
 | any contradiction whose verdict is not in DISMISSED_VERDICTS          | needs_review   |
 | budget_driver field with ANY contradiction, dismissed verdict or not  | needs_review   |
 | field whose `follows_conflict_of` field has such a contradiction      | needs_review   |
+| budget_driver list field holding more than one value                  | needs_review   |
+| row RECONCILE wrote a `review_note` on                                | needs_review   |
 | conf < CONFIDENCE_CONFIRMED                                           | needs_review   |
 | already not_specified / not_found                                     | unchanged      |
 
@@ -154,6 +156,11 @@ def _gate_field(
     # so the example is history — the rule stays for every other budget-driving
     # list field, ip.form among them.
     if is_budget_driver and isinstance(rf.value, list) and len(rf.value) > 1:
+        return rf.model_copy(update={"status": "needs_review"})
+
+    # RECONCILE found a difference between the documents a person should see:
+    # an arm only one document lists, or an entry its scope does not match.
+    if rf.review_note:
         return rf.model_copy(update={"status": "needs_review"})
 
     if rf.confidence >= CONFIDENCE_CONFIRMED:

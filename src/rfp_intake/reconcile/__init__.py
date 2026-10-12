@@ -35,7 +35,7 @@ from rfp_intake.domain.schemas import (
     RunError,
     RunState,
 )
-from rfp_intake.normalize.scope import normalize_scope
+from rfp_intake.normalize.scope import normalize_scope, scope_named_in
 from rfp_intake.reconcile.rules import apply_resolution_rules
 
 logger = structlog.get_logger()
@@ -134,25 +134,39 @@ def _reconcile_field(
     # r-sonnet46-pair-114917 (cohort:Placebo, cohort:placebo, cohort:Placebo+SoC).
     by_scope: dict[str | None, list[FieldRecord]] = defaultdict(list)
     display_scope: dict[str | None, str | None] = {}
+    unmatched: set[str | None] = set()
     for r in found:
-        key = normalize_scope(r.scope)
+        label = r.scope
+        if field_def.check_scopes_across_documents and not _names_its_scope(r):
+            # Kept out of the match: its own document's row, under a label that
+            # says so. See _scope_checks.
+            label = f"{r.scope} (not matched, {r.provenance.doc_id})"
+            unmatched.add(normalize_scope(label))
+        key = normalize_scope(label)
         by_scope[key].append(r)
         # Keep the first label seen for the reader; the canonical form is an
         # internal grouping key and is not what belongs in a report.
-        display_scope.setdefault(key, r.scope)
+        display_scope.setdefault(key, label)
+
+    review_notes = (
+        _scope_checks(by_scope, display_scope, unmatched)
+        if field_def.check_scopes_across_documents
+        else {}
+    )
 
     resolved: list[ResolvedField] = []
     contradictions: list[Contradiction] = []
 
     for key, scope_records in by_scope.items():
         scope = display_scope[key]
+        review_note = review_notes.get(key)
 
         # A field the registry declares as a collection cannot have its members
         # disagree with each other: two records naming different pieces of
         # evidence are both right, and are one answer with several parts. Only
         # single-valued fields can contradict.
         if _is_collection(field_def):
-            resolved.append(_merge_collection(field_def, scope_records, scope))
+            resolved.append(_merge_collection(field_def, scope_records, scope, review_note))
             continue
 
         competing, silent = _competing_records(scope_records)
@@ -176,6 +190,7 @@ def _reconcile_field(
                 sources=[r.provenance for r in group] + [r.provenance for r in silent],
                 quote=best.quote,
                 scope=scope,
+                review_note=review_note,
             ))
         else:
             # Genuine disagreement within the same scope — candidate only.
@@ -187,6 +202,67 @@ def _reconcile_field(
             ))
 
     return resolved, contradictions
+
+
+def _names_its_scope(record: FieldRecord) -> bool:
+    """Step 3 of the arm-matching rule Oliver approved on 2026-10-12: the entry's
+    own value or quote must say what its scope names."""
+    value = record.value if record.value is not None else record.raw_value
+    texts = [str(v) for v in value] if isinstance(value, list) else [str(value)]
+    return scope_named_in(record.scope, record.raw_value, record.quote, *texts)
+
+
+def _scope_checks(
+    by_scope: dict[str | None, list[FieldRecord]],
+    display_scope: dict[str | None, str | None],
+    unmatched: set[str | None],
+) -> dict[str | None, str]:
+    """The review note for each scope of a field whose scopes are matched across
+    documents (`check_scopes_across_documents` in config/fields.yaml).
+
+    Scopes are matched on what they name — for an arm, the treatment it
+    receives, which the extraction model is asked to write as the scope (the
+    field's hint). So the same arm in two documents is one row citing both,
+    whatever each document calls it, and two arms are never one row because
+    they share a label. What this function adds is that a difference between
+    the documents is never quiet:
+
+    - an entry whose own text does not say what its scope names was kept out of
+      the match (`unmatched`), and its row says so;
+    - when more than one document lists parts of the study, a part only one of
+      them lists says which document lists it and which do not — the case of an
+      amendment dropping an arm the RFP still lists.
+
+    Rows with no scope, or the whole study, are not parts and get no note.
+    Document ids in the notes are named by the report (render/report_model.py).
+    """
+    def is_part(key: str | None) -> bool:
+        return key is not None and key != "total"
+
+    def docs_of(key: str | None) -> list[str]:
+        return list(dict.fromkeys(r.provenance.doc_id for r in by_scope[key]))
+
+    listing = list(dict.fromkeys(
+        doc for key in by_scope if is_part(key) for doc in docs_of(key)
+    ))
+    notes: dict[str | None, str] = {}
+    for key in by_scope:
+        if not is_part(key):
+            continue
+        if key in unmatched:
+            scope = display_scope[key] or ""
+            named = scope.partition(" (not matched, ")[0]
+            named = named.partition(":")[2].strip() or named
+            notes[key] = (
+                f'Not matched with other documents: this entry\'s own words do not '
+                f'say "{named}", which its scope names.'
+            )
+            continue
+        docs = docs_of(key)
+        if len(listing) > 1 and len(docs) == 1:
+            others = [d for d in listing if d not in docs]
+            notes[key] = f"Listed only in {docs[0]}, not in {', '.join(others)}."
+    return notes
 
 
 # Types in config/fields.yaml whose value is a collection rather than one answer.
@@ -201,7 +277,10 @@ def _is_collection(field_def: FieldDef) -> bool:
 
 
 def _merge_collection(
-    field_def: FieldDef, records: list[FieldRecord], scope: str | None
+    field_def: FieldDef,
+    records: list[FieldRecord],
+    scope: str | None,
+    review_note: str | None = None,
 ) -> ResolvedField:
     """Fold every record for one collection field and scope into a single answer.
 
@@ -235,6 +314,7 @@ def _merge_collection(
         sources=[r.provenance for r in records],
         quote=best.quote,
         scope=scope,
+        review_note=review_note,
     )
 
 

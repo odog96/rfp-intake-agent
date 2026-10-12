@@ -63,6 +63,15 @@ def assert_nothing_lost(state: RunState, registry: Registry, model: ReportModel)
     # Every variable in config/fields.yaml has a row, found or not.
     assert {f.id for f in registry.fields} <= {r.field_id for r in rows}
 
+    def named(scope: str | None) -> str | None:
+        # The report names document ids in a scope — RECONCILE writes one into
+        # the scope of an entry it kept out of the cross-document match.
+        if scope is None:
+            return None
+        for doc_id, code in codes.items():
+            scope = re.sub(rf"\b{re.escape(doc_id)}\b", code, scope, flags=re.IGNORECASE)
+        return scope
+
     for rf in state.resolved:
         fd = field_by_id.get(rf.field_id)
         want = "; ".join(format_value(rf.value, fd)) if rf.status != "not_found" else "—"
@@ -70,7 +79,7 @@ def assert_nothing_lost(state: RunState, registry: Registry, model: ReportModel)
             (row, line)
             for row in rows
             if row.field_id == rf.field_id
-            and normalize_scope(row.scope) == normalize_scope(rf.scope)
+            and normalize_scope(row.scope) == normalize_scope(named(rf.scope))
             for line in row.values + row.folded
             if any(e is rf for e in line.entries)
         ]
@@ -838,3 +847,72 @@ def test_each_side_of_a_disagreement_keeps_its_own_page_and_quote() -> None:
         [row] = [r for r in model.all_rows()
                  if r.field_id == field_id and r.scope == scope]
         assert [(v.text, v.sources) for v in row.values] == [("—", "")]
+
+
+class TestArmsMatchedAcrossDocuments:
+    """design.parts after the 2026-10-12 arm-matching change, through RECONCILE,
+    GATE and the report: run r-20261009-225414's entries give two arm rows, each
+    citing the amendment and the RFP."""
+
+    @staticmethod
+    def _report(records: list[FieldRecord]) -> tuple[RunState, ReportModel]:
+        from rfp_intake.gate import gate_node
+        from rfp_intake.reconcile import reconcile_node
+        from tests.reconcile.test_scopes_across_documents import AMENDMENT, RFP
+
+        state = RunState(
+            run_id="r-1",
+            documents=[
+                Document(id=AMENDMENT, path="/runs/r-1/inputs/Amendment.pdf",
+                         kind="amendment", pages=120),
+                Document(id=RFP, path="/runs/r-1/inputs/RFP.pdf", kind="rfp", pages=6),
+            ],
+            records=records,
+        )
+        state.resolved = reconcile_node(state)["resolved"]
+        state.resolved = gate_node(state)["resolved"]
+        return state, build_report_model(state, get_registry())
+
+    @staticmethod
+    def _parts_rows(model: ReportModel) -> list:  # type: ignore[type-arg]
+        return [r for r in model.all_rows() if r.field_id == "design.parts"]
+
+    def test_two_arm_rows_each_citing_both_documents(self) -> None:
+        from tests.reconcile.test_scopes_across_documents import run_20261009_225414_records
+
+        state, model = self._report(run_20261009_225414_records())
+        rows = self._parts_rows(model)
+
+        assert [r.scope for r in rows] == ["arm:NEOD001", "arm:Placebo"]
+        for row in rows:
+            [line] = row.values
+            assert "Amendment p." in line.sources and "RFP p.3" in line.sources
+        assert_nothing_lost(state, get_registry(), model)
+
+    def test_an_arm_one_document_lists_says_so_by_document_name(self) -> None:
+        from tests.reconcile.test_scopes_across_documents import AMENDMENT, _entry, _rfp
+
+        state, model = self._report([
+            _entry("Arm A: DrugX 10 mg daily", "arm:DrugX", AMENDMENT, 4),
+            _rfp("Arm A: DrugX 10 mg daily", "arm:DrugX"),
+            _rfp("Arm B: Placebo", "arm:Placebo"),
+        ])
+        by_scope = {r.scope: r for r in self._parts_rows(model)}
+
+        assert by_scope["arm:DrugX"].status == "confirmed"
+        placebo = by_scope["arm:Placebo"]
+        assert placebo.status == "needs_review"
+        assert placebo.reasons == ["Listed only in RFP, not in Amendment."]
+        assert_nothing_lost(state, get_registry(), model)
+
+    def test_an_unmatched_entry_is_named_by_document(self) -> None:
+        from tests.reconcile.test_scopes_across_documents import AMENDMENT, _entry, _rfp
+
+        state, model = self._report([
+            _entry("Control arm: normal saline IV", "arm:Placebo", AMENDMENT, 20),
+            _rfp("Group 2: Placebo + standard of care", "arm:Placebo"),
+        ])
+        scopes = sorted(r.scope or "" for r in self._parts_rows(model))
+
+        assert scopes == ["arm:Placebo", "arm:Placebo (not matched, Amendment)"]
+        assert_nothing_lost(state, get_registry(), model)

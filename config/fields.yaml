@@ -34,6 +34,11 @@
 #                  must not read, and the `reason` printed beside each row left out.
 #                  A phrase matches when its words appear in the scope in order, ignoring
 #                  case and punctuation. See ScopeLeftOut in domain/registry.py.
+#   check_scopes_across_documents  true => each record's scope names what that part of the
+#                  study is (for an arm, its treatment — the hint must ask for that), and
+#                  RECONCILE matches scopes across documents on that name. A record whose own
+#                  value and quote do not contain the name is not matched; a part only one of
+#                  several documents lists is flagged for review. Not on derived fields.
 #
 # GROUP KEYS
 #   id             fan-out unit; one LLM call per (document × group)
@@ -229,15 +234,30 @@ fields:
       start_trigger: text   # "after DLT review of Cohort 2" — capture when it starts if stated
       n_subjects: int
     aliases: ["cohort", "arm", "dose level", "treatment group", "study part", "stage", "expansion cohort"]
+    # The scope rule in the hint, check_scopes_across_documents and the step-3 check behind it
+    # were approved by Oliver on 2026-10-12. Before it, run r-20261009-225414 listed four arms
+    # for a two-arm study: the protocol amendment's arms scoped "arm:NEOD001" and
+    # "arm:Placebo", the RFP's scoped by their labels "arm:Group 1" and "arm:Group 2". A label
+    # says nothing about which arm it is, so the scope names the treatment instead, and a
+    # control arm by its role ("placebo"), never its substance ("normal saline").
     hint: >
       One entry per distinct cohort, arm, dose level, treatment group or study part.
       Capture the stated start condition/timing for each, if given. Do not invent structure that
       the document does not state.
+      Set `scope` on every entry. For a treatment arm, name the arm by what its subjects
+      receive, as the document names it: scope="arm:<study drug>". Never use the arm's number,
+      letter or group name ("Arm 1", "Group A") as the scope, and leave out background therapy
+      that every arm receives. Name a control arm by its role as the document names it, such
+      as "arm:placebo", "arm:standard of care alone" or "arm:active comparator: <drug>" — never
+      by its substance ("normal saline", "vehicle"). Include the dose only when the study's
+      arms differ by dose. A study part or a dose-escalation cohort keeps its own name, such as
+      scope="part:Part A" or scope="cohort:Cohort 3".
     plain: >
       The separate groups a study splits into: an arm is one treatment being compared, a cohort a
       group dosed together, a dose level one strength tested. Each one adds work.
     source_priority: protocol
     budget_driver: true
+    check_scopes_across_documents: true
 
   - id: design.first_in_human
     group: study_design

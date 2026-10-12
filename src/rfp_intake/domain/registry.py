@@ -148,6 +148,12 @@ class FieldDef(BaseModel):
     # Rows of the `derived_from` inputs that this field's rubric must not read.
     # See ScopeLeftOut.
     leave_out_scopes: ScopeLeftOut | None = None
+    # Each scope names what that part of the study is — for an arm, the treatment
+    # it receives — so RECONCILE matches scopes across documents on that name.
+    # An entry whose own text does not say what its scope names is not matched,
+    # and a scope only one of several documents lists is flagged. Added for
+    # design.parts on 2026-10-12. See reconcile/__init__.py:_scope_checks.
+    check_scopes_across_documents: bool = False
     schema_def: dict[str, str] | None = Field(default=None, alias="schema")
     # Answers that follow from another field's answer. See ResolutionRule.
     resolution_rules: list[ResolutionRule] = Field(default_factory=list)
@@ -236,6 +242,11 @@ def _validate_registry(groups: list[GroupDef], fields: list[FieldDef]) -> None:
             re.findall(r"[a-z0-9]+", p.lower()) for p in f.leave_out_scopes.phrases
         ):
             errors.append(f"Field {f.id} has an empty leave_out_scopes phrase")
+
+    # RECONCILE reads records, and a derived field has none.
+    for f in fields:
+        if f.check_scopes_across_documents and f.derived:
+            errors.append(f"Field {f.id} checks scopes across documents but is derived")
 
     # A field follows a real other field's disagreement, and not its own.
     for f in fields:

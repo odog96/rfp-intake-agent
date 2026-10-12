@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from rfp_intake.normalize.scope import normalize_scope, scopes_match
+from rfp_intake.normalize.scope import normalize_scope, scope_named_in, scopes_match
 
 
 class TestNormalizeScope:
@@ -121,3 +121,63 @@ class TestRealLabelsFromRun20260827205037:
         # "total" must not be stripped down to nothing by the trailing-noun rule.
         assert normalize_scope("total") == "total"
         assert normalize_scope("visits") is not None
+
+
+class TestScopeNamedIn:
+    """Step 3 of the arm-matching rule Oliver approved on 2026-10-12: an entry is
+    only matched with other documents when its own words say what its scope names."""
+
+    def test_a_placebo_scope_on_a_saline_entry_fails_without_the_word_placebo(self) -> None:
+        # The control entry describes the substance; the scope names the role, as
+        # the design.parts hint asks. Nothing in the entry says "placebo", so the
+        # scope is the model's claim alone and the entry is not matched.
+        assert not scope_named_in(
+            "arm:Placebo",
+            "Control arm: normal saline IV once every 28 days",
+            "Subjects in the control arm receive normal saline by IV infusion.",
+        )
+
+    def test_the_same_saline_entry_passes_when_its_value_says_placebo(self) -> None:
+        assert scope_named_in(
+            "arm:Placebo",
+            "Placebo arm: Normal saline IV once every 28 days",
+            "Subjects in the control arm receive normal saline by IV infusion.",
+        )
+
+    def test_the_same_saline_entry_passes_when_its_quote_says_placebo(self) -> None:
+        assert scope_named_in(
+            "arm:Placebo",
+            "Control arm: normal saline IV once every 28 days",
+            "Placebo (normal saline) will be given by IV infusion.",
+        )
+
+    @pytest.mark.parametrize(
+        ("scope", "text", "named"),
+        [
+            # Case, punctuation and background therapy do not matter.
+            ("arm:NEOD001 + standard of care", "Group 1: NEOD001 + standard of care", True),
+            ("arm:neod001", "NEOD-001 24 mg/kg IV", True),
+            ("arm:NEOD001", "neod001, 24 mg/kg", True),
+            # Every word of the name, in order.
+            ("arm:standard of care alone", "Standard of care alone (no study drug)", True),
+            ("arm:standard of care alone", "standard of care", False),
+            ("arm:active comparator: DrugX", "Active comparator (DrugX 10 mg)", True),
+            # Whole words: "placebo" is not inside "placebos-free".
+            ("arm:Placebo", "Placebos-free run-in", False),
+            # A dose is part of the name when the hint puts it there.
+            ("arm:DrugX 10 mg", "DrugX 10mg once daily", True),
+            ("arm:DrugX 10 mg", "DrugX 20 mg once daily", False),
+            # Parts and cohorts keep their own names.
+            ("part:Part A", "Part A: single ascending dose", True),
+            ("cohort:Cohort 3", "Cohort 3 (3 mg/kg)", True),
+        ],
+    )
+    def test_table(self, scope: str, text: str, named: bool) -> None:
+        assert scope_named_in(scope, text) is named
+
+    @pytest.mark.parametrize("scope", [None, "", "total", "Overall"])
+    def test_no_scope_or_the_whole_study_has_nothing_to_check(self, scope: str | None) -> None:
+        assert scope_named_in(scope, "anything")
+
+    def test_no_text_names_nothing(self) -> None:
+        assert not scope_named_in("arm:Placebo", None, "")

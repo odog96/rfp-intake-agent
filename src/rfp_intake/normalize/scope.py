@@ -163,3 +163,45 @@ def _canonical_prefix(prefix: str) -> str | None:
 def scopes_match(left: str | None, right: str | None) -> bool:
     """Whether two scope labels refer to the same part of the study."""
     return normalize_scope(left) == normalize_scope(right)
+
+
+# A number (with its decimal part) or a run of letters. Splitting digits from
+# letters makes "10mg" and "10 mg" the same two words, and "NEOD001" the same
+# words wherever it is written.
+_WORD = re.compile(r"\d+(?:\.\d+)?|[^\W\d_]+")
+
+
+def _words(text: str) -> list[str]:
+    return _WORD.findall(text.casefold())
+
+
+def scope_named_in(scope: str | None, *texts: str | None) -> bool:
+    """Whether the entry's own text names what its scope says it is about.
+
+    For a field whose scopes are matched across documents
+    (`check_scopes_across_documents` in config/fields.yaml), two entries are the
+    same arm when their scopes name the same thing — the treatment the arm
+    receives, for an arm. The scope is written by the extraction model, so it is
+    a claim; this checks the claim against the document's own words. An entry
+    scoped "arm:Placebo" whose value and quote only say "normal saline" fails,
+    and is not matched with another document's placebo arm.
+
+    The scope's label, after `normalize_scope`'s cleanup, must appear as
+    consecutive words in one of `texts`, ignoring case and punctuation. An absent
+    scope or the whole study has nothing to check and passes.
+    """
+    canonical = normalize_scope(scope)
+    if canonical is None or canonical == "total":
+        return True
+    prefix, sep, label = canonical.partition(":")
+    wanted = _words(label if sep else prefix)
+    if not wanted:
+        return False
+    n = len(wanted)
+    for text in texts:
+        if not text:
+            continue
+        words = _words(text)
+        if any(words[i : i + n] == wanted for i in range(len(words) - n + 1)):
+            return True
+    return False

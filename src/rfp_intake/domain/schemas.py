@@ -87,6 +87,12 @@ class ResolvedField(BaseModel):
     # Free-text explanation for a derived field's score (ARCHITECTURE.md §4.8:
     # "the report prints the contributing evidence"). Unused for extracted fields.
     notes: str | None = None
+    # Why RECONCILE wants a person to look at this row, in plain words — for
+    # now only a field with `check_scopes_across_documents` writes one (an arm
+    # listed in only one document, or an entry whose text does not say what its
+    # scope names). GATE keeps the row in review, and the report prints the note
+    # as the row's reason. Document ids in it are named by the report.
+    review_note: str | None = None
 
 
 class OutlineEntry(BaseModel):

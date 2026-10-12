@@ -808,6 +808,25 @@ and quote as its evidence. It names no field in Python — the only field ids ar
 `domain/registry.py` validates that the trigger field, its listed values and the rule's own value all
 exist in `config/fields.yaml`. The rule in use makes First-in-human "No" for a Phase 2, 3 or 4 study.
 
+**Scopes matched across documents by what they name, added 2026-10-12.** Run `r-20261009-225414`
+listed four arms for a two-arm study, because the protocol amendment scoped its arms by treatment
+("arm:NEOD001", "arm:Placebo") and the RFP by label ("arm:Group 1", "arm:Group 2"). A field with
+`check_scopes_across_documents: true` in `config/fields.yaml` (only `design.parts`) asks the extraction
+model, through its hint, to scope each arm by its treatment as the document names it, and a control arm by
+its role ("placebo"), never its substance ("normal saline"). Grouping is still on `normalize_scope`, done
+by code; what the key adds is two checks:
+- **The entry must name its scope.** `normalize/scope.py:scope_named_in` requires the scope's label to
+  appear as consecutive words, ignoring case and punctuation, in the record's own value or quote. A record
+  that fails is not matched: it gets its own row, scoped "<scope> (not matched, <doc id>)", with a
+  `review_note` saying so. The scope is the model's claim; this checks it against the document's words.
+- **A part only one document lists says so.** When more than one document lists parts of the study, a row
+  whose records all come from one of them gets `review_note` "Listed only in <doc>, not in <others>."
+
+Labels ("Group 1", "Arm A") play no part in either direction, and subject counts are not used to match.
+`ResolvedField.review_note` keeps the row in review at GATE (§4.9), and the report prints it as a reason
+with the document ids named. Rows with no scope or scope "total" are not parts and get no note.
+`ops.subjects_total` was deliberately left out of this change.
+
 Precedence policy (`config/precedence.yaml`), applied only after adjudication:
 1. **Recency** — a later amendment beats an earlier protocol version. Always first.
 2. **Domain authority** — Protocol wins on scientific/design facts (phase, design, dosing, interim analyses,
@@ -912,6 +931,7 @@ Maps confidence and contradiction state to a reviewer-facing status:
 | conf 0.50–0.80, or derived | `needs_review` |
 | `conflict` verdict, or conf < 0.50, or budget_driver with any disagreement | `needs_review` (flagged) |
 | the field named in this field's `follows_conflict_of` has such a disagreement | `needs_review` (flagged) |
+| RECONCILE wrote a `review_note` on the row (§4.6) | `needs_review` (flagged) |
 | explicit none/N/A in source | `not_specified` |
 | searched, absent | `not_found` |
 
@@ -947,6 +967,12 @@ happen. GATE follows exactly one hop and reads the field id off the registry, so
 Python. The report then names the other variable on the borrowed row — "The documents disagree on Number
 of interim analyses" — because a reader sent to a disagreement about counts by a bare pointer on a timing
 row finds nothing about timing there.
+
+**A row with a `review_note` stays in review, added 2026-10-12.** RECONCILE writes the note on a
+`design.parts` arm only one of several documents lists, or on an entry whose own words do not say what its
+scope names (§4.6). GATE checks it after the budget-driver rule for lists holding more than one value, which
+is unchanged, and before the confidence threshold, so a confident row with a note is not confirmed. The
+report prints the note as one of the row's reasons, after whichever rule's reason flagged it.
 
 ### 4.10 RENDER — pure functions, not a graph node
 Canonical JSON is the source of truth; renderers are pure functions over it.

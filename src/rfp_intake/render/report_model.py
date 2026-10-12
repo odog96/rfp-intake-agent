@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import re
 from collections import defaultdict
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import PurePath
 from typing import Any
@@ -642,13 +643,16 @@ def _rows_for(
         rows.append(_fold_rewordings(fd, Row(
             field_id=fd.id,
             label=fd.label,
-            scope=group[0].scope if scope_key is not None else None,
+            # name_ids: an entry RECONCILE kept out of the arm match carries its
+            # document's id in its scope (reconcile/__init__.py:_scope_checks).
+            scope=docs.name_ids(group[0].scope)
+            if scope_key is not None and group[0].scope else None,
             budget_driver=fd.budget_driver,
             status=min((ln.status for ln in lines), key=lambda s: _STATUS_RANK.get(s, 0)),
             values=lines,
             verdict=verdict,
             decision_no=no,
-            reasons=_review_reasons(fd, group, no, borrowed),
+            reasons=_review_reasons(fd, group, no, borrowed, docs.name_ids),
             follows_label=borrowed,
         )))
     return rows
@@ -763,6 +767,7 @@ def _review_reasons(
     entries: list[ResolvedField],
     decision_no: int | None,
     follows_label: str | None = None,
+    name_ids: Callable[[str], str] = lambda text: text,
 ) -> list[str]:
     """Why each flagged entry in this row is flagged, de-duplicated, in GATE's order.
 
@@ -770,6 +775,11 @@ def _review_reasons(
     first rule that matches — so the branches below are checked in that same order
     and the first match wins. A row holding several entries can carry several
     reasons, which is why the result is a list.
+
+    RECONCILE's `review_note` is the exception: it is printed whenever it is
+    there, after the rule that flagged the entry, because it says something no
+    rule's wording does (which document lists an arm the others do not). Its
+    document ids are swapped for the report's names by `name_ids`.
     """
     out: list[str] = []
     for rf in entries:
@@ -790,12 +800,15 @@ def _review_reasons(
             reason = REASON_DISMISSED_DISAGREEMENT
         elif fd.budget_driver and isinstance(rf.value, list) and len(rf.value) > 1:
             reason = REASON_MANY_VALUES
+        elif rf.review_note:
+            reason = None
         elif rf.confidence < CONFIDENCE_CONFIRMED:
             reason = REASON_LOW_CONFIDENCE
         else:
             reason = REASON_UNEXPLAINED
-        if reason not in out:
-            out.append(reason)
+        for text in (reason, name_ids(rf.review_note) if rf.review_note else None):
+            if text is not None and text not in out:
+                out.append(text)
     return out
 
 
@@ -970,7 +983,7 @@ def _evidence(
             add(Evidence(
                 field_id=rf.field_id,
                 label=label,
-                scope=rf.scope,
+                scope=docs.name_ids(rf.scope) if rf.scope else None,
                 value=said,
                 sources=docs.pages([r.provenance]),
                 confidence=r.confidence,
@@ -987,7 +1000,7 @@ def _evidence(
         add(Evidence(
             field_id=rf.field_id,
             label=label,
-            scope=rf.scope,
+            scope=docs.name_ids(rf.scope) if rf.scope else None,
             value=value,
             sources=docs.pages(_stating(rf, fd)),
             confidence=rf.confidence,

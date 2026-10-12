@@ -304,6 +304,44 @@ def test_leave_out_scopes_phrase_must_have_words(tmp_path: Path, phrases: list[s
         load_registry(_with_leave_out(tmp_path, derived=True, phrases=phrases))
 
 
+def _with_scope_check(tmp_path: Path, *, derived: bool) -> Path:
+    field: dict[str, object] = {
+        "id": "g1.parts", "group": "g1", "label": "Parts", "type": "object[]",
+        "check_scopes_across_documents": True,
+    }
+    if derived:
+        field.update({"derived": True, "derived_from": ["g1.base"]})
+    data = {
+        "version": 1,
+        "groups": [{"id": "g1", "label": "Group 1"}],
+        "fields": [{"id": "g1.base", "group": "g1", "label": "Base", "type": "int"}, field],
+    }
+    p = tmp_path / "fields.yaml"
+    p.write_text(yaml.dump(data))
+    return p
+
+
+def test_check_scopes_across_documents_is_read(tmp_path: Path) -> None:
+    registry = load_registry(_with_scope_check(tmp_path, derived=False))
+    assert registry.get_field("g1.parts").check_scopes_across_documents
+    assert not registry.get_field("g1.base").check_scopes_across_documents
+
+
+def test_check_scopes_across_documents_not_on_a_derived_field(tmp_path: Path) -> None:
+    """RECONCILE is what checks scopes, and it never sees a derived field."""
+    with pytest.raises(
+        RegistryValidationError, match="checks scopes across documents but is derived"
+    ):
+        load_registry(_with_scope_check(tmp_path, derived=True))
+
+
+def test_only_design_parts_checks_scopes_across_documents(fields_yaml_path: Path) -> None:
+    """Approved for design.parts alone on 2026-10-12; ops.subjects_total was
+    deliberately left out of that change."""
+    registry = load_registry(fields_yaml_path)
+    assert [f.id for f in registry.fields if f.check_scopes_across_documents] == ["design.parts"]
+
+
 class TestTheInterimAnalysisRowsAfterThe20261007Review:
     """Change 4: one count row, with the conflict flagged on it.
 
