@@ -154,6 +154,18 @@ class TestVisitIntensityCombinesEveryRow:
         )
         assert [p.page for p in result.sources] == [40, 41]
 
+    def test_the_inputs_it_does_not_score_are_not_cited(self) -> None:
+        """CLAUDE.md open item 4: a derived row cites only what its answer rests on.
+        Every evidence row is combined into the rating, so each is cited; the
+        frequency and count inputs are not scored, so neither is."""
+        inputs = _visit(_evidence(["imaging"], page=40))
+        inputs["visits.frequency_by_period"] = [
+            _field("visits.frequency_by_period", "weekly", page=90)
+        ]
+        inputs["visits.total_count"] = [_field("visits.total_count", 12, page=91)]
+        result = compute_visit_intensity(inputs)
+        assert [p.page for p in result.sources] == [40]
+
     def test_the_explanation_names_the_rows_it_combined(self) -> None:
         result = compute_visit_intensity(
             _visit(_evidence(["imaging"]), _evidence(["ecgs"], scope="Months 1-3"))
@@ -190,7 +202,7 @@ def _field(
 ) -> ResolvedField:
     return ResolvedField(
         field_id=field_id,
-        value=value,  # type: ignore[arg-type]
+        value=value,
         status=status,  # type: ignore[arg-type]
         confidence=confidence,
         quote=quote,
@@ -433,8 +445,9 @@ class TestComputePlaceboAssumption:
         assert "ip.form" in result.explanation
         assert "infusion_iv" in result.explanation
 
-    def test_sources_come_from_every_input_that_had_one(self) -> None:
-        """A reader has to be able to turn to the pages the assumption rests on."""
+    def test_sources_are_only_the_inputs_the_answer_rests_on(self) -> None:
+        """A reader has to be able to turn to the pages the assumption rests on, and
+        only those (CLAUDE.md open item 4)."""
         inputs = _inputs()
         inputs["blinding.design"] = [_field("blinding.design", "double_blind", page=4)]
         inputs["ip.form"] = [_field("ip.form", ["infusion_iv"], page=12)]
@@ -442,7 +455,97 @@ class TestComputePlaceboAssumption:
             _field("blinding.placebo_matching", "not_matching_stated", page=30)
         ]
         result = compute_placebo_assumption(inputs)
-        assert [p.page for p in result.sources] == [4, 30, 12]
+        assert [p.page for p in result.sources] == [30]
+        assert "looked at but not used: blinding.design=double_blind; ip.form=" in (
+            result.explanation
+        )
+
+    def test_an_input_nobody_settled_is_named_but_not_cited(self) -> None:
+        """r-20261009-225414: the documents disagreed on whether the placebo matches,
+        so the route decided, and RFP p.3's "Matching placebo" was cited all the same."""
+        inputs = _inputs(design="double_blind")
+        inputs["ip.form"] = [_field("ip.form", ["infusion_iv"], page=54)]
+        inputs["blinding.placebo_matching"] = [
+            _field(
+                "blinding.placebo_matching", None, confidence=0.0, page=3,
+                quote="Placebo: Matching placebo for NEOD001",
+            )
+        ]
+        result = compute_placebo_assumption(inputs)
+        assert result.value == PLACEBO_INJECTED_NOT_STATED
+        assert [p.page for p in result.sources] == [54]
+        assert result.explanation.startswith("ip.form=['infusion_iv']; looked at but not used: ")
+        assert "Matching placebo for NEOD001" in result.explanation
+        assert result.confidence == 0.0, "the unsettled input still lowers the confidence"
+
+    def test_the_contradiction_cites_both_sides(self) -> None:
+        inputs = _inputs(design="double_blind")
+        inputs["blinding.placebo_matching"] = [
+            _field("blinding.placebo_matching", "matching_stated", page=30)
+        ]
+        inputs["blinding.unblinded_staff_stated"] = [
+            _field("blinding.unblinded_staff_stated", "true", page=31)
+        ]
+        result = compute_placebo_assumption(inputs)
+        assert result.value == PLACEBO_CONTRADICTION
+        assert [p.page for p in result.sources] == [30, 31]
+
+    def test_a_split_staff_answer_cites_the_matching_that_made_it_matter(self) -> None:
+        inputs = _inputs(design="double_blind")
+        inputs["blinding.placebo_matching"] = [
+            _field("blinding.placebo_matching", "matching_stated", page=30)
+        ]
+        inputs["blinding.unblinded_staff_stated"] = [
+            _field("blinding.unblinded_staff_stated", "true", page=31),
+            _field("blinding.unblinded_staff_stated", "false", page=32),
+        ]
+        result = compute_placebo_assumption(inputs)
+        assert result.value == PLACEBO_INPUTS_DISAGREE
+        assert [p.page for p in result.sources] == [30, 31, 32]
+
+    @pytest.mark.parametrize(
+        ("case", "rows", "pages"),
+        [
+            ("rule 1, open-label", {"design": ["open_label"], "staff": ["true"]}, [1]),
+            ("split design", {"design": ["open_label", "double_blind"]}, [1, 11]),
+            ("split matching", {"matching": ["matching_stated", "not_matching_stated"]}, [2, 12]),
+            ("rule 2, matching", {"matching": ["matching_stated"], "staff": ["false"]}, [2]),
+            ("split route", {"forms": [["oral_tablet"], ["infusion_iv"]]}, [4, 14]),
+            ("rule 3, injected", {"forms": [["infusion_iv"]]}, [4]),
+            ("rule 4, oral", {"forms": [["oral_tablet"]]}, [4]),
+            ("no route stated", {"forms": [None]}, []),
+            ("route decides nothing", {"forms": [["topical"]]}, [4]),
+        ],
+    )
+    def test_each_rule_cites_only_the_inputs_it_used(
+        self, case: str, rows: dict[str, list[object]], pages: list[int]
+    ) -> None:
+        """Every input is present on its own page (design 1, matching 2, staff 3,
+        route 4; a second row 10 pages on), and an unsettled matching row sits on
+        page 2 wherever the case gives none, like RFP p.3 in r-20261009-225414."""
+        ids = {
+            "design": ("blinding.design", 1), "matching": ("blinding.placebo_matching", 2),
+            "staff": ("blinding.unblinded_staff_stated", 3), "forms": ("ip.form", 4),
+        }
+        inputs: dict[str, list[ResolvedField]] = {}
+        for key, (field_id, page) in ids.items():
+            values = rows.get(key, ["double_blind"] if key == "design" else [None])
+            inputs[field_id] = [
+                _field(
+                    field_id, v, page=page + 10 * i,
+                    status="not_found" if v is None and key == "forms" else "needs_review",
+                )
+                for i, v in enumerate(values)
+            ]
+        result = compute_placebo_assumption(inputs)
+        assert [p.page for p in result.sources] == pages, case
+
+    def test_an_absent_input_is_not_named(self) -> None:
+        result = compute_placebo_assumption(
+            _inputs(design="double_blind", forms=["infusion_iv"])
+        )
+        assert "placebo_matching" not in result.explanation
+        assert "unblinded_staff_stated" not in result.explanation
 
     def test_a_page_two_inputs_share_is_listed_once(self) -> None:
         result = compute_placebo_assumption(

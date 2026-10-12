@@ -915,7 +915,9 @@ RECONCILE has no way to see. GATE sends every derived field to `needs_review`, s
 reaches a person.
 
 The explanation names every input it used and quotes it where there is a quote, because the whole value
-of an assumption a person can overrule is that they can see what it rests on.
+of an assumption a person can overrule is that they can see what it rests on. The row cites only the
+pages of the inputs the rule used; any other input is named after "looked at but not used" and is not
+cited (2026-10-12, approved by Oliver). The confidence is still the weakest of every input.
 
 **An input with several rows** (added 2026-10-11, approved by Oliver). A scoped field resolves to one row
 per scope, and a list field can resolve to several, so each rubric receives every row of each input, never

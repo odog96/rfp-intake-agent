@@ -131,8 +131,18 @@ one row of several was item 1 until it was fixed on 2026-10-11; see `docs/JOURNA
    Still unmarked, by Oliver's decision of 2026-10-12, and on Angus's list of known problems: the
    `reconcilable` disagreements in Appendix B, such as the protocol's 236 subjects and the schedule
    "No", which have no Disagreement number.
-4. **The derived row "What to assume about the placebo" cites RFP p.3, a page that contradicts its
-   value.** This predates fix 2.
+4. ~~**The derived row "What to assume about the placebo" cites RFP p.3, a page that contradicts its
+   value.**~~ **Fixed 2026-10-12**, approved by Oliver. The placebo rubric cited the pages of all four
+   inputs whichever rule it reached (`derive/rubric.py:compute_placebo_assumption`). It now cites only
+   the inputs the rule used, and names the others after "looked at but not used". Applying that rule
+   moved three citations: a split unblinded-staff answer also cites the stated matching that made it
+   matter; "does not match" no longer cites the staff answer, which does not change it; and "does not
+   say how the drug is given" no longer cites an unsettled matching row, as rules 3 and 4 do not. An
+   input that only rules a branch out (the design, a staff "false") is named, not cited, and a used
+   input with no answer cites no page. Confidence is still
+   the weakest of every input. `--rederive` on `r-20261009-225414` cites Amendment p.54 alone. In
+   `r-20261012-arms2` RFP p.3 is still cited, correctly, because `ip.form` was read from it too. The
+   visit-intensity rating already cited only the evidence rows it combines, and is unchanged.
 5. **The report shows the reader raw field ids in two derived rows** (`ip.form=['infusion_iv']` and the
    visit-intensity rubric line). This predates this work.
 6. **`report.xlsx` does not follow fix 2's rule.** Its page column is `rf.sources[0]`
@@ -186,7 +196,7 @@ run, and what remains is PLAN keeping only three sections per field group. Read 
 in `docs/JOURNAL.md` before trusting `blinding.placebo_matching` or `blinding.unblinded_staff_stated`.
 Graph topology today:
 `INGEST → CLASSIFY → FIND_SECTIONS → SET_ASIDE_SECTIONS → MARK_OTHER_STUDY → PLAN → EXTRACT → NORMALIZE → RECONCILE → ADJUDICATE → DERIVE → GATE`,
-then RENDER runs after the graph finishes (see the deviations below). 1057 tests passing, 1 skipped, on
+then RENDER runs after the graph finishes (see the deviations below). 1071 tests passing, 1 skipped, on
 2026-10-12 — the count moves with `runs/`, because `test_nothing_lost_on_a_real_run` runs once per run folder.
 Pushed to https://github.com/odog96/rfp-intake-agent.git. The push is done from a terminal by
 Oliver, from inside the repository directory — this session's credentials cannot do it. The seven
@@ -194,7 +204,7 @@ changes of the 2026-10-07 review were committed on 2026-10-11 as `c4ecd75`, on t
 (Oliver's 2026-10-06 edit to `.project-metadata.yaml` on GitHub), with `GATE_OFF=1` approved by Oliver
 because the session's gate hooks were not loaded. Fix 1 of the 2026-10-09 brief is committed after
 it, fix 2 after that, the visit-intensity fix after that, and the record of open items 8 and 9 after
-that; all five are pushed. The arms fix of 2026-10-12 is committed after them and is not pushed.
+that; all five are pushed. The arms fix and CLAUDE.md open items 7, 3 and 4 (2026-10-12) are committed after them and are not pushed; Oliver pushes.
 
 Every `### Done` entry that used to be in this file is now in `docs/JOURNAL.md`, newest first, unedited.
 Nothing in `docs/JOURNAL.md` is current state; where the two disagree, this file wins.

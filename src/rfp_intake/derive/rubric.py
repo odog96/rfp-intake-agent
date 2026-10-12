@@ -247,23 +247,46 @@ def compute_placebo_assumption(inputs: dict[str, list[ResolvedField]]) -> Rubric
     forms = _forms_of(form)
 
     every_row = [r for name in names for r in inputs.get(name, [])]
-    sources = _sources_of(every_row)
+    # Every row, used or not: an answer resting on an input nobody could settle
+    # is no surer for having been reached another way.
     confidence = min((r.confidence for r in every_row), default=0.0)
 
+    def answered_by(name: str) -> list[ResolvedField]:
+        """The rows whose answer the rule used: every row giving it, not only the first.
+
+        Empty when no row gives an answer: the rule used the absence, and an
+        unsettled row's page is not where an absence is stated.
+        """
+        return [r for r in _usable(inputs.get(name, [])) if r.value is not None]
+
     def result(value: str, *used: tuple[str, list[ResolvedField]]) -> RubricResult:
+        """The answer, citing only the inputs the rule reached it from.
+
+        An input the rule did not use is named after "looked at but not used" and
+        is not cited, so a page in the row's sources is always a page the answer
+        rests on (CLAUDE.md open item 4, approved by Oliver on 2026-10-12).
+        """
+        used_names = [label for label, _ in used]
+        explanation = "; ".join(_cite(label, rows) for label, rows in used)
+        unused = [
+            _cite(name, agreed[name][1]) for name in names
+            if name not in used_names and inputs.get(name)
+        ]
+        if unused:
+            explanation += "; looked at but not used: " + "; ".join(unused)
         return RubricResult(
             value=value,
             status="needs_review",  # GATE always sends derived fields to needs_review
             confidence=confidence,
-            sources=sources,
-            explanation="; ".join(_cite(label, rows) for label, rows in used),
+            sources=_sources_of([r for name in used_names for r in answered_by(name)]),
+            explanation=explanation,
         )
 
     def split(name: str) -> bool:
         return agreed[name][0] is None and len(agreed[name][1]) > 1
 
-    def disagree(name: str) -> RubricResult:
-        return result(PLACEBO_INPUTS_DISAGREE, (name, agreed[name][1]))
+    def disagree(name: str, *also: tuple[str, list[ResolvedField]]) -> RubricResult:
+        return result(PLACEBO_INPUTS_DISAGREE, *also, (name, agreed[name][1]))
 
     if split("blinding.design"):
         return disagree("blinding.design")
@@ -276,7 +299,9 @@ def compute_placebo_assumption(inputs: dict[str, list[ResolvedField]]) -> Rubric
         return disagree("blinding.placebo_matching")
     # Rule 6 turns on the staff answer only when matching is stated.
     if matching_value == "matching_stated" and split("blinding.unblinded_staff_stated"):
-        return disagree("blinding.unblinded_staff_stated")
+        return disagree(
+            "blinding.unblinded_staff_stated", ("blinding.placebo_matching", matching_rows)
+        )
 
     # Rule 6. Stated matching and stated unblinded staff cannot both be right.
     if matching_value == "matching_stated" and staff_value in _STAFF_STATED_YES:
@@ -296,7 +321,6 @@ def compute_placebo_assumption(inputs: dict[str, list[ResolvedField]]) -> Rubric
         return result(
             "the document says the placebo does not match; unblinded handling likely",
             ("blinding.placebo_matching", matching_rows),
-            ("blinding.unblinded_staff_stated", staff_rows),
         )
 
     if split("ip.form"):
@@ -311,11 +335,13 @@ def compute_placebo_assumption(inputs: dict[str, list[ResolvedField]]) -> Rubric
     if any(f in _ORAL_FORMS for f in forms):
         return result(PLACEBO_ORAL_NOT_STATED, ("ip.form", form_rows))
 
+    # Here and below, as in rules 3 and 4, the matching row settled nothing, so it
+    # is looked at but not used: citing it would cite a page the answer does not
+    # rest on, such as an unsettled "Matching placebo" (CLAUDE.md open item 4).
     if not forms:
         return result(
             "matching not stated and the document does not say how the drug is given; "
             "ask the sponsor",
-            ("blinding.placebo_matching", matching_rows),
             ("ip.form", form_rows),
         )
     return result(
