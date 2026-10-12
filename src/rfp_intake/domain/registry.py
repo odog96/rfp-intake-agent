@@ -6,7 +6,7 @@ import hashlib
 import re
 from functools import lru_cache
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import yaml
 from pydantic import BaseModel, Field, field_validator
@@ -116,6 +116,97 @@ class ScopeLeftOut(BaseModel):
         return " ".join(str(v).split())
 
 
+def scope_has_phrase(scope: str | None, phrases: list[str]) -> bool:
+    """Whether one of the phrases' words appear in the scope one after another,
+    ignoring case and punctuation: "post etd" matches "Post-ETD (early
+    discontinuation)". The one rule for every key below that names scopes by
+    phrase (ScopeLeftOut, ScopeHeading), so a phrase means the same thing in each.
+    """
+    if scope is None:
+        return False
+    words = _words(scope)
+    for phrase in phrases:
+        want = _words(phrase)
+        if want and any(
+            words[i:i + len(want)] == want for i in range(len(words) - len(want) + 1)
+        ):
+            return True
+    return False
+
+
+def _words(text: str) -> list[str]:
+    return re.findall(r"[a-z0-9]+", text.lower())
+
+
+class FollowWording(BaseModel):
+    """What a `follows_conflict_of` row says when only some of the documents in
+    the leading disagreement give it a value.
+
+    Added 2026-10-12, fix 2 of that day's brief. What a missing value means is
+    the study's own knowledge, so the sentences live in config/fields.yaml, with
+    the field's example beside them.
+
+    `{docs}` is replaced by the documents that give this row's value,
+    `{value}` by the value and `{pages}` by its pages; `{others}` by the
+    documents in the leading disagreement that give none.
+
+    `if_others_right` says what those other documents' side means for this
+    row, so it is printed only when every one of their records in the leading
+    disagreement gives one of the `when_others_say` values. Otherwise the
+    sentence would assert something no document said (pipeline-rules-reviewer,
+    2026-10-12).
+    """
+
+    only_some: str = Field(min_length=1)
+    if_others_right: str = Field(min_length=1)
+    when_others_say: list[str] = Field(min_length=1)
+
+    @field_validator("only_some")
+    @classmethod
+    def _says_the_value(cls, v: str) -> str:
+        if "{value}" not in v:
+            raise ValueError("must contain {value}")
+        return " ".join(v.split())
+
+    @field_validator("if_others_right")
+    @classmethod
+    def _names_the_others(cls, v: str) -> str:
+        if "{others}" not in v:
+            raise ValueError("must contain {others}")
+        return " ".join(v.split())
+
+    @field_validator("when_others_say", mode="before")
+    @classmethod
+    def _values_as_words(cls, v: object) -> object:
+        # YAML reads an unquoted 0 as a number; the check compares words.
+        return [str(x).strip() for x in v] if isinstance(v, list) else v
+
+
+class ScopeHeading(BaseModel):
+    """One part of a `scopes` display: the scopes it holds, named by phrase
+    (see `scope_has_phrase`), and the heading printed above them."""
+
+    phrases: list[str]
+    label: str = Field(min_length=1)
+
+
+class Display(BaseModel):
+    """How report.pdf lays out one variable's rows, where the default of one
+    row per scope reads wrong. Declared in config/fields.yaml so that no field
+    is named in the renderer (non-negotiable rule 4).
+
+    `scopes` (added 2026-10-12, fix 6 of that day's brief): every scope of the
+    variable in one row, a heading above each, in the order `scopes` lists them;
+    a scope no heading names comes last, under its own words. Overall study
+    duration is the case: the whole study's length and one patient's time in it
+    are different answers, and as two rows the confirmed one read as settling
+    the disagreement beside it.
+    """
+
+    kind: Literal["scopes"]
+    scopes: list[ScopeHeading] = Field(default_factory=list)
+
+
 class FieldDef(BaseModel):
     id: str
     group: str
@@ -167,6 +258,16 @@ class FieldDef(BaseModel):
     # 2026-10-07 for change 4 of that day's review (interim.timing following
     # interim.count).
     follows_conflict_of: str | None = None
+    # What this row says when only some documents in that disagreement give it a
+    # value. See FollowWording.
+    follow_wording: FollowWording | None = None
+    # How the report lays out this variable's rows. See Display.
+    display: Display | None = None
+    # The word report.pdf prints for an enum value whose own spelling reads as
+    # software: `not_matching_stated` as "Not matching". Never sent to a model,
+    # like `plain`. A value not listed is printed by render/report_model.py's
+    # humanize_enum. Added 2026-10-12, fix 2 of that day's brief.
+    value_words: dict[str, str] = Field(default_factory=dict)
 
     model_config = {"populate_by_name": True}
 
@@ -178,25 +279,48 @@ class ReportWording(BaseModel):
     Added 2026-10-12 for CLAUDE.md open item 3: the Appendix A line saying which
     side of a disagreement the report used. It lives in YAML, like `plain`, so a
     clinical reviewer can have it corrected without a code change. `{n}` stands
-    for the Disagreement number, and the two phrases that send the reader to a
+    for the Disagreement number, and every phrase that sends the reader to a
     Disagreement must contain it.
+
+    The three `row_` phrases and `depends_on` were added the same day for fix 2
+    of the eleven-fixes brief: the main table's row for a disagreement now
+    states both sides and then one of the two `row_` lines, and a row that
+    follows another variable's disagreement says `depends_on` in its status.
+    `{value}` is the value shown and `{doc}` the document precedence chose.
     """
 
     shown_provisional: str = Field(min_length=1)
     not_used: str = Field(min_length=1)
     no_value_chosen: str = Field(min_length=1)
+    row_shown_provisional: str = Field(min_length=1)
+    row_no_value_chosen: str = Field(min_length=1)
+    depends_on: str = Field(min_length=1)
 
-    @field_validator("not_used", "no_value_chosen")
+    @field_validator(
+        "not_used", "no_value_chosen", "row_shown_provisional", "row_no_value_chosen",
+        "depends_on",
+    )
     @classmethod
     def _names_the_disagreement(cls, v: str) -> str:
         if "{n}" not in v:
             raise ValueError("must contain {n}, the Disagreement number")
         return v
 
+    @field_validator("row_shown_provisional")
+    @classmethod
+    def _says_the_value(cls, v: str) -> str:
+        if "{value}" not in v:
+            raise ValueError("must contain {value}, the value shown")
+        return v
+
     @staticmethod
-    def fill(phrase: str, n: int) -> str:
-        # replace, not str.format: a brace elsewhere in the wording must not break a report.
-        return phrase.replace("{n}", str(n))
+    def fill(phrase: str, n: int, **values: str) -> str:
+        """`{n}` and each `{name}` given, put in. replace, not str.format: a brace
+        elsewhere in the wording must not break a report."""
+        text = phrase.replace("{n}", str(n))
+        for name, value in values.items():
+            text = text.replace("{" + name + "}", value)
+        return text
 
 
 class Registry(BaseModel):
@@ -276,6 +400,35 @@ def _validate_registry(groups: list[GroupDef], fields: list[FieldDef]) -> None:
     for f in fields:
         if f.check_scopes_across_documents and f.derived:
             errors.append(f"Field {f.id} checks scopes across documents but is derived")
+
+    # A value's word names a value the field allows.
+    for f in fields:
+        unknown = [v for v in f.value_words if not f.values or v not in f.values]
+        if unknown:
+            errors.append(
+                f"Field {f.id} has value_words for values it does not allow: {', '.join(unknown)}"
+            )
+        # Two values printed as one word would read as one answer, and the report
+        # folds lines that read the same.
+        words = [w.casefold() for w in f.value_words.values()]
+        if len(words) != len(set(words)):
+            errors.append(f"Field {f.id} prints two values with the same value_words word")
+
+    # A follower's wording needs a disagreement to follow.
+    for f in fields:
+        if f.follow_wording is not None and f.follows_conflict_of is None:
+            errors.append(f"Field {f.id} has follow_wording but follows no conflict")
+
+    # A scopes display names its scopes by words, and a phrase with none would
+    # take every scope under its heading.
+    for f in fields:
+        if f.display is None or f.display.kind != "scopes":
+            continue
+        if not f.display.scopes:
+            errors.append(f"Field {f.id} has a scopes display with no scopes")
+        for heading in f.display.scopes:
+            if not heading.phrases or not all(_words(p) for p in heading.phrases):
+                errors.append(f"Field {f.id} has a scopes heading with an empty phrase")
 
     # A field follows a real other field's disagreement, and not its own.
     for f in fields:

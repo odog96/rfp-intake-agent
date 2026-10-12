@@ -266,6 +266,9 @@ _WORDING = {
     "shown_provisional": "Shown",
     "not_used": "Not used, see {n}",
     "no_value_chosen": "None chosen, see {n}",
+    "row_shown_provisional": "Shown {value} from the {doc}, see {n}",
+    "row_no_value_chosen": "None chosen, see {n}",
+    "depends_on": "Depends on {n}",
 }
 
 
@@ -504,3 +507,114 @@ class TestReportWording:
         from rfp_intake.domain.registry import ReportWording
 
         assert ReportWording.fill("see {n} {not a field}", 3) == "see 3 {not a field}"
+
+
+class TestTheDisplayKeysOfThe20261012Brief:
+    """Fixes 2 and 6: follow_wording, a scopes display and value_words are read
+    from config/fields.yaml and checked when it loads."""
+
+    def _write(self, tmp_path: Path, **extra: object) -> Path:
+        follower: dict[str, object] = {
+            "id": "g1.b", "group": "g1", "label": "B", "type": "enum",
+            "values": ["yes_stated", "no_stated"],
+        }
+        follower.update(extra)
+        data = {
+            "version": 1,
+            "groups": [{"id": "g1", "label": "Group 1"}],
+            "fields": [{"id": "g1.a", "group": "g1", "label": "A", "type": "int"}, follower],
+            "report_wording": _WORDING,
+        }
+        p = tmp_path / "fields.yaml"
+        p.write_text(yaml.dump(data))
+        return p
+
+    def test_all_three_are_read(self, tmp_path: Path) -> None:
+        registry = load_registry(self._write(
+            tmp_path,
+            follows_conflict_of="g1.a",
+            follow_wording={
+                "only_some": "Only {docs}: {value}", "if_others_right": "{others}",
+                "when_others_say": [0],
+            },
+            display={"kind": "scopes", "scopes": [{"phrases": ["study"], "label": "Whole"}]},
+            value_words={"yes_stated": "Yes"},
+        ))
+        field = registry.get_field("g1.b")
+        assert field.follow_wording is not None
+        assert field.follow_wording.only_some == "Only {docs}: {value}"
+        # A number in the YAML is read as the stored value's words.
+        assert field.follow_wording.when_others_say == ["0"]
+        assert field.display is not None
+        assert [h.label for h in field.display.scopes] == ["Whole"]
+        assert field.value_words == {"yes_stated": "Yes"}
+
+    def test_a_value_word_names_a_value_the_field_allows(self, tmp_path: Path) -> None:
+        with pytest.raises(RegistryValidationError, match="value_words"):
+            load_registry(self._write(tmp_path, value_words={"maybe": "Maybe"}))
+
+    def test_two_values_may_not_print_as_one_word(self, tmp_path: Path) -> None:
+        with pytest.raises(RegistryValidationError, match="same value_words word"):
+            load_registry(self._write(
+                tmp_path, value_words={"yes_stated": "Stated", "no_stated": "stated"},
+            ))
+
+    def test_follow_wording_needs_a_disagreement_to_follow(self, tmp_path: Path) -> None:
+        with pytest.raises(RegistryValidationError, match="follows no conflict"):
+            load_registry(self._write(tmp_path, follow_wording={
+                "only_some": "{value}", "if_others_right": "{others}", "when_others_say": ["0"],
+            }))
+
+    @pytest.mark.parametrize("wording", [
+        {"only_some": "no value here", "if_others_right": "{others}", "when_others_say": ["0"]},
+        {"only_some": "{value}", "if_others_right": "no others here", "when_others_say": ["0"]},
+    ])
+    def test_follow_wording_names_what_it_fills(
+        self, tmp_path: Path, wording: dict[str, str]
+    ) -> None:
+        # A field that does not parse fails as pydantic's error, like every other
+        # FieldDef error; only the cross-field checks raise RegistryValidationError.
+        with pytest.raises(ValueError, match="must contain"):
+            load_registry(self._write(
+                tmp_path, follows_conflict_of="g1.a", follow_wording=wording,
+            ))
+
+    @pytest.mark.parametrize("scopes", [[], [{"phrases": [" - "], "label": "Dash"}]])
+    def test_a_scopes_heading_needs_words(
+        self, tmp_path: Path, scopes: list[dict[str, object]]
+    ) -> None:
+        with pytest.raises(RegistryValidationError, match="scopes"):
+            load_registry(self._write(tmp_path, display={"kind": "scopes", "scopes": scopes}))
+
+    def test_the_provisional_row_line_names_the_value(self, tmp_path: Path) -> None:
+        data = {
+            "version": 1,
+            "groups": [{"id": "g1", "label": "Group 1"}],
+            "fields": [{"id": "g1.a", "group": "g1", "label": "A", "type": "int"}],
+            "report_wording": dict(_WORDING, row_shown_provisional="Shown, see {n}"),
+        }
+        p = tmp_path / "fields.yaml"
+        p.write_text(yaml.dump(data))
+        with pytest.raises(RegistryValidationError, match="must contain"):
+            load_registry(p)
+
+    def test_fill_puts_in_named_values(self) -> None:
+        from rfp_intake.domain.registry import ReportWording
+
+        assert ReportWording.fill("{value} from the {doc}, see {n}", 2, value="0", doc="rfp") == (
+            "0 from the rfp, see 2"
+        )
+
+
+@pytest.mark.parametrize(("scope", "phrases", "expected"), [
+    ("study", ["study"], True),
+    ("Study-wide", ["study wide"], True),
+    ("subject", ["study"], False),
+    ("post-ETD follow up", ["post etd"], True),
+    ("ETD post", ["post etd"], False),
+    (None, ["study"], False),
+])
+def test_scope_has_phrase(scope: str | None, phrases: list[str], expected: bool) -> None:
+    from rfp_intake.domain.registry import scope_has_phrase
+
+    assert scope_has_phrase(scope, phrases) is expected

@@ -19,7 +19,6 @@ config/fields.yaml names, and the derived row's note says which and why.
 
 from __future__ import annotations
 
-import re
 from collections.abc import Callable
 from typing import Any
 
@@ -30,7 +29,7 @@ from rfp_intake.derive.rubric import (
     compute_placebo_assumption,
     compute_visit_intensity,
 )
-from rfp_intake.domain.registry import Registry, ScopeLeftOut, get_registry
+from rfp_intake.domain.registry import Registry, ScopeLeftOut, get_registry, scope_has_phrase
 from rfp_intake.domain.schemas import ResolvedField, RunError, RunState
 
 logger = structlog.get_logger()
@@ -114,20 +113,9 @@ def derive_node(state: RunState) -> dict[str, Any]:
     return {"resolved": state.resolved + computed, "errors": errors}
 
 
-def _words(text: str) -> list[str]:
-    return re.findall(r"[a-z0-9]+", text.lower())
-
-
 def _is_left_out(scope: str | None, leave_out: ScopeLeftOut | None) -> bool:
     """Whether a row's scope contains one of the phrases, word for word."""
-    if scope is None or leave_out is None:
-        return False
-    words = _words(scope)
-    for phrase in leave_out.phrases:
-        want = _words(phrase)
-        if any(words[i:i + len(want)] == want for i in range(len(words) - len(want) + 1)):
-            return True
-    return False
+    return leave_out is not None and scope_has_phrase(scope, leave_out.phrases)
 
 
 def _left_out_note(rows: list[ResolvedField], leave_out: ScopeLeftOut, registry: Registry) -> str:

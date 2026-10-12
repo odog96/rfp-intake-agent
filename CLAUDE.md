@@ -150,7 +150,8 @@ one row of several was item 1 until it was fixed on 2026-10-11; see `docs/JOURNA
    Fix 2 changed only the PDF report, as the brief asked (pipeline-rules-reviewer, 2026-10-11).
    Since 2026-10-12 `report.xlsx` also prints the scope raw (`render/xlsx_renderer.py:81`), so a
    `design.parts` row RECONCILE did not match would show "(not matched, doc-…)" with the raw document
-   id, and the workbook does not print `review_note` at all.
+   id, and the workbook does not print `review_note` at all. The 2026-10-12 brief's layouts (both
+   sides on a Disagreement row, "Depends on Disagreement N", the `scopes` display) are PDF-only too.
 7. ~~**In 3 of the 29 runs a disagreement row's quote comes from a different record than its
    value.**~~ **Corrected and safeguarded 2026-10-12.** The mismatch appears only in runs made before
    `bf038be` (2026-10-03): `r-20260918-141940`, `r-20260923-131601` and `r-20261001-032936`, where

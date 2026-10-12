@@ -149,6 +149,36 @@ def assert_nothing_lost(state: RunState, registry: Registry, model: ReportModel)
                 for e in model.evidence
             ), f"quote for {rf.field_id} missing from the evidence appendix"
 
+    # A row's sides show every value of its disagreement, and a side's pages are
+    # pages that state its value (pipeline-rules-reviewer, 2026-10-12).
+    for row in rows:
+        if not row.sides:
+            continue
+        own = next(
+            c for line in row.values for e in line.entries
+            if (c := _own_disagreement_of(e)) is not None
+        )
+        fd = field_by_id.get(row.field_id)
+        by_side: dict[tuple[str, int], list[str]] = {}
+        for side in row.sides:
+            for code, pages in _parse_sources(side.sources).items():
+                for page in pages:
+                    by_side.setdefault((code, page), []).append(_same_key([side.text]))
+        stated: set[tuple[tuple[str, int], str]] = set()
+        for r in own.records:
+            said = _same_key(["; ".join(format_value(
+                r.value if r.value is not None else r.raw_value, fd))])
+            at = (codes[r.provenance.doc_id], r.provenance.page)
+            stated.add((at, said))
+            assert said in by_side.get(at, []), (
+                f"{row.field_id}: {said!r} on {at} is on no side of the row"
+            )
+        for at, texts in by_side.items():
+            for text in texts:
+                assert (at, text) in stated, (
+                    f"{row.field_id}: a side cites {at} for {text!r}, which it does not state"
+                )
+
     # Every adjudicated disagreement is either a decision or listed as dismissed.
     adjudicated = [c for c in state.contradictions if c.verdict is not None]
     decided = {d.field_id for d in model.decisions}
@@ -991,6 +1021,8 @@ class TestAppendixAMarkers:
 
         registry = get_registry().model_copy(update={"report_wording": ReportWording(
             shown_provisional="Used", not_used="Set aside ({n})", no_value_chosen="Open ({n})",
+            row_shown_provisional="{value} ({n})", row_no_value_chosen="Open ({n})",
+            depends_on="After {n}",
         )})
         model = build_report_model(self._state(resolved_value="0", index=1), registry)
         assert self._markers(model) == {
@@ -1001,3 +1033,217 @@ class TestAppendixAMarkers:
         state = RunState(run_id="r-1", resolved=[_rf("ops.sites_total", 75, quote="75 sites")])
         model = build_report_model(state, get_registry())
         assert [e.marker for e in model.evidence] == [None]
+
+
+class TestBothSidesOnTheRow:
+    """Fix 2 of the 2026-10-12 brief: a Disagreement row states both sides."""
+
+    def _state(self, *, resolved_value: object, records: list[tuple[str, int, str]],
+               field_id: str = "interim.count") -> RunState:
+        c = _contradiction(field_id, "conflict", records)
+        c = c.model_copy(update={
+            "resolved_value": resolved_value,
+            "winning_doc_id": "d-prot" if resolved_value is not None else None,
+            "winning_record_index": 1 if resolved_value is not None else None,
+        })
+        rf = _rf(field_id, resolved_value, status="needs_review", contradiction=c,
+                 quote=c.records[0].quote if resolved_value is not None else None)
+        rf.sources = [r.provenance for r in c.records]
+        return RunState(run_id="r-1", resolved=[rf], contradictions=[c])
+
+    def _row(self, state: RunState):  # type: ignore[no-untyped-def]
+        model = build_report_model(state, get_registry())
+        assert_nothing_lost(state, get_registry(), model)
+        [row] = [r for r in model.all_rows() if r.field_id == state.resolved[0].field_id]
+        return row
+
+    def test_each_document_is_one_side_with_its_value_page_and_quote(self) -> None:
+        row = self._row(self._state(
+            resolved_value="0", records=[("0", 98, "d-prot"), ("1", 4, "d-rfp")],
+        ))
+        assert [(s.sources, s.text, s.quote) for s in row.sides] == [
+            ("Protocol p.98", "0", "0"), ("RFP p.4", "1", "1"),
+        ]
+        assert row.decision_line == (
+            "Shown provisionally: 0 (the protocol normally takes precedence). "
+            "See Disagreement 1."
+        )
+        assert [v.on_sides for v in row.values] == [True]
+
+    def test_no_value_chosen_says_so(self) -> None:
+        row = self._row(self._state(
+            resolved_value=None, records=[("0", 98, "d-prot"), ("1", 4, "d-rfp")],
+        ))
+        assert row.decision_line == "No value chosen. See Disagreement 1."
+
+    def test_each_wording_is_its_own_side_with_only_its_pages(self) -> None:
+        """Overall study duration: the amendment says 42 months two ways."""
+        state = self._state(resolved_value=None, field_id="timeline.total_duration", records=[
+            ("approximately 42 months", 15, "d-prot"),
+            ("42 months (24 months accrual + 18 months follow-up)", 24, "d-prot"),
+            ("40 months", 3, "d-rfp"),
+        ])
+        state.resolved[0].scope = "study"
+        # all_rows() gives the scopes row's part, the "Whole study" one.
+        study = self._row(state)
+        assert study.heading == "Whole study"
+        assert [(s.sources, s.text, s.quote) for s in study.sides] == [
+            ("Protocol p.15", "approximately 42 months", None),
+            ("Protocol p.24", "42 months (24 months accrual + 18 months follow-up)", None),
+            ("RFP p.3", "40 months", "40 months"),
+        ]
+
+    def test_a_document_giving_two_values_shows_both(self) -> None:
+        """Probed by the pipeline-rules-reviewer on 2026-10-12: one side per
+        document printed 0 beside p.50, which says 2, and dropped the 2."""
+        row = self._row(self._state(
+            resolved_value="0",
+            records=[("0", 98, "d-prot"), ("2", 50, "d-prot"), ("1", 4, "d-rfp")],
+        ))
+        assert [(s.sources, s.text) for s in row.sides] == [
+            ("Protocol p.98", "0"), ("Protocol p.50", "2"), ("RFP p.4", "1"),
+        ]
+
+    def test_one_passage_on_two_records_is_one_quote(self) -> None:
+        """The amendment's placebo sentence came back twice from page 53."""
+        row = self._row(self._state(
+            resolved_value=None, field_id="blinding.placebo_matching", records=[
+                ("not_matching_stated", 53, "d-prot"), ("not_matching_stated", 53, "d-prot"),
+                ("matching_stated", 3, "d-rfp"),
+            ],
+        ))
+        assert [(s.text, s.quote) for s in row.sides] == [
+            ("Not matching", "not_matching_stated"), ("Matching", "matching_stated"),
+        ]
+
+    def test_a_long_quote_is_cut_to_its_first_sentence(self) -> None:
+        from rfp_intake.render.report_model import _first_sentence
+
+        assert _first_sentence(
+            "A matching placebo will not be provided.   Subjects who are randomized"
+        ) == ("A matching placebo will not be provided.", False)
+        assert _first_sentence("Interim Efficacy Analysis\n   Performed after 156 events") == (
+            "Interim Efficacy Analysis Performed after 156 events", False
+        )
+        # Cut at a word, and marked as cut, so the renderer puts the ellipsis
+        # outside the quotation marks.
+        text, cut = _first_sentence("word " * 50)
+        assert cut and len(text) <= 160 and text.endswith("word")
+
+    def test_a_row_with_no_disagreement_has_no_sides(self) -> None:
+        state = RunState(run_id="r-1", resolved=[_rf("ops.sites_total", 75)])
+        assert self._row(state).sides == []
+
+
+class TestARowFollowingAnotherDisagreement:
+    """Fix 2 of the 2026-10-12 brief: the interim timing row."""
+
+    def _state(self, timing_doc: str) -> RunState:
+        c = _contradiction("interim.count", "conflict", [("0", 98, "d-prot"), ("1", 4, "d-rfp")])
+        c = c.model_copy(update={
+            "resolved_value": "0", "winning_doc_id": "d-prot", "winning_record_index": 1,
+        })
+        count = _rf("interim.count", "0", status="needs_review", contradiction=c, quote="0")
+        count.sources = [r.provenance for r in c.records]
+        kind = "rfp" if timing_doc == "d-rfp" else "protocol"
+        timing = _rf("interim.timing", ["after 156 events"], status="needs_review",
+                     scope="total", pages=(4,), doc=timing_doc, kind=kind, contradiction=c)
+        return RunState(run_id="r-1", resolved=[count, timing], contradictions=[c])
+
+    def _row(self, state: RunState):  # type: ignore[no-untyped-def]
+        model = build_report_model(state, get_registry())
+        assert_nothing_lost(state, get_registry(), model)
+        [row] = [r for r in model.all_rows() if r.field_id == "interim.timing"]
+        return row
+
+    def test_only_one_side_gives_a_timing(self) -> None:
+        row = self._row(self._state("d-rfp"))
+        assert row.depends_on == "Depends on Disagreement 1"
+        assert row.follow_lines == [
+            "Only the RFP gives a timing: after 156 events (RFP p.4).",
+            "If the protocol is right, there is no interim analysis to time.",
+        ]
+        # The row's sides are the count's, so it has none of its own.
+        assert row.sides == []
+
+    def test_the_second_sentence_needs_the_other_side_to_say_none(self) -> None:
+        """Probed by the pipeline-rules-reviewer on 2026-10-12: a protocol count
+        of 2 printed "If the protocol is right, there is no interim analysis"."""
+        state = self._state("d-rfp")
+        c = state.contradictions[0]
+        records = [c.records[0].model_copy(update={"value": "2"}), c.records[1]]
+        c = c.model_copy(update={"records": records, "resolved_value": "2"})
+        for rf in state.resolved:
+            rf.contradiction = c
+        state.contradictions = [c]
+        state.resolved[0].value = "2"
+        assert self._row(state).follow_lines == [
+            "Only the RFP gives a timing: after 156 events (RFP p.4).",
+        ]
+
+    def test_the_wording_comes_from_the_registry(self) -> None:
+        from rfp_intake.domain.registry import FollowWording
+
+        registry = get_registry()
+        fd = registry.get_field("interim.timing")
+        fields = [
+            f.model_copy(update={"follow_wording": FollowWording(
+                only_some="{docs}: {value}", if_others_right="not {others}",
+                when_others_say=["0"],
+            )}) if f is fd else f
+            for f in registry.fields
+        ]
+        model = build_report_model(
+            self._state("d-rfp"), registry.model_copy(update={"fields": fields}),
+        )
+        [row] = [r for r in model.all_rows() if r.field_id == "interim.timing"]
+        assert row.follow_lines == ["RFP: after 156 events", "not protocol"]
+
+
+class TestScopesDisplay:
+    """Fix 6 of the 2026-10-12 brief: Overall study duration as one row."""
+
+    def test_the_whole_study_comes_first_under_its_heading(self) -> None:
+        state = RunState(run_id="r-1", resolved=[
+            _rf("timeline.total_duration", "about 4 years", scope="subject", pages=(47,)),
+            _rf("timeline.total_duration", "42 months", scope="study", pages=(15,)),
+        ])
+        model = build_report_model(state, get_registry())
+        assert_nothing_lost(state, get_registry(), model)
+        [row] = [r for g in model.groups for r in g.rows
+                 if r.field_id == "timeline.total_duration"]
+        assert [(p.heading, p.values[0].text) for p in row.parts] == [
+            ("Whole study", "42 months"),
+            ("Time each patient spends in the study", "about 4 years"),
+        ]
+        # The parts are the rows; the row holding them is not counted twice.
+        assert [r.scope for r in model.all_rows() if r.field_id == row.field_id] == [
+            "study", "subject",
+        ]
+
+    def test_a_scope_no_heading_names_comes_last_under_its_own_words(self) -> None:
+        state = RunState(run_id="r-1", resolved=[
+            _rf("timeline.total_duration", "6 months", scope="Part B", pages=(9,)),
+            _rf("timeline.total_duration", "42 months", scope="study", pages=(15,)),
+        ])
+        model = build_report_model(state, get_registry())
+        [row] = [r for g in model.groups for r in g.rows
+                 if r.field_id == "timeline.total_duration"]
+        assert [p.heading for p in row.parts] == ["Whole study", "Part B"]
+
+    def test_the_row_takes_its_disagreement(self) -> None:
+        c = _contradiction("timeline.total_duration", "conflict",
+                           [("42 months", 24, "d-prot"), ("40 months", 3, "d-rfp")])
+        study = _rf("timeline.total_duration", None, status="needs_review", scope="study",
+                    contradiction=c, quote=None, confidence=0.0)
+        study.sources = [r.provenance for r in c.records]
+        state = RunState(run_id="r-1", contradictions=[c], resolved=[
+            study, _rf("timeline.total_duration", "about 4 years", scope="subject", pages=(47,)),
+        ])
+        model = build_report_model(state, get_registry())
+        assert_nothing_lost(state, get_registry(), model)
+        [row] = [r for g in model.groups for r in g.rows
+                 if r.field_id == "timeline.total_duration"]
+        assert row.decision_no == 1
+        assert row.status == "needs_review"
+        assert row.parts[0].decision_line == "No value chosen. See Disagreement 1."

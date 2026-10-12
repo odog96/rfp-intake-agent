@@ -58,6 +58,7 @@ from rfp_intake.render.report_model import (
     Decision,
     ReportModel,
     Row,
+    ValueLine,
     build_report_model,
 )
 
@@ -394,17 +395,72 @@ def _first_cell(r: Row, scope_only: bool) -> str:
 
 
 def _value_cell(r: Row) -> str:
+    if r.parts:
+        return "<br/>".join(_part_block(p) for p in r.parts)
+    if r.follow_lines:
+        # Only some documents in the disagreement this row follows give it a
+        # value, and these sentences say which and what that means. The status
+        # cell names the disagreement (Row.depends_on).
+        return "<br/>".join(escape(t) for t in r.follow_lines)
+    if r.sides:
+        return _sides_cell(r)
+    return _values_cell(r)
+
+
+def _part_block(p: Row) -> str:
+    """One part of a `scopes` display: its heading, then its lines indented.
+
+    A part with one value and no disagreement names its pages in the heading,
+    "Time each patient spends in the study (Amendment p.47):", because the row's
+    Where cell cannot hold different pages for different parts.
+    """
+    head = escape(p.heading) if p.heading else ""
+    one = not p.sides and not p.follow_lines and len(p.values) == 1
+    if head and one and p.values[0].sources:
+        head += f" ({escape(p.values[0].sources)})"
+    body = _value_cell(p)
+    if one and p.values[0].sources and not head:
+        body += f' <font size="7" color="#757575">— {escape(p.values[0].sources)}</font>'
+    indent = "&nbsp;&nbsp;&nbsp;"
+    lines = [indent + line for line in body.split("<br/>")]
+    return "<br/>".join(([f"<b>{head}:</b>"] if head else []) + lines)
+
+
+def _sides_cell(r: Row) -> str:
+    """A row's own numbered disagreement: each document's side, then the value
+    shown or that none was chosen. Fix 2 of the 2026-10-12 brief. Any value on
+    the row that is not from the disagreement is printed first, with its pages."""
+    others = [v for v in r.values if not v.on_sides]
+    lines = [
+        _value_text(v) + (f' <font size="7" color="#757575">— {escape(v.sources)}</font>'
+                          if v.sources else "")
+        for v in others
+    ]
+    for side in r.sides:
+        line = f"{escape(side.sources)}: {escape(side.text)}"
+        if side.quote:
+            line += f' — "{escape(side.quote)}"' + ("…" if side.quote_cut else "")
+        lines.append(line)
+    if r.decision_line:
+        lines.append(f'<font color="{_RED.hexval()}">{escape(r.decision_line)}</font>')
+    return "<br/>".join(lines)
+
+
+def _value_text(v: ValueLine) -> str:
+    if len(v.items) > 1 and any(len(i) > 40 for i in v.items):
+        return "<br/>".join(f"• {escape(i)}" for i in v.items)
+    if len(v.items) > 1:
+        # Short items — enum lists such as the evidence of visit intensity —
+        # read fine as one line, and a bullet each took up to eleven lines.
+        return escape(", ".join(v.items))
+    return escape(v.items[0])
+
+
+def _values_cell(r: Row) -> str:
     multi = len(r.values) > 1
     parts = []
     for v in r.values:
-        if len(v.items) > 1 and any(len(i) > 40 for i in v.items):
-            text = "<br/>".join(f"• {escape(i)}" for i in v.items)
-        elif len(v.items) > 1:
-            # Short items — enum lists such as the evidence of visit intensity —
-            # read fine as one line, and a bullet each took up to eleven lines.
-            text = escape(", ".join(v.items))
-        else:
-            text = escape(v.items[0])
+        text = _value_text(v)
         if multi and v.status != r.status:
             word, color = _STATUS_WORDS.get(v.status, (v.status, _GREY))
             text += f' <font size="7" color="{color.hexval()}">({word.lower()})</font>'
@@ -450,7 +506,9 @@ def _value_cell(r: Row) -> str:
 
 
 def _status_cell(r: Row) -> str:
-    if r.decision_no is not None:
+    if r.depends_on is not None:
+        word, color = r.depends_on, _RED
+    elif r.decision_no is not None:
         word, color = "Disagreement", _RED
     else:
         word, color = _STATUS_WORDS.get(r.status, (r.status, _GREY))
@@ -466,12 +524,28 @@ def _confidence_cell(r: Row) -> str:
     confirming a value and sending it for review, so the colour and the status
     word in the cell to its left can never tell different stories.
     """
-    scored = [v.confidence for v in r.values if v.status != "not_found"]
+    scored = _scored(r)
     if r.is_pointer or not scored:
         return ""
     low = min(scored)
     color = _GREY if low >= CONFIDENCE_CONFIRMED else _AMBER
     return f'<font color="{color.hexval()}">{low:.0%}</font>'
+
+
+def _scored(r: Row) -> list[float]:
+    """The confidences a row's figure is the lowest of. A disagreement where no
+    value was chosen has no value to rate, so its "—" is not scored: Angus Gray
+    read the 0% printed there as a rating (2026-10-12). For the same reason a
+    `scopes` row with such a part has no figure: the other parts' figure, printed
+    beside the word Disagreement, would read as the disagreement's."""
+    if r.parts:
+        if any(p.sides and not _scored(p) for p in r.parts):
+            return []
+        return [c for p in r.parts for c in _scored(p)]
+    return [
+        v.confidence for v in r.values
+        if v.status != "not_found" and not (v.on_sides and v.text == "—")
+    ]
 
 
 # --------------------------------------------------------------------------- #
@@ -563,8 +637,10 @@ def _glossary(model: ReportModel, styles: dict) -> list:  # type: ignore[type-ar
 
 
 def _where_cell(r: Row) -> str:
-    # With several values, each carries its own pages inline in the value cell.
-    if len(r.values) > 1:
+    # With several values, each carries its own pages inline in the value cell,
+    # and so does each side of a disagreement, each part of a `scopes` display
+    # and a row following another variable's disagreement.
+    if len(r.values) != 1 or r.parts or r.sides or r.follow_lines:
         return ""
     return escape(r.values[0].sources)
 

@@ -344,12 +344,50 @@ class TestReportText:
         _use_real_registry(fields_yaml_path)
         text = _pdf_text(build_report_pdf(_conflict_state(), _registry(), generated_at="t"))
         assert "Number of interim analyses" in text
-        # The row in All variables says so, and says where to read the detail.
-        assert "The documents disagree — see Disagreement 1" in text
+        # The row in All variables states both sides, each with its page and
+        # quote, and says where to read the detail (fix 2 of the 2026-10-12 brief).
+        assert 'Protocol p.98: 0 — "quote on page 98' in text
+        assert 'RFP p.4: 1 — "quote on page 4' in text
+        assert "No value chosen. See Disagreement 1." in text
         # The numbered table carries both sides with their pages, and the verdict.
         assert "0 — Protocol p.98" in text
         assert "1 — RFP p.4" in text
         assert "Conflict" in text
+
+    def test_a_row_following_the_disagreement_and_a_scopes_row_are_printed(
+        self, fields_yaml_path: Path,
+    ) -> None:
+        """Fixes 2 and 6 of the 2026-10-12 brief, read back out of the PDF.
+
+        tests/render/test_report_model.py checks the same lines on the report
+        model; this checks that pdf_renderer.py draws them (plan-conformance
+        reviewer, 2026-10-12).
+        """
+        _use_real_registry(fields_yaml_path)
+        state = _conflict_state()
+        count = state.resolved[0]
+        timing = ResolvedField(
+            field_id="interim.timing", value=["after 156 events"], status="needs_review",
+            confidence=0.9, contradiction=count.contradiction, quote="after 156 events",
+            sources=[Provenance(doc_id="d-rfp", doc_kind="rfp", page=4)],
+        )
+        durations = [
+            ResolvedField(
+                field_id="timeline.total_duration", value=v, status="confirmed",
+                confidence=0.95, scope=scope, quote=v,
+                sources=[Provenance(doc_id="d-prot", doc_kind="protocol", page=pg)],
+            )
+            for v, scope, pg in (("about 4 years", "subject", 47), ("42 months", "study", 15))
+        ]
+        state.resolved += [timing, *durations]
+        text = _pdf_text(build_report_pdf(state, _registry(), generated_at="t"))
+        assert "Depends on Disagreement 1" in text
+        assert "Only the RFP gives a timing: after 156 events (RFP p.4)." in text
+        assert "If the protocol is right, there is no interim analysis to time." in text
+        # A part with one value names its pages in its heading.
+        whole = text.index("Whole study (Protocol p.15):")
+        each = text.index("Time each patient spends in the study (Protocol p.47):")
+        assert whole < text.index("42 months", whole) < each < text.index("about 4 years", each)
 
     def test_confidence_is_printed_and_explained(self, fields_yaml_path) -> None:  # type: ignore[no-untyped-def]
         """Angus Gray asked how the percentage is produced, so the report says.

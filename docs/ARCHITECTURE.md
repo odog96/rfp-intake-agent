@@ -976,6 +976,15 @@ Python. The report then names the other variable on the borrowed row — "The do
 of interim analyses" — because a reader sent to a disagreement about counts by a bare pointer on a timing
 row finds nothing about timing there.
 
+Since 2026-10-12 (fix 2 of that day's brief) the borrowed row's status reads "Depends on Disagreement N",
+and a field may declare `follow_wording` beside its `follows_conflict_of`: two sentences printed when only
+some documents in the leading disagreement give the row a value. The first names who gives it, what and
+where; the second, what the other documents' side means for the row, is printed only when each of their
+records gives one of the field's `when_others_say` values (for the interim timing, a count of 0). The same
+day added two more report-only keys, also never sent to a model: `display` (`kind: scopes` draws a field's
+scopes as headed parts of one row, in a declared order) and `value_words` (the word printed for an enum
+value). All three are checked when the registry loads.
+
 **A row with a `review_note` stays in review, added 2026-10-12.** RECONCILE writes the note on a
 `design.parts` arm only one of several documents lists, or on an entry whose own words do not say what its
 scope names (§4.6). GATE checks it after the budget-driver rule for lists holding more than one value, which
@@ -998,8 +1007,10 @@ is what makes the whole pipeline testable without a filesystem.
   contradictions, and `derived_from`. Versioned by the `fields.yaml` registry version that produced it.
 - **`report.pdf` (primary)** — the human deliverable, and the artifact Angus reviews. Five sections, in
   this order: (1) five lines naming the documents, the counts and what to do with the report; (2) **All
-  variables** — every variable by group, with value, status, confidence and pages, a row in a disagreement
-  saying so and pointing at its number; (3) **Disagreements between the documents** — each one numbered,
+  variables** — every variable by group, with value, status, confidence and pages. Since 2026-10-12 a row
+  in a numbered disagreement states each side on the row — one line per document and value, with only
+  the pages stating that value and the passage's first sentence where it rests on one passage — then
+  "Shown provisionally: … See Disagreement N" or "No value chosen. See Disagreement N"; (3) **Disagreements between the documents** — each one numbered,
   with both sides' values and pages and the verdict (see §4.7 — this is where conflicts get resolved in
   MVP); (4) **Flagged for review** — every other value needing a look, each with the reason it is flagged;
   (5) **Schedules** — the many-row variables (visit schedule, timeline components), one table each. Then

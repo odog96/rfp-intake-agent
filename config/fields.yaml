@@ -39,6 +39,19 @@
 #                  RECONCILE matches scopes across documents on that name. A record whose own
 #                  value and quote do not contain the name is not matched; a part only one of
 #                  several documents lists is flagged for review. Not on derived fields.
+#   follows_conflict_of  another field whose disagreement is this field's too. The report gives
+#                  the row that disagreement's number and says report_wording.depends_on.
+#   follow_wording with follows_conflict_of: `only_some` and `if_others_right`, the two sentences
+#                  the row prints when only some documents in that disagreement give it a value.
+#                  {docs}, {value}, {pages}: who gives it, what, where; {others}: the documents
+#                  in the disagreement that give none. `if_others_right` is printed only when
+#                  each of those documents' records gives one of `when_others_say` (stored
+#                  values of the leading field). Never sent to a model.
+#   display        how report.pdf lays out the variable's rows. `kind: scopes` puts every scope
+#                  in one row with a heading each: `scopes` lists `phrases` (matched as in
+#                  leave_out_scopes) and the `label` printed, in that order. Never sent to a model.
+#   value_words    enum fields: the word report.pdf prints for a value, where the value's own
+#                  spelling reads as software (`not_matching_stated`). Never sent to a model.
 #
 # GROUP KEYS
 #   id             fan-out unit; one LLM call per (document × group)
@@ -55,7 +68,8 @@
 # REPORT WORDING
 #   report_wording phrases report.pdf prints that belong to no one field. Written for the
 #                  person reading the report and NEVER sent to a model, like `plain`.
-#                  `{n}` is replaced by the Disagreement number.
+#                  `{n}` is replaced by the Disagreement number, `{value}` by the value shown
+#                  and `{doc}` by the document precedence chose.
 # =============================================================================
 
 version: 1
@@ -68,6 +82,13 @@ report_wording:
   not_used: "Not used — see Disagreement {n}"
   # On every passage, where precedence could not choose and the report shows no value:
   no_value_chosen: "No value chosen — see Disagreement {n}"
+  # All variables, under the two sides of a disagreement on the variable's own row
+  # (fix 2 of the 2026-10-12 brief). Where precedence chose a value:
+  row_shown_provisional: "Shown provisionally: {value} (the {doc} normally takes precedence). See Disagreement {n}."
+  # Where it did not:
+  row_no_value_chosen: "No value chosen. See Disagreement {n}."
+  # The status of a row that follows another variable's disagreement (follows_conflict_of):
+  depends_on: "Depends on Disagreement {n}"
 
 groups:
   - id: study_design
@@ -435,6 +456,13 @@ fields:
     # so one document's timing was shown as Confirmed in run r-20261007-140411
     # while the count beside it was in dispute. Change 4 of that review.
     follows_conflict_of: interim.count
+    # Fix 2 of the 2026-10-12 brief: the amendment says 0 interim analyses and the
+    # RFP 1, and only the RFP times one, so the timing row says that. The second
+    # sentence is true only where the other document's count is 0.
+    follow_wording:
+      only_some: "Only the {docs} gives a timing: {value} ({pages})."
+      if_others_right: "If the {others} is right, there is no interim analysis to time."
+      when_others_say: ["0"]
 
 # --- Group 4: Treatment and Dosing ------------------------------------------
   - id: ip.form
@@ -610,6 +638,15 @@ fields:
       scope="study" and scope="subject" respectively. Conflating them is a known failure mode.
     source_priority: any
     budget_driver: true
+    # One row, the whole study first: as two rows, a confirmed "subject" row sat above the
+    # disagreement on study length and read as settling it (Angus Gray, 2026-10-12).
+    display:
+      kind: scopes
+      scopes:
+        - phrases: ["study"]
+          label: Whole study
+        - phrases: ["subject"]
+          label: Time each patient spends in the study
 
   - id: timeline.periods
     group: timelines
@@ -646,6 +683,9 @@ fields:
     label: Placebo matches the study drug
     type: enum
     values: [matching_stated, not_matching_stated, not_specified]
+    value_words:
+      matching_stated: Matching
+      not_matching_stated: Not matching
     aliases: ["matching placebo", "identical placebo", "placebo", "matched placebo",
               "placebo comparator", "visually identical"]
     hint: >

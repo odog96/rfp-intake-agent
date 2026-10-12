@@ -21,13 +21,19 @@ to the appendix (`evidence`, `Decision.explanation`).
 from __future__ import annotations
 
 import re
-from collections import defaultdict
+from collections import Counter, defaultdict
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import PurePath
 from typing import Any
 
-from rfp_intake.domain.registry import FieldDef, GroupDef, Registry, ReportWording
+from rfp_intake.domain.registry import (
+    FieldDef,
+    GroupDef,
+    Registry,
+    ReportWording,
+    scope_has_phrase,
+)
 from rfp_intake.domain.schemas import (
     Contradiction,
     FieldRecord,
@@ -105,10 +111,32 @@ class ValueLine:
     confidence: float
     sources: str  # "Amendment p.12, 42; RFP p.2"
     entries: list[ResolvedField] = field(default_factory=list)
+    # True when every entry was chosen from the row's own numbered disagreement,
+    # whose sides (Row.sides) then say this value and where. The renderer prints
+    # the sides instead of this line; the line stays, so the entries keep a home.
+    on_sides: bool = False
 
     @property
     def text(self) -> str:
         return "; ".join(self.items)
+
+
+@dataclass
+class Side:
+    """One document's side of a disagreement, printed on the variable's own row.
+
+    Fix 2 of the 2026-10-12 brief: a row marked Disagreement used to show only
+    the provisional value, so a reader saw "0" interim analyses and had to turn
+    to the Disagreements table to learn the RFP says 1.
+    """
+
+    sources: str  # "Amendment p.15, 24"
+    text: str
+    # The passage's first sentence, when the side rests on one passage. Where a
+    # document states its side in several different passages there is no one
+    # quote to print; each is in Appendix A with its page.
+    quote: str | None
+    quote_cut: bool = False  # the sentence was longer, and is cut short
 
 
 @dataclass
@@ -138,6 +166,23 @@ class Row:
     # run r-20261008-review2-run2 sent a reader to a disagreement about the
     # number of interim analyses looking for one about their timing.
     follows_label: str | None = None
+    # The two sides of this row's own numbered disagreement, one per document,
+    # and the line under them: the value precedence chose, or that none was
+    # chosen. Fix 2 of the 2026-10-12 brief. See _sides.
+    sides: list[Side] = field(default_factory=list)
+    decision_line: str | None = None
+    # A row following another variable's disagreement (follows_label): its
+    # status, report_wording.depends_on, and the sentences of the field's
+    # `follow_wording` when only some documents in that disagreement give this
+    # row a value. The value lines stay in `values`; these sentences say them.
+    depends_on: str | None = None
+    follow_lines: list[str] = field(default_factory=list)
+    # A `scopes` display (Display in domain/registry.py): one row whose parts
+    # are the variable's rows, one per scope, each under its heading. `parts` is
+    # set on that one row and `heading` on each part. Fix 6 of the 2026-10-12
+    # brief.
+    parts: list[Row] = field(default_factory=list)
+    heading: str | None = None
 
 
 @dataclass
@@ -266,9 +311,11 @@ class ReportModel:
     removed: list[RemovedText] = field(default_factory=list)
 
     def all_rows(self) -> list[Row]:
+        """Every row with a value, a row of a `scopes` display as its parts."""
         rows: list[Row] = []
         for g in self.groups:
-            rows += g.rows
+            for r in g.rows:
+                rows += r.parts or [r]
             for s in g.schedules:
                 rows += s.rows
         return rows
@@ -335,6 +382,8 @@ def format_value(value: Any, field_def: FieldDef | None) -> list[str]:
         return [f"{value:,.10g}"]
     if isinstance(value, str):
         text = value.strip()
+        if field_def is not None and text in field_def.value_words:
+            return [field_def.value_words[text]]
         # Yes/no answers are spelled true/false whatever the field's type.
         if text in ("true", "false", "not_specified") or (
             _is_enum(field_def) and _ENUM_TOKEN.match(text)
@@ -514,7 +563,7 @@ def build_report_model(state: RunState, registry: Registry) -> ReportModel:
         for fd in (f for f in registry.fields if f.group == group.id):
             leader = field_by_id.get(fd.follows_conflict_of or "")
             field_rows = _rows_for(
-                fd, by_field.get(fd.id, []), docs, decision_no,
+                fd, by_field.get(fd.id, []), docs, decision_no, registry.report_wording,
                 leader.label if leader else None,
             )
             if any(r.status != "not_found" for r in field_rows):
@@ -533,7 +582,7 @@ def build_report_model(state: RunState, registry: Registry) -> ReportModel:
         rows = []
         for fid in unknown:
             fd = FieldDef(id=fid, group="_unregistered", label=fid, type="text")
-            rows += _rows_for(fd, by_field[fid], docs, decision_no)
+            rows += _rows_for(fd, by_field[fid], docs, decision_no, registry.report_wording)
         sections.append(GroupSection(
             GroupDef(id="_unregistered", label="Not in the current field list"), rows, [],
         ))
@@ -592,6 +641,7 @@ def _rows_for(
     entries: list[ResolvedField],
     docs: _Docs,
     decision_no: dict[tuple[object, ...], int],
+    wording: ReportWording,
     follows_label: str | None = None,
 ) -> list[Row]:
     if not entries:
@@ -644,7 +694,7 @@ def _rows_for(
             rf.contradiction is not None and rf.contradiction.field_id != fd.id
             for rf in group
         ) else None
-        rows.append(_fold_rewordings(fd, Row(
+        row = _fold_rewordings(fd, Row(
             field_id=fd.id,
             label=fd.label,
             # name_ids: an entry RECONCILE kept out of the arm match carries its
@@ -658,8 +708,202 @@ def _rows_for(
             decision_no=no,
             reasons=_review_reasons(fd, group, no, borrowed, docs.name_ids),
             follows_label=borrowed,
-        )))
+        ))
+        _add_sides(row, fd, docs, decision_no, wording)
+        if borrowed is not None and no is not None:
+            _add_follow_lines(row, fd, group, docs, wording, no)
+        rows.append(row)
+    if fd.display is not None and fd.display.kind == "scopes":
+        return [_scope_parts(fd, rows)]
     return rows
+
+
+def _numbered_own(
+    rf: ResolvedField, decision_no: dict[tuple[object, ...], int]
+) -> Contradiction | None:
+    """The entry's own disagreement, when it has a number in the Disagreements table."""
+    c = _own_disagreement(rf)
+    return c if c is not None and _signature(c) in decision_no else None
+
+
+def _add_sides(
+    row: Row,
+    fd: FieldDef,
+    docs: _Docs,
+    decision_no: dict[tuple[object, ...], int],
+    wording: ReportWording,
+) -> None:
+    """Both sides of the row's own numbered disagreement, and the line under them.
+
+    Fix 2 of the 2026-10-12 brief. A borrowed disagreement (`follows_conflict_of`)
+    has no sides here: its records are about another variable.
+    """
+    own = next(
+        (c for line in row.values for rf in line.entries
+         if (c := _numbered_own(rf, decision_no)) is not None),
+        None,
+    )
+    if own is None:
+        return
+    for line in row.values:
+        line.on_sides = all(_numbered_own(rf, decision_no) is not None for rf in line.entries)
+    n = decision_no[_signature(own)]
+    row.sides = _sides(own, fd, docs)
+    if own.resolved_value is None:
+        row.decision_line = ReportWording.fill(wording.row_no_value_chosen, n)
+    else:
+        row.decision_line = ReportWording.fill(
+            wording.row_shown_provisional, n,
+            value="; ".join(format_value(own.resolved_value, fd)),
+            # A run made before precedence recorded its winner has no document
+            # to name.
+            doc=_doc_word(docs.code(own.winning_doc_id))
+            if own.winning_doc_id else "first-ranked document",
+        )
+
+
+def _sides(c: Contradiction, fd: FieldDef | None, docs: _Docs) -> list[Side]:
+    """One side per document and value, in the order the records came.
+
+    A side's pages are the pages of the records giving that value, and no
+    other: a page beside a value must state it (fix 2 of 2026-10-09). So a
+    document that gives two values is two sides, and neither value leaves the
+    row (pipeline-rules-reviewer, 2026-10-12). The text is the chosen record's
+    when it is among them, else the most confident. Each record, with its own
+    value, page and quote, is also in Appendix A (_evidence).
+    """
+    groups: dict[tuple[str, str], list[tuple[int, FieldRecord]]] = {}
+    for i, r in enumerate(c.records, 1):
+        key = (r.provenance.doc_id, _same_key(_record_items(r, fd)))
+        groups.setdefault(key, []).append((i, r))
+    # A document giving several wordings prints them without quotes, which would
+    # make the row the length of Appendix A; each quote is there with its page.
+    sides_of = Counter(doc_id for doc_id, _ in groups)
+    out = []
+    for (doc_id, _), recs in groups.items():
+        chosen = next((r for i, r in recs if i == c.winning_record_index), None)
+        best = chosen or max((r for _, r in recs), key=lambda r: r.confidence)
+        quotes = {" ".join(r.quote.split()) for _, r in recs}
+        quote, cut = (
+            _first_sentence(quotes.pop())
+            if len(quotes) == 1 and sides_of[doc_id] == 1 else (None, False)
+        )
+        out.append(Side(
+            sources=docs.pages([r.provenance for _, r in recs]),
+            text="; ".join(_record_items(best, fd)),
+            quote=quote,
+            quote_cut=cut,
+        ))
+    return out
+
+
+# Longest a side's quote may be before it is cut short. The whole passage is in
+# Appendix A.
+SIDE_QUOTE_CHARS = 160
+_SENTENCE_END = re.compile(r"(?<=[.!?])\s")
+
+
+def _first_sentence(quote: str) -> tuple[str, bool]:
+    """A quote's first sentence, flattened onto one line, and whether it was cut
+    short at SIDE_QUOTE_CHARS. The brief allows a quote on a row to be
+    shortened to one sentence; the full quote stays in Appendix A. A cut is
+    marked outside the quotation marks, so what is inside them is the
+    document's own words."""
+    flat = " ".join(quote.split())
+    first = _SENTENCE_END.split(flat, maxsplit=1)[0]
+    if len(first) <= SIDE_QUOTE_CHARS:
+        return first, False
+    return first[:SIDE_QUOTE_CHARS].rsplit(" ", 1)[0].rstrip(), True
+
+
+def _doc_word(code: str) -> str:
+    """A document's name inside a sentence: "the amendment", but "the RFP"."""
+    return code if sum(ch.isupper() for ch in code) > 1 else code.lower()
+
+
+def _join_words(words: list[str]) -> str:
+    return " and ".join(words)
+
+
+def _add_follow_lines(
+    row: Row,
+    fd: FieldDef,
+    entries: list[ResolvedField],
+    docs: _Docs,
+    wording: ReportWording,
+    n: int,
+) -> None:
+    """A row following another variable's disagreement: its status, and where
+    only some documents in that disagreement give it a value, the field's
+    `follow_wording` sentences instead of its value lines.
+
+    Fix 2 of the 2026-10-12 brief; the field's example is beside its
+    follow_wording in config/fields.yaml. The second sentence, what the other
+    documents' side means for this row, is printed only when every record those
+    documents have in the leading disagreement gives a `when_others_say` value.
+    """
+    row.depends_on = ReportWording.fill(wording.depends_on, n)
+    if fd.follow_wording is None:
+        return
+    leader = next((rf.contradiction for rf in entries if rf.contradiction is not None), None)
+    if leader is None:
+        return
+    leading = list(dict.fromkeys(r.provenance.doc_id for r in leader.records))
+    stating = [
+        p for line in row.values if line.text != "—"
+        for rf in line.entries for p in _stating(rf, fd)
+    ]
+    giving = list(dict.fromkeys(p.doc_id for p in stating))
+    others = [d for d in leading if d not in giving]
+    if not giving or not others:
+        return
+    row.follow_lines = [
+        ReportWording.fill(
+            fd.follow_wording.only_some, n,
+            docs=_join_words([_doc_word(docs.code(d)) for d in giving]),
+            value="; ".join(line.text for line in row.values if line.text != "—"),
+            pages=docs.pages(stating),
+        ),
+    ]
+    none_values = set(fd.follow_wording.when_others_say)
+    if all(
+        str(r.value).strip() in none_values
+        for r in leader.records if r.provenance.doc_id in others
+    ):
+        row.follow_lines.append(ReportWording.fill(
+            fd.follow_wording.if_others_right, n,
+            others=_join_words([_doc_word(docs.code(d)) for d in others]),
+        ))
+
+
+def _scope_parts(fd: FieldDef, rows: list[Row]) -> Row:
+    """A `scopes` display: the variable's rows as the parts of one row, each under
+    its heading, in the order config/fields.yaml lists the headings. A scope no
+    heading names comes last, under its own words.
+
+    The row's status is its most-attention part's, as a row's is its
+    most-attention value's, and it carries a part's disagreement number so its
+    status reads Disagreement.
+    """
+    headings = fd.display.scopes if fd.display is not None else []
+
+    def place(row: Row) -> int:
+        return next(
+            (i for i, h in enumerate(headings) if scope_has_phrase(row.scope, h.phrases)),
+            len(headings),
+        )
+
+    parts = sorted(rows, key=place)
+    for part in parts:
+        i = place(part)
+        part.heading = headings[i].label if i < len(headings) else part.scope
+    return Row(
+        field_id=fd.id, label=fd.label, scope=None, budget_driver=fd.budget_driver,
+        status=min((p.status for p in parts), key=lambda s: _STATUS_RANK.get(s, 0)),
+        values=[],
+        decision_no=next((p.decision_no for p in parts if p.decision_no is not None), None),
+        parts=parts,
+    )
 
 
 # The verdicts on which ADJUDICATE writes ONE row for a whole disagreement:
