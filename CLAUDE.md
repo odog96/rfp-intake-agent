@@ -68,7 +68,7 @@ Source: `/home/cdsw/how_to_resond.txt`, adapted for this project.
 19. **When told "unclear" or "too dense", rewrite with the missing pieces filled in.**
     Do not defend the original or apologise at length.
 
-## Current status (as of 2026-10-11)
+## Current status (as of 2026-10-12)
 
 **The seven changes Oliver and Angus agreed on 2026-10-07, after reviewing the report from run
 `r-20261007-140411`, are built and measured.** Read the 2026-10-08 entry in `docs/JOURNAL.md` for what
@@ -98,16 +98,15 @@ verdict partition). **Two things Angus asked for are deliberately not started**:
 fewer rows, which Oliver is putting to Angus as a proposal first, and supporting two studies in one RFP,
 which waits until the single-study report is accepted.
 
-Seven things are still open, each its own item. Oliver set item 1 as the next work on 2026-10-11;
-items 2 to 7 wait for his decision. (The visit-intensity rating computed from one row of several was
-item 1 until it was fixed on 2026-10-11; see `docs/JOURNAL.md`.)
+Nine things are still open, each its own item. Items 1 to 7 wait for Oliver's decision; item 8 waits
+for more real RFPs; item 9 must be done before production. (The visit-intensity rating computed from
+one row of several was item 1 until it was fixed on 2026-10-11; see `docs/JOURNAL.md`.)
 
 1. **`Site selection visits` reads Not found.** The synthetic RFP calls them "Site Qualification
    Visits" across three lines of a two-column table. Fix 1 of the 2026-10-09 brief (the repair retry
    shows the model the nearest passage) is committed but failed its live run `r-20261011-fix1`; see
-   the 2026-10-11 entry in `docs/JOURNAL.md`. The second attempt is on the parsing side — whether the
-   table can be read as a table so label and value are not interleaved — and comes to Oliver as a
-   proposal.
+   the 2026-10-11 entry in `docs/JOURNAL.md`. The parsing-side second attempt was proposed on
+   2026-10-12 and Oliver deferred it; it is item 8.
 2. **Pages where a document said "not specified" are cited beside an agreed value.** RECONCILE adds
    the silent records' pages to an agreed row's sources (`reconcile/__init__.py:176`), which breaks the
    rule fix 2 enforces (a page beside a value must state it). `extraction.json` keeps only the
@@ -128,6 +127,32 @@ item 1 until it was fixed on 2026-10-11; see `docs/JOURNAL.md`.)
    ADJUDICATE's `_handle_conflict` looks the quote up by document, not by value
    (`adjudicate/__init__.py:179,215`). Fix 2's Appendix A lines for each record are right; the row's own
    extra line still pairs the two. The fix belongs in ADJUDICATE.
+8. **A "Columns (page N)" block for two-column tables — proposed 2026-10-12, not built.** No PDF
+   reader in the stack reads RFP p.3's table as a table: pdfplumber and PyMuPDF `find_tables` find
+   none with their defaults and cut through words ("Site Qualific | ation Visit") with the text
+   strategy, and Docling (rung 2) returns the same interleaved lines as today. Word positions do
+   separate the columns: label and value sit 18–79 pt apart against about 3 pt between words. The
+   proposal: where a page has three or more consecutive lines split by a gap of 12 pt or more (lines
+   indented 40 pt or more with no gap are value continuations), add a "Columns (page N)" block after
+   that page's text in the excerpt, giving the value column in reading order. The model still writes
+   its own quote and quote validation is unchanged; it would accept a quote found in either the page
+   text or the block, and the `_PAGE_MARKER` pattern in `extract/validate.py` would learn the new
+   marker. Fix 1's rejected quote validates against such a block and not against today's page text.
+   Four risks: (a) the block runs neighbouring rows' values together, so a quote could straddle two
+   rows; (b) labels are not paired with values, because rows are spaced too evenly (30 pt) to pair
+   them from geometry; (c) pages that need no block get one — 22 of 137 pages of Example protocol 2,
+   3 of 97 of Example Protocol, against 2 of 6 of the synthetic RFP and none of Example RFP 1;
+   (d) the excerpt sent to the model grows. It can only be checked by a live run, not a re-render,
+   because the change is in what the model is shown. **It waits until more real RFPs show whether
+   two-column tables are common.** The prototype was a scratch file in `/tmp` and is gone; the
+   method above is enough to rebuild it.
+9. **Production must not download models at run time.** While prototyping item 8 on 2026-10-12,
+   Docling downloaded its OCR model files from modelscope.cn and Hugging Face Hub (now in
+   `~/.cache/huggingface`). Only model files came down; no document text was sent. But
+   `ingest/parsers/rung2.py` and `rung3.py` build `DocumentConverter` with default options, so a
+   production run that reaches rung 2 or 3 on a machine without the cache would make the same
+   outbound calls. Before production the models must be installed with the deployment and loaded
+   from a local path, with downloads switched off.
 
 Phases 0–4 of ARCHITECTURE.md §10 are done, and stages 1, 2, 3, 4 and 5 of `docs/PLAN_2026-10-02.md`.
 **Stage 5's two live criteria failed on 2026-10-02 and still fail after the 2026-10-03 fix**, though for
@@ -143,7 +168,8 @@ Oliver, from inside the repository directory — this session's credentials cann
 changes of the 2026-10-07 review were committed on 2026-10-11 as `c4ecd75`, on top of `dab43e0`
 (Oliver's 2026-10-06 edit to `.project-metadata.yaml` on GitHub), with `GATE_OFF=1` approved by Oliver
 because the session's gate hooks were not loaded. Fix 1 of the 2026-10-09 brief is committed after
-it, fix 2 after that, and the visit-intensity fix after that. **None of the four is pushed.**
+it, fix 2 after that, the visit-intensity fix after that, and the record of open items 8 and 9 after
+that. **None of the five is pushed.**
 
 Every `### Done` entry that used to be in this file is now in `docs/JOURNAL.md`, newest first, unedited.
 Nothing in `docs/JOURNAL.md` is current state; where the two disagree, this file wins.
