@@ -269,6 +269,9 @@ _WORDING = {
     "row_shown_provisional": "Shown {value} from the {doc}, see {n}",
     "row_no_value_chosen": "None chosen, see {n}",
     "depends_on": "Depends on {n}",
+    "derived_status": "Worked out",
+    "derived_why": "Why: {why}",
+    "evidence_pages": "Pages: {pages}",
 }
 
 
@@ -597,6 +600,30 @@ class TestTheDisplayKeysOfThe20261012Brief:
         p.write_text(yaml.dump(data))
         with pytest.raises(RegistryValidationError, match="must contain"):
             load_registry(p)
+
+    @pytest.mark.parametrize(("key", "phrase"), [
+        ("derived_why", "The reasons"), ("evidence_pages", "Evidence pages"),
+    ])
+    def test_a_derived_row_phrase_must_have_its_slot(
+        self, tmp_path: Path, key: str, phrase: str
+    ) -> None:
+        """Fix 8 of the 2026-10-12 brief: a phrase without its slot would print
+        the reasons or pages nowhere."""
+        data = {
+            "version": 1,
+            "groups": [{"id": "g1", "label": "Group 1"}],
+            "fields": [{"id": "g1.a", "group": "g1", "label": "A", "type": "int"}],
+            "report_wording": dict(_WORDING, **{key: phrase}),
+        }
+        p = tmp_path / "fields.yaml"
+        p.write_text(yaml.dump(data))
+        with pytest.raises(RegistryValidationError, match="must contain"):
+            load_registry(p)
+
+    def test_fill_without_a_number_leaves_the_rest(self) -> None:
+        from rfp_intake.domain.registry import ReportWording
+
+        assert ReportWording.fill("Why: {why}", why="weekly visits") == "Why: weekly visits"
 
     def test_fill_puts_in_named_values(self) -> None:
         from rfp_intake.domain.registry import ReportWording

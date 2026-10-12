@@ -134,7 +134,7 @@ one row of several was item 1 until it was fixed on 2026-10-11; see `docs/JOURNA
 4. ~~**The derived row "What to assume about the placebo" cites RFP p.3, a page that contradicts its
    value.**~~ **Fixed 2026-10-12**, approved by Oliver. The placebo rubric cited the pages of all four
    inputs whichever rule it reached (`derive/rubric.py:compute_placebo_assumption`). It now cites only
-   the inputs the rule used, and names the others after "looked at but not used". Applying that rule
+   the inputs the rule used, and names the others after "Looked at but not used". Applying that rule
    moved three citations: a split unblinded-staff answer also cites the stated matching that made it
    matter; "does not match" no longer cites the staff answer, which does not change it; and "does not
    say how the drug is given" no longer cites an unsettled matching row, as rules 3 and 4 do not. An
@@ -143,8 +143,16 @@ one row of several was item 1 until it was fixed on 2026-10-11; see `docs/JOURNA
    the weakest of every input. `--rederive` on `r-20261009-225414` cites Amendment p.54 alone. In
    `r-20261012-arms2` RFP p.3 is still cited, correctly, because `ip.form` was read from it too. The
    visit-intensity rating already cited only the evidence rows it combines, and is unchanged.
-5. **The report shows the reader raw field ids in two derived rows** (`ip.form=['infusion_iv']` and the
-   visit-intensity rubric line). This predates this work.
+5. ~~**The report shows the reader raw field ids in two derived rows.**~~ **Fixed 2026-10-12**, fix 8
+   of that day's brief. Each rubric now returns `why`, its reasons in plain words built from
+   `value_words` and the labels in `config/fields.yaml`, and DERIVE stores it on
+   `ResolvedField.why`. A derived row's status reads `report_wording.derived_status` ("Worked out by
+   the tool — confirm"), and under its value come "Why: …" and "Evidence pages: …". Appendix A names
+   the inputs by label and gives the score and every input's quote in words. `--rederive` on
+   `r-20261012-angus`: "Why: frequent visits early in the study; IV infusion with an observation
+   period; imaging; …". Two known gaps: the row says "early in the study", not "weekly in Months 1–3",
+   because that run's evidence row has no scope; and the evidence pages are every evidence row's
+   pages (13), because a flag's own page is not recorded.
 6. **`report.xlsx` does not follow fix 2's rule.** Its page column is `rf.sources[0]`
    (`render/xlsx_renderer.py:72`), which for a disagreement row can be the losing document's page.
    Fix 2 changed only the PDF report, as the brief asked (pipeline-rules-reviewer, 2026-10-11).

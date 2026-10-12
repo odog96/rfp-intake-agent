@@ -34,7 +34,9 @@ from rfp_intake.domain.schemas import ResolvedField, RunError, RunState
 
 logger = structlog.get_logger()
 
-DERIVE_RUBRICS: dict[str, Callable[[dict[str, list[ResolvedField]]], RubricResult]] = {
+# A rubric reads the registry for the labels and `value_words` its plain-words
+# reasons are written in (fix 8 of the 2026-10-12 brief).
+DERIVE_RUBRICS: dict[str, Callable[[dict[str, list[ResolvedField]], Registry], RubricResult]] = {
     "visits.intensity_rating": compute_visit_intensity,
     "blinding.placebo_assumption": compute_placebo_assumption,
 }
@@ -80,7 +82,7 @@ def derive_node(state: RunState) -> dict[str, Any]:
                         left_out.append(r)
                     else:
                         inputs[dep].append(r)
-            result = rubric(inputs)
+            result = rubric(inputs, registry)
             notes = [result.explanation] if result.explanation else []
             if left_out and field_def.leave_out_scopes is not None:
                 notes.append(_left_out_note(left_out, field_def.leave_out_scopes, registry))
@@ -92,6 +94,7 @@ def derive_node(state: RunState) -> dict[str, Any]:
                 sources=result.sources,
                 derived_from=field_def.derived_from or [],
                 notes="; ".join(notes) or None,
+                why=result.why or None,
             ))
         except Exception as e:
             logger.error("derive_field_failed", field_id=field_def.id, error=str(e))

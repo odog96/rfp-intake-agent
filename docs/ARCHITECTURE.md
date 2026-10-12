@@ -306,6 +306,8 @@ class ResolvedField(BaseModel):
     derived_from: list[str] = []          # non-empty ⇒ computed, not extracted
     notes: str | None = None              # DERIVE's and ADJUDICATE's explanation,
                                           # printed in the report
+    why: str | None = None                # a derived row's reasons in plain words,
+                                          # printed under its value (2026-10-12)
 
 class Replace(list):
     """Marker: this update overwrites the collection instead of appending."""
@@ -913,6 +915,14 @@ priced in. No document states it, so it is worked out from four extracted fields
 documents (`reconcile/__init__.py`). Rule 2 above is a disagreement between two *different* fields, which
 RECONCILE has no way to see. GATE sends every derived field to `needs_review`, so the answer always
 reaches a person.
+
+**Two texts per rubric** (2026-10-12, fix 8 of that day's brief). Each rubric returns `why`, its reasons
+in plain words built from the inputs' `value_words` and labels in `config/fields.yaml`, with no field id and
+no enum spelling; DERIVE stores it on `ResolvedField.why`. The main table prints the row's status as
+`report_wording.derived_status` ("Worked out by the tool — confirm") and, under the value, "Why: …" and
+"Evidence pages: …", the pages taken from the row's sources. `explanation`, stored in `notes`, is the full
+account — the reasons, the score or the inputs quoted, what was looked at but not used — and is printed in
+Appendix A.
 
 The explanation names every input it used and quotes it where there is a quote, because the whole value
 of an assumption a person can overrule is that they can see what it rests on. The row cites only the

@@ -183,6 +183,13 @@ class Row:
     # brief.
     parts: list[Row] = field(default_factory=list)
     heading: str | None = None
+    # A derived row (`derived: true` in config/fields.yaml), fix 8 of the
+    # 2026-10-12 brief: its status in `report_wording.derived_status`, and under
+    # its value the rubric's reasons in plain words and the pages they rest on,
+    # each already in that wording. See DERIVE's ResolvedField.why.
+    derived_status: str | None = None
+    why: str | None = None
+    evidence_pages: str | None = None
 
 
 @dataclass
@@ -710,12 +717,30 @@ def _rows_for(
             follows_label=borrowed,
         ))
         _add_sides(row, fd, docs, decision_no, wording)
+        if row.status == "needs_review" and all(rf.derived_from for rf in group):
+            _add_derived(row, group, docs, wording)
         if borrowed is not None and no is not None:
             _add_follow_lines(row, fd, group, docs, wording, no)
         rows.append(row)
     if fd.display is not None and fd.display.kind == "scopes":
         return [_scope_parts(fd, rows)]
     return rows
+
+
+def _add_derived(
+    row: Row, group: list[ResolvedField], docs: _Docs, wording: ReportWording
+) -> None:
+    """A derived row says it was worked out, why, and from which pages."""
+    row.derived_status = wording.derived_status
+    why = next((rf.why for rf in group if rf.why), None)
+    if why is None:
+        return
+    # name_ids: the reasons can carry an evidence row's scope, which the model
+    # wrote and which may hold a document id, as every other scope may.
+    row.why = ReportWording.fill(wording.derived_why, why=docs.name_ids(why))
+    pages = docs.pages([p for rf in group for p in rf.sources])
+    if pages:
+        row.evidence_pages = ReportWording.fill(wording.evidence_pages, pages=pages)
 
 
 def _numbered_own(
@@ -1263,7 +1288,8 @@ def _evidence(
             sources=docs.pages(_stating(rf, fd)),
             confidence=rf.confidence,
             quote=rf.quote,
-            derived_from=rf.derived_from,
+            # By label: Appendix A is read by the same people as the tables above.
+            derived_from=[_label(field_by_id, d) for d in rf.derived_from],
             # A note is printed for a value the pipeline worked out — a derived
             # field, or one a rule in config/fields.yaml decided (see
             # reconcile/rules.py), where the note is the only thing that explains

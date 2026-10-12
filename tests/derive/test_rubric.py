@@ -19,6 +19,7 @@ from rfp_intake.derive.rubric import (
     compute_placebo_assumption,
     compute_visit_intensity,
 )
+from rfp_intake.domain.registry import get_registry
 from rfp_intake.domain.schemas import Provenance, ResolvedField
 
 
@@ -80,8 +81,7 @@ class TestComputeVisitIntensity:
 
     def test_explanation_lists_contributing_flags(self) -> None:
         result = compute_visit_intensity(_visit(_evidence(["imaging", "ecgs"])))
-        assert "imaging" in result.explanation
-        assert "ecgs" in result.explanation
+        assert result.explanation.startswith("Imaging; ECGs. Scored 3 points: ")
 
     def test_evidence_not_yet_gated_is_still_read(self) -> None:
         """RECONCILE always writes status=needs_review pre-GATE; DERIVE runs before GATE."""
@@ -119,7 +119,7 @@ class TestVisitIntensityCombinesEveryRow:
         narrow = _evidence(["questionnaires"], scope="Months 1-3", page=41)
         result = compute_visit_intensity(_visit(wide, narrow))
         assert result.value == "high"
-        assert result.explanation.startswith("score=9 ")
+        assert "Scored 9 points" in result.explanation
 
     def test_the_order_of_the_rows_does_not_matter(self) -> None:
         wide = _evidence(["pk_pd_sampling", "imaging", "infusion_observation_period", "ecgs"])
@@ -136,7 +136,7 @@ class TestVisitIntensityCombinesEveryRow:
         second = _evidence(["imaging"], scope="Months 1-3")
         result = compute_visit_intensity(_visit(first, second))
         assert result.value == "low"
-        assert result.explanation.startswith("score=3 ")
+        assert "Scored 3 points" in result.explanation
 
     def test_confidence_is_the_weakest_row(self) -> None:
         result = compute_visit_intensity(
@@ -170,7 +170,9 @@ class TestVisitIntensityCombinesEveryRow:
         result = compute_visit_intensity(
             _visit(_evidence(["imaging"]), _evidence(["ecgs"], scope="Months 1-3"))
         )
-        assert 'combined 2 rows: no scope stated, "Months 1-3"' in result.explanation
+        assert (
+            'combined 2 rows of evidence of visit intensity: no scope stated, "Months 1-3"'
+        ) in result.explanation
 
     def test_a_scope_shared_by_several_rows_is_named_once_with_a_count(self) -> None:
         result = compute_visit_intensity(
@@ -181,7 +183,9 @@ class TestVisitIntensityCombinesEveryRow:
                 _evidence(["questionnaires"]),
             )
         )
-        assert 'combined 4 rows: no scope stated (3), "total"' in result.explanation
+        assert (
+            'combined 4 rows of evidence of visit intensity: no scope stated (3), "total"'
+        ) in result.explanation
 
     def test_a_none_found_row_does_not_hide_a_row_with_evidence(self) -> None:
         result = compute_visit_intensity(
@@ -442,8 +446,9 @@ class TestComputePlaceboAssumption:
         result = compute_placebo_assumption(
             _inputs(design="double_blind", forms=["infusion_iv"])
         )
-        assert "ip.form" in result.explanation
-        assert "infusion_iv" in result.explanation
+        assert "Read from Investigational product / drug form: IV infusion." in (
+            result.explanation
+        )
 
     def test_sources_are_only_the_inputs_the_answer_rests_on(self) -> None:
         """A reader has to be able to turn to the pages the assumption rests on, and
@@ -456,9 +461,10 @@ class TestComputePlaceboAssumption:
         ]
         result = compute_placebo_assumption(inputs)
         assert [p.page for p in result.sources] == [30]
-        assert "looked at but not used: blinding.design=double_blind; ip.form=" in (
-            result.explanation
-        )
+        assert (
+            "Looked at but not used: Blinding design: Double-blind; "
+            "Investigational product / drug form: IV infusion."
+        ) in result.explanation
 
     def test_an_input_nobody_settled_is_named_but_not_cited(self) -> None:
         """r-20261009-225414: the documents disagreed on whether the placebo matches,
@@ -474,8 +480,15 @@ class TestComputePlaceboAssumption:
         result = compute_placebo_assumption(inputs)
         assert result.value == PLACEBO_INJECTED_NOT_STATED
         assert [p.page for p in result.sources] == [54]
-        assert result.explanation.startswith("ip.form=['infusion_iv']; looked at but not used: ")
-        assert "Matching placebo for NEOD001" in result.explanation
+        assert result.explanation.startswith(
+            "The drug is given by IV infusion, so the placebo is likely prepared by unblinded "
+            "pharmacy staff. Read from Investigational product / drug form: IV infusion. "
+            "Looked at but not used: "
+        )
+        assert (
+            'Placebo matches the study drug: no single answer ("Placebo: Matching placebo for '
+            'NEOD001")'
+        ) in result.explanation
         assert result.confidence == 0.0, "the unsettled input still lowers the confidence"
 
     def test_the_contradiction_cites_both_sides(self) -> None:
@@ -592,8 +605,12 @@ class TestPlaceboInputsWithSeveralRows:
         ]
         result = compute_placebo_assumption(inputs)
         assert result.value == PLACEBO_INPUTS_DISAGREE
-        assert "oral_tablet" in result.explanation
-        assert "infusion_iv" in result.explanation
+        assert result.why == (
+            'The documents give different answers for "Investigational product / drug form".'
+        )
+        assert "Investigational product / drug form: Oral tablet or IV infusion." in (
+            result.explanation
+        )
 
     def test_a_split_design_asks_the_sponsor_even_with_open_label_among_the_rows(self) -> None:
         """Choosing open-label from two answers would end the check on a guess."""
@@ -633,3 +650,99 @@ class TestPlaceboInputsWithSeveralRows:
             _field("ip.form", ["infusion_iv"]),
         ]
         assert compute_placebo_assumption(inputs).value == PLACEBO_INJECTED_NOT_STATED
+
+
+class TestTheReasonsAreInPlainWords:
+    """Fix 8 of the 2026-10-12 brief, CLAUDE.md open item 5: the "Why" line a
+    derived row prints names no field id and no enum spelling. Its words come
+    from `value_words` and the labels in config/fields.yaml."""
+
+    @pytest.mark.parametrize("field_id", ["visits.intensity_evidence", "ip.form"])
+    def test_every_value_a_reason_can_name_has_a_word(self, field_id: str) -> None:
+        # A value with no value_words entry would print as its spelling with
+        # spaces, "pk pd sampling". not_specified is never named in a reason.
+        fd = next(f for f in get_registry().fields if f.id == field_id)
+        missing = [v for v in fd.values or [] if v != "not_specified" and v not in fd.value_words]
+        assert missing == []
+
+    def test_the_intensity_reasons_are_the_evidence_words_heaviest_first(self) -> None:
+        flags = ["questionnaires", "imaging", "ecgs", "infusion_observation_period",
+                 "frequent_early_visits", "safety_labs", "biomarker_sampling"]
+        result = compute_visit_intensity(_visit(_evidence(flags)))
+        assert result.why == (
+            "frequent visits early in the study; IV infusion with an observation period; "
+            "imaging; ECGs; safety labs; biomarker samples; questionnaires."
+        )
+
+    def test_a_flag_found_only_for_one_part_names_that_part(self) -> None:
+        result = compute_visit_intensity(_visit(
+            _evidence(["imaging"]),
+            _evidence(["frequent_early_visits"], scope="Months 1-3"),
+        ))
+        assert result.why == "frequent visits early in the study (Months 1-3); imaging."
+
+    def test_a_flag_also_found_study_wide_names_no_part(self) -> None:
+        result = compute_visit_intensity(_visit(
+            _evidence(["imaging"]), _evidence(["imaging"], scope="Months 1-3"),
+        ))
+        assert result.why == "imaging."
+
+    @pytest.mark.parametrize(
+        ("inputs", "why"),
+        [
+            (_inputs(design="open_label"), "The study is open-label, so nobody is blinded."),
+            (
+                _inputs(design="double_blind", forms=["infusion_iv", "injection_sc"]),
+                "The drug is given by IV infusion and subcutaneous injection, so the placebo "
+                "is likely prepared by unblinded pharmacy staff.",
+            ),
+            (
+                _inputs(design="double_blind", forms=["oral_tablet"]),
+                "The drug is given by oral tablet, and the documents do not settle whether the "
+                "placebo matches, so do not assume unblinded monitoring.",
+            ),
+            (
+                _inputs(design="double_blind", forms=["topical"]),
+                "The drug is given by skin application, which does not settle whether the "
+                "placebo matches.",
+            ),
+            (
+                _inputs(design="double_blind", forms=["not_specified"]),
+                "No document says how the drug is given.",
+            ),
+            (_inputs(design="double_blind"), "No document says how the drug is given."),
+            (
+                _inputs(design="double_blind", matching="not_matching_stated"),
+                "The documents say the placebo does not match, so unblinded staff will "
+                "likely prepare it.",
+            ),
+            (
+                _inputs(design="double_blind", matching="matching_stated", staff="true"),
+                "The documents say the placebo matches and also that unblinded staff are "
+                "needed; both cannot be right.",
+            ),
+        ],
+    )
+    def test_each_placebo_rule_says_why_in_one_sentence(
+        self, inputs: dict[str, list[ResolvedField]], why: str
+    ) -> None:
+        assert compute_placebo_assumption(inputs).why == why
+
+    @pytest.mark.parametrize("which", ["intensity", "placebo"])
+    def test_no_field_id_or_enum_spelling_reaches_the_reasons(self, which: str) -> None:
+        from rfp_intake.domain.registry import get_registry
+
+        if which == "intensity":
+            result = compute_visit_intensity(_visit(_evidence(
+                ["pk_pd_sampling", "infusion_observation_period", "safety_labs"]
+            )))
+        else:
+            result = compute_placebo_assumption(_inputs(
+                design="double_blind", forms=["infusion_iv"], staff="true",
+            ))
+        registry = get_registry()
+        spellings = {f.id for f in registry.fields} | {
+            v for f in registry.fields for v in (f.values or []) if "_" in v
+        }
+        for text in (result.why, result.explanation):
+            assert not [s for s in spellings if s in text], text

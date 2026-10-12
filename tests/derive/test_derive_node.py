@@ -76,7 +76,10 @@ def _rating(rows: list[ResolvedField]) -> ResolvedField:
     from rfp_intake.derive import derive_node
 
     result = derive_node(RunState(run_id="t", resolved=rows))
-    return next(r for r in result["resolved"] if r.field_id == "visits.intensity_rating")
+    rating: ResolvedField = next(
+        r for r in result["resolved"] if r.field_id == "visits.intensity_rating"
+    )
+    return rating
 
 
 # r-20261011-fix1's two rows: the study-wide one scored 14, "Months 1-3" scored 2,
@@ -97,7 +100,7 @@ class TestDeriveNodeReadsEveryRow:
         ])
         assert rating.value == "high"
         assert rating.notes is not None
-        assert "score=14 " in rating.notes
+        assert "Scored 14 points" in rating.notes
         assert "left out" not in rating.notes
 
     def test_a_row_about_patients_who_stopped_early_is_left_out(self, fields_yaml_path) -> None:  # type: ignore[no-untyped-def]
@@ -127,7 +130,7 @@ class TestDeriveNodeReadsEveryRow:
         ])
         assert rating.notes is not None
         assert "left out" not in rating.notes
-        assert "score=3 " in rating.notes
+        assert "Scored 3 points" in rating.notes
 
     def test_rows_with_one_scope_are_named_once_with_each_page_once(self, fields_yaml_path) -> None:  # type: ignore[no-untyped-def]
         """r-20260827-180418 split one dropout schedule into five rows on two pages."""

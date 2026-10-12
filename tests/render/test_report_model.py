@@ -32,6 +32,7 @@ from rfp_intake.render.report_model import (
     REMOVED_EXTRACT_CHARS,
     SCHEDULE_THRESHOLD,
     ReportModel,
+    Row,
     _same_key,
     _signature,
     build_report_model,
@@ -1022,7 +1023,8 @@ class TestAppendixAMarkers:
         registry = get_registry().model_copy(update={"report_wording": ReportWording(
             shown_provisional="Used", not_used="Set aside ({n})", no_value_chosen="Open ({n})",
             row_shown_provisional="{value} ({n})", row_no_value_chosen="Open ({n})",
-            depends_on="After {n}",
+            depends_on="After {n}", derived_status="Worked out", derived_why="Why: {why}",
+            evidence_pages="Pages: {pages}",
         )})
         model = build_report_model(self._state(resolved_value="0", index=1), registry)
         assert self._markers(model) == {
@@ -1247,3 +1249,60 @@ class TestScopesDisplay:
         assert row.decision_no == 1
         assert row.status == "needs_review"
         assert row.parts[0].decision_line == "No value chosen. See Disagreement 1."
+
+
+class TestADerivedRow:
+    """Fix 8 of the 2026-10-12 brief, CLAUDE.md open item 5: a derived row says it
+    was worked out, why in plain words, and from which pages, with no field id."""
+
+    def _model(self) -> tuple[RunState, ReportModel]:
+        from rfp_intake.derive import derive_node
+
+        state = RunState(run_id="r-1", resolved=[
+            _rf("visits.intensity_evidence",
+                ["frequent_early_visits", "infusion_observation_period", "imaging"],
+                status="needs_review", pages=(13, 26)),
+            _rf("ip.form", ["infusion_iv"], status="needs_review", pages=(54,),
+                quote="Study drug consists of IV NEOD001 or placebo."),
+            _rf("blinding.design", "double_blind", status="needs_review", pages=(11,)),
+        ])
+        state.resolved = derive_node(state)["resolved"]
+        return state, build_report_model(state, get_registry())
+
+    def _row(self, model: ReportModel, field_id: str) -> Row:
+        [row] = [r for r in model.all_rows() if r.field_id == field_id]
+        return row
+
+    def test_the_intensity_row_says_why_and_where(self) -> None:
+        state, model = self._model()
+        row = self._row(model, "visits.intensity_rating")
+        assert row.derived_status == "Worked out by the tool — confirm"
+        assert row.why == (
+            "Why: frequent visits early in the study; IV infusion with an observation period; "
+            "imaging."
+        )
+        assert row.evidence_pages == "Evidence pages: Protocol p.13, 26."
+        assert_nothing_lost(state, get_registry(), model)
+
+    def test_the_placebo_row_says_why_in_plain_words(self) -> None:
+        _, model = self._model()
+        row = self._row(model, "blinding.placebo_assumption")
+        assert row.why == (
+            "Why: The drug is given by IV infusion, so the placebo is likely prepared by "
+            "unblinded pharmacy staff."
+        )
+        assert row.evidence_pages == "Evidence pages: Protocol p.54."
+
+    def test_an_extracted_row_has_none_of_it(self) -> None:
+        _, model = self._model()
+        row = self._row(model, "ip.form")
+        assert (row.derived_status, row.why, row.evidence_pages) == (None, None, None)
+
+    def test_appendix_a_names_the_inputs_by_label(self) -> None:
+        _, model = self._model()
+        [e] = [e for e in model.evidence if e.field_id == "visits.intensity_rating"]
+        assert e.derived_from == [
+            "Evidence of visit intensity", "Visit frequency by study period",
+            "Total number of subject visits",
+        ]
+        assert e.notes is not None and "Scored 6 points" in e.notes

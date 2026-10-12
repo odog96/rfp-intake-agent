@@ -88,6 +88,10 @@ class ResolvedField(BaseModel):
     # Free-text explanation for a derived field's score (ARCHITECTURE.md §4.8:
     # "the report prints the contributing evidence"). Unused for extracted fields.
     notes: str | None = None
+    # A derived field's reasons in plain words, for the report's "Why:" line
+    # (fix 8 of the 2026-10-12 brief). `notes` keeps the full account, with the
+    # score and every input's quote, for Appendix A. Unused for extracted fields.
+    why: str | None = None
     # Why RECONCILE wants a person to look at this row, in plain words — for
     # now only a field with `check_scopes_across_documents` writes one (an arm
     # listed in only one document, or an entry whose text does not say what its

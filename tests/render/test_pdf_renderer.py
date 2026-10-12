@@ -468,3 +468,33 @@ class TestReportText:
         start = text.index("Appendix A — Evidence")
         evidence = text[start:text.index("Appendix B — Disagreements", start)]
         assert evidence.count("No value chosen — see Disagreement 1") == 2
+
+    def test_a_derived_row_prints_why_and_its_pages_in_plain_words(
+        self, fields_yaml_path: Path,
+    ) -> None:
+        """Fix 8 of the 2026-10-12 brief: the status says the tool worked it out,
+        the value cell says why and from which pages, and no field id is printed."""
+        from rfp_intake.derive import derive_node
+
+        _use_real_registry(fields_yaml_path)
+        state = RunState(run_id="r-1", resolved=[ResolvedField(
+            field_id="visits.intensity_evidence",
+            value=["frequent_early_visits", "infusion_observation_period", "imaging",
+                   "pk_pd_sampling"],
+            status="needs_review", confidence=0.9,
+            sources=[Provenance(doc_id="p", doc_kind="protocol", page=13)],
+            quote="q",
+        )])
+        state.resolved = derive_node(state)["resolved"]
+        text = " ".join(_pdf_text(build_report_pdf(state, _registry(), generated_at="t")).split())
+        assert "Worked out by the tool — confirm" in text
+        assert (
+            "Why: frequent visits early in the study; IV infusion with an observation period; "
+            "imaging; PK/PD sampling."
+        ) in text
+        assert "Evidence pages: Protocol p.13." in text
+        evidence = text[text.index("Appendix A — Evidence"):]
+        assert "Derived from Evidence of visit intensity, Visit frequency by study period" in (
+            evidence
+        )
+        assert "visits.intensity" not in text

@@ -287,6 +287,10 @@ class ReportWording(BaseModel):
     states both sides and then one of the two `row_` lines, and a row that
     follows another variable's disagreement says `depends_on` in its status.
     `{value}` is the value shown and `{doc}` the document precedence chose.
+
+    `derived_status`, `derived_why` and `evidence_pages` are a derived row's, fix
+    8 of the same brief: its status, then under its value the rubric's reasons in
+    plain words (`{why}`) and the pages they rest on (`{pages}`).
     """
 
     shown_provisional: str = Field(min_length=1)
@@ -295,6 +299,9 @@ class ReportWording(BaseModel):
     row_shown_provisional: str = Field(min_length=1)
     row_no_value_chosen: str = Field(min_length=1)
     depends_on: str = Field(min_length=1)
+    derived_status: str = Field(min_length=1)
+    derived_why: str = Field(min_length=1)
+    evidence_pages: str = Field(min_length=1)
 
     @field_validator(
         "not_used", "no_value_chosen", "row_shown_provisional", "row_no_value_chosen",
@@ -313,11 +320,25 @@ class ReportWording(BaseModel):
             raise ValueError("must contain {value}, the value shown")
         return v
 
+    @field_validator("derived_why")
+    @classmethod
+    def _says_why(cls, v: str) -> str:
+        if "{why}" not in v:
+            raise ValueError("must contain {why}, the rubric's reasons")
+        return v
+
+    @field_validator("evidence_pages")
+    @classmethod
+    def _says_the_pages(cls, v: str) -> str:
+        if "{pages}" not in v:
+            raise ValueError("must contain {pages}, the pages the reasons rest on")
+        return v
+
     @staticmethod
-    def fill(phrase: str, n: int, **values: str) -> str:
+    def fill(phrase: str, n: int | None = None, **values: str) -> str:
         """`{n}` and each `{name}` given, put in. replace, not str.format: a brace
         elsewhere in the wording must not break a report."""
-        text = phrase.replace("{n}", str(n))
+        text = phrase if n is None else phrase.replace("{n}", str(n))
         for name, value in values.items():
             text = text.replace("{" + name + "}", value)
         return text

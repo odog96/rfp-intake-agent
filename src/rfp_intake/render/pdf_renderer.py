@@ -404,7 +404,14 @@ def _value_cell(r: Row) -> str:
         return "<br/>".join(escape(t) for t in r.follow_lines)
     if r.sides:
         return _sides_cell(r)
-    return _values_cell(r)
+    body = _values_cell(r)
+    # A derived row's reasons and the pages they rest on, in place of the Where
+    # cell (fix 8 of the 2026-10-12 brief).
+    if r.why:
+        body += f"<br/>{escape(r.why)}"
+    if r.evidence_pages:
+        body += f'<br/><font size="7" color="#757575">{escape(r.evidence_pages)}</font>'
+    return body
 
 
 def _part_block(p: Row) -> str:
@@ -510,6 +517,8 @@ def _status_cell(r: Row) -> str:
         word, color = r.depends_on, _RED
     elif r.decision_no is not None:
         word, color = "Disagreement", _RED
+    elif r.derived_status is not None:
+        word, color = r.derived_status, _AMBER
     else:
         word, color = _STATUS_WORDS.get(r.status, (r.status, _GREY))
     return f'<font color="{color.hexval()}"><b>{escape(word)}</b></font>'
@@ -640,7 +649,8 @@ def _where_cell(r: Row) -> str:
     # With several values, each carries its own pages inline in the value cell,
     # and so does each side of a disagreement, each part of a `scopes` display
     # and a row following another variable's disagreement.
-    if len(r.values) != 1 or r.parts or r.sides or r.follow_lines:
+    # A derived row with its reasons names its pages under them.
+    if len(r.values) != 1 or r.parts or r.sides or r.follow_lines or r.evidence_pages:
         return ""
     return escape(r.values[0].sources)
 

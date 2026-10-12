@@ -68,8 +68,9 @@
 # REPORT WORDING
 #   report_wording phrases report.pdf prints that belong to no one field. Written for the
 #                  person reading the report and NEVER sent to a model, like `plain`.
-#                  `{n}` is replaced by the Disagreement number, `{value}` by the value shown
-#                  and `{doc}` by the document precedence chose.
+#                  `{n}` is replaced by the Disagreement number, `{value}` by the value shown,
+#                  `{doc}` by the document precedence chose, `{why}` by a derived row's reasons
+#                  and `{pages}` by the pages they rest on.
 # =============================================================================
 
 version: 1
@@ -89,6 +90,11 @@ report_wording:
   row_no_value_chosen: "No value chosen. See Disagreement {n}."
   # The status of a row that follows another variable's disagreement (follows_conflict_of):
   depends_on: "Depends on Disagreement {n}"
+  # A derived row (`derived: true`), fix 8 of the same brief. Its status:
+  derived_status: "Worked out by the tool — confirm"
+  # Under its value, the rubric's reasons in plain words, then the pages they rest on:
+  derived_why: "Why: {why}"
+  evidence_pages: "Evidence pages: {pages}."
 
 groups:
   - id: study_design
@@ -471,6 +477,18 @@ fields:
     type: list[enum]
     values: [oral_tablet, oral_capsule, oral_solution, injection_sc, injection_im, infusion_iv,
              topical, inhaled, intrathecal, ophthalmic, other, not_specified]
+    value_words:
+      oral_tablet: Oral tablet
+      oral_capsule: Oral capsule
+      oral_solution: Oral solution
+      injection_sc: Subcutaneous injection
+      injection_im: Intramuscular injection
+      infusion_iv: IV infusion
+      topical: Skin application
+      inhaled: Inhalation
+      intrathecal: Intrathecal injection (into the spinal fluid)
+      ophthalmic: Eye application
+      other: Another route
     aliases: ["IP", "IMP", "study drug", "investigational product", "test article", "study medication"]
     hint: >
       Multiple forms allowed (e.g. IV loading dose then SC maintenance). Route of administration
@@ -565,6 +583,22 @@ fields:
     values: [multiple_assessments_per_visit, long_visit_windows, complex_procedures,
              pk_pd_sampling, biomarker_sampling, imaging, ecgs, safety_labs, questionnaires,
              infusion_observation_period, frequent_early_visits, overnight_stay, none_found]
+    # The phrases the visit intensity rating's "Why" line is built from (fix 8 of
+    # the 2026-10-12 brief), and the words this row prints.
+    value_words:
+      multiple_assessments_per_visit: Several assessments per visit
+      long_visit_windows: Long visit windows
+      complex_procedures: Complex procedures
+      pk_pd_sampling: PK/PD sampling
+      biomarker_sampling: Biomarker samples
+      imaging: Imaging
+      ecgs: ECGs
+      safety_labs: Safety labs
+      questionnaires: Questionnaires
+      infusion_observation_period: IV infusion with an observation period
+      frequent_early_visits: Frequent visits early in the study
+      overnight_stay: Overnight stay
+      none_found: None found
     hint: >
       Flag each factor the document provides concrete evidence for. This feeds the derived
       intensity rating — each flag must have its own quote.
@@ -670,6 +704,12 @@ fields:
     label: Blinding design
     type: enum
     values: [open_label, single_blind, double_blind, triple_blind, partially_blinded, not_specified]
+    value_words:
+      open_label: Open-label
+      single_blind: Single-blind
+      double_blind: Double-blind
+      triple_blind: Triple-blind
+      partially_blinded: Partly blinded
     aliases: ["open-label", "single-blind", "double-blind", "double-masked", "triple-blind",
               "blinded", "unblinded study"]
     plain: >
@@ -721,6 +761,10 @@ fields:
     # rubric looks for, so renaming the enum fails a test instead of quietly
     # switching the contradiction rule off.
     values: ["true", "false", not_specified]
+    # Quoted for the same reason as the values: YAML would read the keys as booleans.
+    value_words:
+      "true": "Yes"
+      "false": "No"
     aliases: ["unblinded pharmacy staff", "unblinded pharmacist", "unblinded staff",
               "unblinded site staff", "unblinded personnel"]
     # The three answers below are not interchangeable and the difference is the

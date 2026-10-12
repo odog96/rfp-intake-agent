@@ -33,6 +33,7 @@ def build_extraction_document(state: RunState, registry: Registry) -> dict[str, 
             "quote": rf.quote,
             "derived_from": rf.derived_from,
             "notes": rf.notes,
+            "why": rf.why,
             "review_note": rf.review_note,
             "contradiction": rf.contradiction.model_dump(mode="json") if rf.contradiction else None,
         })
