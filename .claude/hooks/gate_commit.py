@@ -14,6 +14,13 @@ What it does, in order:
      and after the last edit to the files being committed.
   4. If a record is missing or stale, denies the commit and says which.
 
+Before step 2, and for every commit whatever it touches: a commit whose
+command names a run (an id with a folder under runs/) is denied if
+scripts/check_must_hold.py fails on that run (exit 1), so work is not committed
+on the strength of a run where a fact that must hold does not. Oliver approved
+this on 2026-10-13. Exit 2, a run not made from the two sample documents, does
+not block, and neither does a check that could not run; both are logged.
+
 Writing GATE_OFF=1 at the front of the command skips the check. The hook reads
 that from the command text, not from the environment, so the bypass is visible
 in the transcript and in the gate log.
@@ -24,6 +31,7 @@ decision, because that would skip those rules.
 """
 import json
 import re
+import subprocess
 import sys
 from pathlib import Path
 
@@ -32,6 +40,10 @@ import gate_state  # noqa: E402
 
 COMMIT = re.compile(r"\bgit\b(?:\s+-C\s+\S+|\s+--\S+(?:=\S+)?)*\s+commit\b")
 COMMIT_ALL = re.compile(r"\bcommit\b.*?(?:\s-[a-zA-Z]*a[a-zA-Z]*\b|\s--all\b)")
+# A run id as the commit message would write it: r-20261012-angus2.
+RUN_ID = re.compile(r"(?<![\w-])r-[\w-]*\w")
+# Seconds for one must-hold check; the hook itself has 20.
+MUST_HOLD_TIMEOUT = 5
 
 
 def deny(reason):
@@ -56,6 +68,37 @@ def guarded_files(command, root):
     return sorted({
         f for f in files if f.startswith(gate_state.GUARDED_PREFIXES)
     })
+
+
+def named_runs(command, root):
+    """Return the run ids the command names that have a folder under runs/."""
+    ids = dict.fromkeys(RUN_ID.findall(command))
+    return [i for i in ids if (Path(root) / "runs" / i).is_dir()]
+
+
+def failing_runs(run_ids, root):
+    """Return (run id, its FAIL lines) for each run the must-hold check fails.
+
+    Exit 1 is a failure. Exit 2 (not the two sample documents), any other
+    exit, and a check that times out are logged and do not block.
+    """
+    script = Path(root) / "scripts" / "check_must_hold.py"
+    failing = []
+    for run_id in run_ids:
+        try:
+            done = subprocess.run(  # noqa: S603
+                [sys.executable, str(script), run_id], cwd=root, capture_output=True,
+                text=True, timeout=MUST_HOLD_TIMEOUT, check=False,
+            )
+        except Exception as exc:
+            gate_state.log(f"must-hold check could not run on {run_id}: {exc}")
+            continue
+        if done.returncode == 1:
+            fails = [ln.strip() for ln in done.stdout.splitlines() if ln.startswith("FAIL")]
+            failing.append((run_id, fails))
+        elif done.returncode != 0:
+            gate_state.log(f"must-hold check exit {done.returncode} on {run_id}, not blocking")
+    return failing
 
 
 def newest_edit(files, root):
@@ -96,6 +139,21 @@ def main():
     if "GATE_OFF=1" in command:
         gate_state.log(f"BYPASS session={short} GATE_OFF=1 in: {command[:120]}")
         return 0
+
+    failing = failing_runs(named_runs(command, root), root)
+    if failing:
+        gate_state.log(f"DENY session={short} must-hold fails on {[r for r, _ in failing]}")
+        lines = "\n".join(
+            f"  {run_id}: " + ("; ".join(fails) or "see the check's output")
+            for run_id, fails in failing
+        )
+        return deny(
+            "This commit's message names a run where a fact that must hold for the two sample "
+            f"documents fails:\n{lines}\n\n"
+            "CLAUDE.md rule 11: do not commit work that depends on that run, and tell Oliver "
+            "which fact failed. Run `python scripts/check_must_hold.py <run_id>` to see the "
+            "whole result."
+        )
 
     files = guarded_files(command, root)
     if not files:
