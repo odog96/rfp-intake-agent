@@ -11,6 +11,10 @@ compare against `r-20261002-222824-stage4b`, the baseline after stage 4 of the 2
 `CLAUDE.md` names a newer baseline.
 
 Do this:
+0. **Must-hold facts first.** Run `python scripts/check_must_hold.py <run_id>` and put its output at the
+   top of the report (CLAUDE.md, non-negotiable rule 11). If any fact fails, lead with which one, and say
+   that work depending on this run must not be committed or reported as done. On a run that was not made
+   from the two sample documents the script exits 2; say so and go on.
 1. **Fields, not rows.** For each run, count how many of the fields in `config/fields.yaml` have at least
    one confirmed value. Rows are not a measure: one field can have many scoped rows, and on 2026-10-02 a
    fall from 74 to 62 confirmed rows was duplicate rows merging, not answers lost. Also give counts by

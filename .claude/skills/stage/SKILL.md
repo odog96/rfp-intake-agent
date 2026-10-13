@@ -42,6 +42,10 @@ Then run, and fix what they report:
 - `pytest -q`
 - `ruff check .`
 
+After every live run, run `python scripts/check_must_hold.py <run_id>` on it (CLAUDE.md, non-negotiable
+rule 11). If any fact fails, do not commit work that depends on that run, do not report the stage as
+done, and tell Oliver which fact failed.
+
 ## 4. Run both reviewers
 
 Launch both with the Agent tool, in one message so they run at the same time:

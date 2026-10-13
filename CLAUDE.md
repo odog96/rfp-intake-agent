@@ -487,6 +487,11 @@ checks every task's field names against the specification, so neither mistake ca
 10. **The app never runs the graph.** The Cloudera AI Application triggers a CML Job and polls the run
     directory. One scheduled janitor job reaps stale runs — never one watcher per run.
 
+11. **After every live run, run `python scripts/check_must_hold.py <run_id>` on it.** If any fact
+    fails, do not commit work that depends on that run, do not report the work as done, and tell
+    Oliver which fact failed. The facts are in `eval/golden/sample_pair_must_hold.yaml`; the script
+    exits 2, and checks nothing, on a run that was not made from the two sample documents.
+
 ## Scale reality check
 6 concurrent users, 3–4 documents each. The CML Jobs API is the queue.
 **Do not build a queue, a worker pool, a vector database, or Kubernetes manifests.**
