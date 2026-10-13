@@ -319,3 +319,25 @@ class TestExcerptFromSections:
 
         assert "SECTIONS: 1.3.1 Nonclinical Safety" in human
         assert build_excerpt(task, doc) in human
+
+
+def test_the_exclusions_reach_the_model_in_the_hint(fields_yaml_path) -> None:  # type: ignore[no-untyped-def]
+    # Oliver, 2026-10-12: the exclusions belong in each field's `hint`, which
+    # the model reads, not in a group's `search_hints`, which only PLAN reads.
+    # The words are config/fields.yaml's; this checks they are in the prompt.
+    import os
+
+    from rfp_intake.domain.registry import get_registry
+
+    os.environ["RFP_INTAKE_FIELDS_YAML_PATH"] = str(fields_yaml_path)
+    get_registry.cache_clear()
+    registry = get_registry()
+    doc = _make_doc()
+    for group, said in [
+        ("visits", "Leave out the timing of questionnaires, scales and other assessments"),
+        ("visits", "site selection, qualification, initiation, monitoring, pharmacy and"),
+        ("study_design", "A control arm's dose and schedule go in `dose` and `schedule`"),
+    ]:
+        task = ExtractionTask(doc_id="doc-001", group=group, page_window=(2, 4))
+        system = str(build_extract_prompt(task, doc, registry)[0].content)
+        assert " ".join(said.split()) in " ".join(system.split()), said

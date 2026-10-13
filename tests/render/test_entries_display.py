@@ -79,13 +79,13 @@ def _visits() -> list[FieldRecord]:
                  "frequency": "2 visits (Day -28 to Day -1; Day -2 or Day -1)"}, None, AM, 26,
              "Screening 2 visits Day -28 to Day -1; Day -2 or Day -1"),
         # Stated out of order, to show the lines follow `period`'s values.
-        _rec(f, {"period": "after_stopping_early", "label": "Stopped early",
+        _rec(f, {"period": "stopped_early", "label": "Stopped early",
                  "frequency": "every 3 months after the early-discontinuation visit"},
              None, AM, 26, "every 3 months after the early-discontinuation visit"),
-        _rec(f, {"period": "treatment", "label": "Months 1–3",
+        _rec(f, {"period": "early_treatment", "label": "Months 1–3",
                  "frequency": "weekly, 4 visits a month (Days 1, 8, 15, 22)"}, None, AM, 26,
              "Months 1–3 weekly Days 1, 8, 15, 22"),
-        _rec(f, {"period": "treatment", "label": "Month 4 onwards",
+        _rec(f, {"period": "later_treatment", "label": "Month 4 onwards",
                  "frequency": "monthly, Day 1 (every 28 days)"}, None, AM, 26,
              "Month 4 onwards monthly Day 1"),
         _rec(f, {"period": "end_of_treatment", "label": "End of treatment", "n_visits": 1,
@@ -257,8 +257,8 @@ class TestVisitFrequency:
         assert [v.text for v in row.values] == ["(Amendment p.26)"]
         assert _lines(row) == [
             "Screening: 2 visits (Day -28 to Day -1; Day -2 or Day -1)",
-            "Months 1–3: weekly, 4 visits a month (Days 1, 8, 15, 22)",
-            "Month 4 onwards: monthly, Day 1 (every 28 days)",
+            "Early treatment (Months 1–3): weekly, 4 visits a month (Days 1, 8, 15, 22)",
+            "Later treatment (Month 4 onwards): monthly, Day 1 (every 28 days)",
             "End of treatment: 1 visit, 28–35 days after last dose",
             "Stopped early: every 3 months after the early-discontinuation visit "
             "(budgeted separately)",
@@ -270,17 +270,59 @@ class TestVisitFrequency:
                                  None, AM, 26, "Screening: 2 visits")])
         assert _lines(_row(model, "visits.frequency_by_period")) == ["Screening: 2 visits"]
 
+    def test_stretches_of_one_period_make_one_line(self) -> None:
+        # Oliver, 2026-10-12: run r-20261012-stage4check2 printed a line per
+        # document label, 21 in all. A period is one line, worded as its most
+        # confident record words it; every other record is in Appendix A.
+        records = _visits() + [
+            _rec("visits.frequency_by_period",
+                 {"period": "later_treatment", "label": "All Other Months Day 1",
+                  "frequency": "Day 1 of all other months"}, None, AM, 26,
+                 "Day 1 of all other months"),
+            _rec("visits.frequency_by_period",
+                 {"period": "later_treatment", "label": "Month 3 onwards",
+                  "frequency": "Every 28 days"}, None, AM, 13, "Every 28 days"),
+        ]
+        records[-2].confidence = records[-1].confidence = 0.8
+        _, model = _report(records)
+        lines = _lines(_row(model, "visits.frequency_by_period"))
+        assert [line for line in lines if line.startswith("Later treatment")] == [
+            "Later treatment (Month 4 onwards): monthly, Day 1 (every 28 days)",
+        ]
+        assert "Other wordings are quoted in Appendix A." in lines
+        quotes = {e.quote for e in model.evidence if e.field_id == "visits.frequency_by_period"}
+        assert {"Day 1 of all other months", "Every 28 days"} <= quotes
+
+    @pytest.mark.parametrize(("period", "label", "line"), [
+        ("end_of_treatment", "END OF TREATMENT", "End of treatment: 1 visit"),
+        # pipeline-rules-reviewer, 2026-10-12: not "Follow up (Follow-up)".
+        ("follow_up", "Follow-up", "Follow up: 1 visit"),
+    ])
+    def test_a_label_that_repeats_the_period_is_printed_once(
+        self, period: str, label: str, line: str,
+    ) -> None:
+        _, model = _report([_rec("visits.frequency_by_period",
+                                 {"period": period, "label": label,
+                                  "frequency": "1 visit"}, None, AM, 26, "1 visit")])
+        assert _lines(_row(model, "visits.frequency_by_period")) == [line]
+
+    def test_a_stretch_with_no_label_is_named_by_its_period(self) -> None:
+        _, model = _report([_rec("visits.frequency_by_period",
+                                 {"period": "early_treatment", "frequency": "weekly"},
+                                 None, AM, 26, "weekly")])
+        assert _lines(_row(model, "visits.frequency_by_period")) == ["Early treatment: weekly"]
+
     def test_a_schedule_for_one_part_is_under_its_heading(self) -> None:
         records = _visits()[:1] + [_rec(
             "visits.frequency_by_period",
-            {"period": "treatment", "label": "Weeks 1–4", "frequency": "weekly"},
+            {"period": "early_treatment", "label": "Weeks 1–4", "frequency": "weekly"},
             "part:Part B", AM, 30, "Part B Weeks 1–4 weekly",
         )]
         _, model = _report(records)
         assert _lines(_row(model, "visits.frequency_by_period")) == [
             "Screening: 2 visits (Day -28 to Day -1; Day -2 or Day -1)",
             "Part: Part B:",
-            "  Weeks 1–4: weekly",
+            "  Early treatment (Weeks 1–4): weekly",
         ]
 
 
@@ -298,9 +340,39 @@ class TestTimeline:
             "Treatment and follow-up: 18 months after enrolment ends",
             "End of treatment visit: 28–35 days after last dose",
             "Follow-up after last dose: every 3 months until the last event is adjudicated",
-            f"Whole study: see Overall study duration (42 months vs 40 months, "
-            f"Disagreement {no})",
+            f"Whole study: 42 vs 40 months (Disagreement {no})",
         ]
+
+    def test_the_whole_study_line_leaves_other_wordings_to_the_duration_row(self) -> None:
+        # Run r-20261012-stage4check2 printed four wordings here; the amounts
+        # are NORMALIZE's, and the wording is on the duration row itself.
+        records = _timeline() + _durations() + [_rec(
+            "timeline.total_duration",
+            "approximately 42 months, including the enrollment and treatment periods",
+            "study", AM, 15,
+            "approximately 42 months, including the enrollment and treatment periods",
+        )]
+        _, model = _report(records)
+        [no] = [d.no for d in model.decisions if d.field_id == "timeline.total_duration"]
+        assert _lines(_row(model, "timeline.periods"))[-1] == (
+            f"Whole study: 42 vs 40 months (Disagreement {no})"
+        )
+
+    @pytest.mark.parametrize("rfp_says", ["3.5 years", "about three and a half years"])
+    def test_without_one_unit_the_whole_study_line_gives_each_sides_words(
+        self, rfp_says: str,
+    ) -> None:
+        # Amounts of two units, or a document with no amount at all: nothing is
+        # converted or left out, each side is printed as it reads.
+        records = _timeline() + [
+            _rec("timeline.total_duration", "42 months", "study", AM, 24, "42 months"),
+            _rec("timeline.total_duration", rfp_says, "study", RFP, 3, rfp_says),
+        ]
+        _, model = _report(records)
+        [no] = [d.no for d in model.decisions if d.field_id == "timeline.total_duration"]
+        assert _lines(_row(model, "timeline.periods"))[-1] == (
+            f"Whole study: 42 months vs {rfp_says} (Disagreement {no})"
+        )
 
     def test_without_a_disagreement_the_whole_study_line_only_points(self) -> None:
         _, model = _report(_timeline() + _durations()[:1])
@@ -362,10 +434,11 @@ def test_a_row_taller_than_a_page_continues_on_the_next_page() -> None:
     # LayoutError.
     from rfp_intake.render.pdf_renderer import build_report_pdf
 
+    # One part each, as visits group by period and a period is one line.
     long = " ".join(["Day 1, Days 8, 15 and 22, each at the study site"] * 4)
     records = [_rec("visits.frequency_by_period",
-                    {"period": "treatment", "label": f"Month {n}", "frequency": long},
-                    None, AM, 26, f"Month {n} {long}") for n in range(1, 41)]
+                    {"period": "early_treatment", "label": f"Month {n}", "frequency": long},
+                    f"part:Part {n}", AM, 26, f"Month {n} {long}") for n in range(1, 41)]
     state, _ = _report(records)
     pdf = build_report_pdf(state, get_registry(), generated_at="2026-10-12")
     doc = pymupdf.open(stream=pdf, filetype="pdf")  # type: ignore[no-untyped-call]
@@ -374,10 +447,10 @@ def test_a_row_taller_than_a_page_continues_on_the_next_page() -> None:
     # Every stretch, not only the first and last, so a split that dropped the
     # middle of the row would fail.
     for n in range(1, 41):
-        assert f"Month {n}: Day 1" in text, n
+        assert f"(Month {n}): Day 1" in text, n
     # And the row did run onto a later page than the one it starts on.
-    first = next(i for i, p in enumerate(pages) if "Month 2:" in p)
-    assert any("Month 40:" in p for p in pages[first + 1:])
+    first = next(i for i, p in enumerate(pages) if "(Month 2):" in p)
+    assert any("(Month 40):" in p for p in pages[first + 1:])
 
 
 @pytest.mark.parametrize("tall", [0, 20, 59])
@@ -443,6 +516,6 @@ def test_the_pdf_prints_the_three_rows() -> None:
         "Both documents agree on 2 arms and 130 subjects per arm.",
         "Stopped early: every 3 months after the early-discontinuation visit "
         "(budgeted separately)",
-        "Whole study: see Overall study duration (42 months vs 40 months, Disagreement",
+        "Whole study: 42 vs 40 months (Disagreement",
     ):
         assert said in text, said

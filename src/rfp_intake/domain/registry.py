@@ -309,10 +309,11 @@ class PeriodsDisplay(BaseModel):
     7 of that day's brief, for visit frequency and timeline components.
 
     Entries with the same values of the `one_per` keys make one line, merged
-    across the documents like an `entries` part. The line is named by the first
-    of the `heading` keys it states, as `{heading}`; `lines` are alternatives,
-    as in `EntriesDisplay`. `notes` adds a note to the line of an `order_key`
-    value.
+    across the documents like an `entries` part. The line is named, as
+    `{heading}`, by the first of the `heading` wordings whose keys are all
+    stated and read differently ("{period} ({label})" is passed over where the
+    label only repeats the period); `lines` are alternatives, as in
+    `EntriesDisplay`. `notes` adds a note to the line of an `order_key` value.
     """
 
     kind: Literal["periods"]
@@ -794,8 +795,11 @@ def _validate_registry(groups: list[GroupDef], fields: list[FieldDef]) -> None:
                     headline_of[h.field] = f.id
         if isinstance(f.display, PeriodsDisplay):
             d2 = f.display
-            named = [d2.order_key, *d2.one_per, *d2.heading]
+            named = [d2.order_key, *d2.one_per]
+            named += [p for w in d2.heading for p in placeholders(w)]
             named += [p for w in d2.lines for p in placeholders(w) if p != "heading"]
+            if not all(placeholders(w) for w in d2.heading):
+                errors.append(f"Field {f.id} has a periods heading that names no key")
             for name in named:
                 if name not in keys:
                     errors.append(f"Field {f.id} has a periods display naming key {name}")

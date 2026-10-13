@@ -347,7 +347,10 @@ fields:
     # for a two-arm study: the protocol amendment's arms scoped "arm:NEOD001" and
     # "arm:Placebo", the RFP's scoped by their labels "arm:Group 1" and "arm:Group 2". A label
     # says nothing about which arm it is, so the scope names the treatment instead, and a
-    # control arm by its role ("placebo"), never its substance ("normal saline").
+    # control arm by its role ("placebo"), never its substance ("normal saline"). The last
+    # sentence of the hint is Oliver's correction of 2026-10-12: run r-20261012-stage4check2
+    # put the placebo arm's "normal saline IV infusion once every 28 days" in `description`,
+    # so the placebo arm printed no dose line.
     hint: >
       One entry per distinct cohort, arm, dose level, treatment group or study part.
       Capture the stated start condition/timing for each, if given. Do not invent structure that
@@ -357,15 +360,17 @@ fields:
       letter or group name ("Arm 1", "Group A") as the scope, and leave out background therapy
       that every arm receives. Name a control arm by its role as the document names it, such
       as "arm:placebo", "arm:standard of care alone" or "arm:active comparator: <drug>" — never
-      by its substance ("normal saline", "vehicle"). Include the dose only when the study's
-      arms differ by dose. A study part or a dose-escalation cohort keeps its own name, such as
-      scope="part:Part A" or scope="cohort:Cohort 3".
+      by its substance ("normal saline", "vehicle"). Put the dose in the scope only when the
+      study's arms differ by dose. A study part or a dose-escalation cohort keeps its own name,
+      such as scope="part:Part A" or scope="cohort:Cohort 3".
       In raw_value, `name` is what the part is, as the document names it ("NEOD001 plus
       standard of care", "Part A"); `document_label` is the document's own number, letter or
       group name for it ("Group 1", "Arm A"), only where it gives one; `dose` is the dose and
       how it is given ("24 mg/kg IV infusion") and `schedule` how often ("every 28 days"), each
       only as the document states it for this part; `n_subjects` is the number of subjects in
-      this part alone, never the study's total.
+      this part alone, never the study's total. A control arm's dose and schedule go in `dose`
+      and `schedule` like any other arm's, also when the control is a placebo ("normal saline
+      IV infusion", "every 28 days"); `description` never holds a dose or a schedule.
     plain: >
       The separate groups a study splits into: an arm is one treatment being compared, a cohort a
       group dosed together, a dose level one strength tested. Each one adds work.
@@ -647,27 +652,41 @@ fields:
     label: Visit frequency by study period
     type: object[]
     schema:
-      period: enum[screening, baseline, treatment, end_of_treatment, follow_up,
-                   long_term_follow_up, after_stopping_early, other]
+      # The fixed list of periods Oliver approved on 2026-10-12, after run
+      # r-20261012-stage4check2 printed 21 lines, one per document label.
+      period: enum[screening, early_treatment, later_treatment, end_of_treatment, follow_up,
+                   stopped_early]
       label: text            # the stretch as the document names it: "Months 1–3"
       frequency: text        # "weekly for 4 weeks, then every 4 weeks"
       n_visits: int          # only where the document states the number
     scoped: true
     aliases: ["schedule of assessments", "SoA", "schedule of activities", "visit schedule",
               "study flow chart", "study calendar"]
-    # The exclusions and after_stopping_early are fix 3 of the 2026-10-12 brief: run
+    # The exclusions and stopped_early are fix 3 of the 2026-10-12 brief: run
     # r-20261012-angus mixed the schedule's rows with questionnaire subgroups, the visits of
     # subjects who stopped early, and the RFP's monitoring visits. ANALYST_PROCEDURE_PROTOCOL.md
-    # section 9: subjects who stopped early are never added to the main periods.
+    # section 9: subjects who stopped early are never added to the main periods. The
+    # exclusions were already in this hint, which the model reads, and run
+    # r-20261012-stage4check2 still returned questionnaire timing and the RFP's site
+    # qualification visits, so they are spelled out below (Oliver, 2026-10-12).
     hint: >
       Read the Schedule of Assessments table where present — it is the authoritative source.
-      One entry per stretch of the study with its own visit pattern. `period` is the kind of
-      stretch; `label` names it as the document does ("Screening", "Months 1–3", "Month 4
-      onwards"); `frequency` says how often the subject visits and on which days, in the
-      document's words, with the number of visits where it is stated; `n_visits` only where the
-      document states the number. Visits after a subject stops treatment early go under period
-      after_stopping_early, never under the main periods. Only the subject's own visits: leave
-      out monitor, pharmacy and site visits, and the timing of questionnaires for subgroups.
+      One entry per period of the study, `period` being one of: screening (before the first
+      dose); early_treatment (the first stretch of treatment, while visits are most frequent,
+      or the whole of treatment when its visit pattern never changes); later_treatment
+      (treatment after visits become less frequent); end_of_treatment (the end-of-treatment
+      visit); follow_up (visits after treatment ends as planned); stopped_early (visits of a
+      subject who stops treatment early). `label` names the stretch as the document does
+      ("Screening", "Months 1–3", "Month 4 onwards"). `frequency` says how often the subject
+      visits and on which days, in the document's words, covering every visit pattern within
+      the period, such as a larger visit every third month; `n_visits` only where the document
+      states the number. Visits after a subject stops treatment early go under period
+      stopped_early, never under the main periods.
+      Only the subject's own clinic visits. Leave out the timing of questionnaires, scales and
+      other assessments, even where a table of them lists visits or differs by subgroup: they
+      say what is done at a visit, not when the subject comes. Leave out visits to the site by
+      the sponsor's or CRO's staff — site selection, qualification, initiation, monitoring,
+      pharmacy and close-out visits — which are separate variables.
       Leave scope empty unless the schedule differs by arm, cohort or part, and then emit one
       record per scope, named as for design.parts.
     plain: >
@@ -675,15 +694,16 @@ fields:
       participant's appointments, not the monitor's visits to the site.
     source_priority: protocol
     budget_driver: true
-    # One row, a line per stretch in the order of `period`'s values (fix 3).
+    # One row, a line per period in the order of `period`'s values (fix 3), the
+    # document's own label beside the period where the two differ.
     display:
       kind: periods
       order_key: period
-      one_per: [period, label]
-      heading: [label, period]
+      one_per: [period]
+      heading: ["{period} ({label})", "{period}"]
       lines: ["{heading}: {frequency}", "{heading}: {n_visits} visits"]
       notes:
-        after_stopping_early: "(budgeted separately)"
+        stopped_early: "(budgeted separately)"
 
   - id: visits.total_count
     group: visits
@@ -855,7 +875,7 @@ fields:
       kind: periods
       order_key: component
       one_per: [component]
-      heading: [label, component]
+      heading: ["{label}", "{component}"]
       # The first alternative whose keys are all stated, so the longer ones come first.
       lines: ["{heading}: {duration} ({start} to {end})", "{heading}: {duration}, from {start}",
               "{heading}: {duration}, until {end}", "{heading}: {duration}",
@@ -863,7 +883,8 @@ fields:
       see_also:
         - field: timeline.total_duration
           wording: "Whole study: see {label}"
-          disagree: "Whole study: see {label} ({values}, Disagreement {n})"
+          # "42 vs 40 months (Disagreement 2)", Oliver's wording of 2026-10-12.
+          disagree: "Whole study: {values} (Disagreement {n})"
 
 # --- Group 7: Blinding and Unblinded Monitoring -----------------------------
   - id: blinding.design

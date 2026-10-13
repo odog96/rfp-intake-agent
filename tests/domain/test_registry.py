@@ -762,7 +762,7 @@ class TestEntryKeysAndTheirDisplays:
         "lines": [["Subjects: {n}"]], "label_key": "label", "key_words": {"n": "subjects"},
     }
     _PERIODS = {
-        "kind": "periods", "order_key": "kind", "one_per": ["kind"], "heading": ["label"],
+        "kind": "periods", "order_key": "kind", "one_per": ["kind"], "heading": ["{label}"],
         "lines": ["{heading}: {name}"],
     }
 
@@ -837,6 +837,11 @@ class TestEntryKeysAndTheirDisplays:
          "headline field it cannot use"),
         ({"display": dict(_PERIODS, one_per=["period"])}, "periods display naming key period"),
         ({"display": dict(_PERIODS, order_key="name")}, "order_key that is not an enum"),
+        # A heading is wording now, "{period} ({label})" (Oliver, 2026-10-12): a
+        # bare key name, as the headings were written before, would print as it is.
+        ({"display": dict(_PERIODS, heading=["label"])}, "periods heading that names no key"),
+        ({"display": dict(_PERIODS, heading=["{kind} ({colour})"])},
+         "periods display naming key colour"),
         ({"display": dict(_PERIODS, notes={"dose_level": "(x)"})},
          "values its order_key does not allow: dose_level"),
         ({"display": dict(_PERIODS, see_also=[{"field": "g1.none", "wording": "{label}",
@@ -879,6 +884,11 @@ class TestEntryKeysAndTheirDisplays:
         assert isinstance(registry.get_field("design.parts").display, EntriesDisplay)
         assert isinstance(registry.get_field("visits.frequency_by_period").display, PeriodsDisplay)
         assert isinstance(registry.get_field("timeline.periods").display, PeriodsDisplay)
+        # Oliver's fixed list of visit periods, 2026-10-12.
+        [period] = [k for k in registry.get_field("visits.frequency_by_period").entry_keys()
+                    if k.name == "period"]
+        assert period.values == ["screening", "early_treatment", "later_treatment",
+                                 "end_of_treatment", "follow_up", "stopped_early"]
         flagged = [f.id for f in registry.fields if f.one_answer_when_documents_agree]
         assert flagged == ["design.parts"]
         assert registry.get_field("design.parts").may_word_differently == [

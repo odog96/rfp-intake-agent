@@ -182,6 +182,9 @@ class Row:
     # chosen. Fix 2 of the 2026-10-12 brief. See _sides.
     sides: list[Side] = field(default_factory=list)
     decision_line: str | None = None
+    # The disagreement `sides` were drawn from, so a line pointing at this row
+    # (a `periods` display's see_also) names the same one.
+    disagreement: Contradiction | None = None
     # A row following another variable's disagreement (follows_label): its
     # status, report_wording.depends_on, and the sentences of the field's
     # `follow_wording` when only some documents in that disagreement give this
@@ -996,6 +999,7 @@ def _add_sides(
         line.on_sides = all(_numbered_own(rf, decision_no) is not None for rf in line.entries)
     n = decision_no[_signature(own)]
     row.sides = _sides(own, fd, docs)
+    row.disagreement = own
     if own.resolved_value is None:
         row.decision_line = ReportWording.fill(wording.row_no_value_chosen, n)
     else:
@@ -1409,6 +1413,31 @@ def _entries_row(
     return _display_row(fd, members, ", ".join(head), sources, lines)
 
 
+def _word_key(text: str) -> str:
+    """Two headings read the same if they differ only in case, spacing and
+    punctuation: a label "Follow-up" repeats the period "Follow up"."""
+    return " ".join(re.sub(r"[\W_]+", " ", text).split()).casefold()
+
+
+def _amounts(c: Contradiction) -> str | None:
+    """The disputed values as amounts of one unit, "42 vs 40 months", where
+    every document in the disagreement has a record NORMALIZE read as an amount
+    and all those amounts are in one unit; else None. A document's other
+    wordings of its value ("approximately 42 months, including …") are on the
+    variable's own row and in Appendix A; this is the short form for a line
+    that only points there. Nothing is parsed: the amounts are NORMALIZE's."""
+    by_doc: dict[str, list[dict[str, Any]]] = {}
+    for r in c.records:
+        amounts = by_doc.setdefault(r.provenance.doc_id, [])
+        if isinstance(r.value, dict) and set(r.value) == {"n", "unit"}:
+            amounts.append(r.value)
+    found = [a for amounts in by_doc.values() for a in amounts]
+    if not all(by_doc.values()) or len({str(a["unit"]).casefold() for a in found}) != 1:
+        return None
+    ns = dict.fromkeys(format_value(a["n"], None)[0] for a in found)
+    return " vs ".join(ns) + f" {found[0]['unit']}"
+
+
 def _periods_row(
     fd: FieldDef,
     display: PeriodsDisplay,
@@ -1451,7 +1480,12 @@ def _periods_row(
             entry = merge_entry(fd, group)
             unsettled = entry.differing(None)
             words = _entry_words(entry, None, wording, set(unsettled))
-            heading = next((words[k] for k in display.heading if k in words), "—")
+            heading = _pick(
+                [w for w in display.heading
+                 if len({_word_key(words.get(k, "")) for k in placeholders(w)})
+                 == len(placeholders(w))],
+                words,
+            ) or "—"
             text = _pick(display.lines, {**words, "heading": heading}) or heading
             note = display.notes.get(str(entry.value(display.order_key)))
             lines.append(BlockText(f"{text} {note}" if note else text, indent))
@@ -1462,7 +1496,10 @@ def _periods_row(
         rows = [p for r in rows_by_field.get(see.field, []) for p in (r.parts or [r])]
         disputed = next((r for r in rows if r.sides and r.decision_no is not None), None)
         if disputed is not None and disputed.decision_no is not None:
-            values = " vs ".join(dict.fromkeys(s.text for s in disputed.sides))
+            own = disputed.disagreement
+            values = (own and _amounts(own)) or " vs ".join(
+                dict.fromkeys(s.text for s in disputed.sides)
+            )
             lines.append(BlockText(fill(
                 see.disagree, disputed.decision_no, label=other.label, values=values,
             )))
