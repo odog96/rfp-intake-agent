@@ -20,6 +20,39 @@ class SearchHints(BaseModel):
     requires_tables: bool = False
 
 
+class BlockLine(BaseModel):
+    """One line of a group's `block`: one variable, printed as a sentence.
+
+    `wording` is for a variable read from another group, which the block quotes
+    without taking its row: `{doc}` the documents that state it, `{value}` its
+    value, `{pages}` where. Without it the line is the variable's label and
+    value, its two sides where the documents disagree, or a derived variable's
+    reasons; report_wording holds those sentences.
+    """
+
+    field: str
+    label: str | None = None
+    wording: str | None = None
+
+
+class Block(BaseModel):
+    """Several of a group's variables drawn as one row of report.pdf, a line
+    each, where separately they read as unconnected answers to one question.
+    Added 2026-10-12, fix 9 of that day's brief: six blinding rows became one,
+    "Unblinded staff and monitoring". Declared here so that no field is named in
+    the renderer (non-negotiable rule 4).
+
+    `headline` gives the row its value. `replaces` are the rows the block takes
+    out of the main table; each stays in extraction.json, Appendix A and the
+    review list. `lines` are printed in order under the value.
+    """
+
+    label: str = Field(min_length=1)
+    headline: str
+    replaces: list[str] = Field(min_length=1)
+    lines: list[BlockLine] = Field(default_factory=list)
+
+
 class GroupDef(BaseModel):
     id: str
     label: str
@@ -36,6 +69,8 @@ class GroupDef(BaseModel):
     # have raised it for all nine groups and sent every group more text than it
     # needs. See CLAUDE.md item 4c for the measurement behind the value.
     top_k: int = Field(default=3, ge=1)
+    # Several of this group's variables drawn as one row. See Block.
+    block: Block | None = None
 
 
 class ObjectFieldSchema(BaseModel):
@@ -291,6 +326,11 @@ class ReportWording(BaseModel):
     `derived_status`, `derived_why` and `evidence_pages` are a derived row's, fix
     8 of the same brief: its status, then under its value the rubric's reasons in
     plain words (`{why}`) and the pages they rest on (`{pages}`).
+
+    The `block_` phrases are the lines of a group's Block (fix 9), and
+    `scope_kind` with `scope_kinds` prints a scope's `<kind>:` prefix as a word
+    (fix 11): "cohort:NEOD001 arm" as "Cohort: NEOD001 arm". A prefix not listed
+    is printed as stored.
     """
 
     shown_provisional: str = Field(min_length=1)
@@ -302,10 +342,18 @@ class ReportWording(BaseModel):
     derived_status: str = Field(min_length=1)
     derived_why: str = Field(min_length=1)
     evidence_pages: str = Field(min_length=1)
+    block_stated: str = Field(min_length=1)
+    block_value: str = Field(min_length=1)
+    block_disagree: str = Field(min_length=1)
+    block_side: str = Field(min_length=1)
+    block_side_value: str = Field(min_length=1)
+    block_not_found: str = Field(min_length=1)
+    scope_kind: str = Field(min_length=1)
+    scope_kinds: dict[str, str] = Field(default_factory=dict)
 
     @field_validator(
         "not_used", "no_value_chosen", "row_shown_provisional", "row_no_value_chosen",
-        "depends_on",
+        "depends_on", "block_disagree",
     )
     @classmethod
     def _names_the_disagreement(cls, v: str) -> str:
@@ -332,6 +380,51 @@ class ReportWording(BaseModel):
     def _says_the_pages(cls, v: str) -> str:
         if "{pages}" not in v:
             raise ValueError("must contain {pages}, the pages the reasons rest on")
+        return v
+
+    @field_validator("block_stated", "block_value", "block_disagree", "block_not_found")
+    @classmethod
+    def _names_the_variable(cls, v: str) -> str:
+        if "{label}" not in v:
+            raise ValueError("must contain {label}, the variable the line is about")
+        return v
+
+    @field_validator("block_side")
+    @classmethod
+    def _names_the_side(cls, v: str) -> str:
+        if "{pages}" not in v or "{quote}" not in v:
+            raise ValueError("must contain {pages} and {quote}, the side's pages and words")
+        return v
+
+    @field_validator("block_stated", "block_side")
+    @classmethod
+    def _marks_a_cut(cls, v: str) -> str:
+        # `{cut}` is "…" when the quote was cut short and empty when it was not.
+        # It sits outside the quotation marks, so what is inside them is the
+        # document's own words, as on a disagreement row's sides.
+        if "{quote}" in v and "{cut}" not in v:
+            raise ValueError("must contain {cut}, where a shortened quote is marked")
+        return v
+
+    @field_validator("block_side_value")
+    @classmethod
+    def _names_the_side_value(cls, v: str) -> str:
+        if "{pages}" not in v or "{value}" not in v:
+            raise ValueError("must contain {pages} and {value}, the side's pages and value")
+        return v
+
+    @field_validator("scope_kind")
+    @classmethod
+    def _names_kind_and_name(cls, v: str) -> str:
+        if "{kind}" not in v or "{name}" not in v:
+            raise ValueError("must contain {kind} and {name}")
+        return v
+
+    @field_validator("scope_kinds")
+    @classmethod
+    def _kinds_have_words(cls, v: dict[str, str]) -> dict[str, str]:
+        if any(not w.strip() for w in v.values()):
+            raise ValueError("every scope kind needs a word")
         return v
 
     @staticmethod
@@ -494,6 +587,32 @@ def _validate_registry(groups: list[GroupDef], fields: list[FieldDef]) -> None:
                     f"Field {f.id} has a resolution rule, which is not supported for "
                     "scoped fields"
                 )
+
+    # A block takes rows out of its own group's table and prints its lines in
+    # their place, so what it takes must be there to take, its value must be one
+    # of them, and a line naming a variable it does not take is a quotation
+    # from elsewhere, which needs its own sentence.
+    for g in groups:
+        if g.block is None:
+            continue
+        b = g.block
+        for fid in b.replaces:
+            if fid not in by_id:
+                errors.append(f"Group {g.id} has a block replacing an unknown field: {fid}")
+            elif by_id[fid].group != g.id:
+                errors.append(f"Group {g.id} has a block replacing {fid}, of another group")
+        if b.headline not in b.replaces:
+            errors.append(f"Group {g.id} has a block whose headline it does not replace")
+        for line in b.lines:
+            if line.field not in by_id:
+                errors.append(f"Group {g.id} has a block line on an unknown field: {line.field}")
+            elif line.field not in b.replaces and line.wording is None:
+                errors.append(
+                    f"Group {g.id} has a block line on {line.field}, which it does not "
+                    "replace, with no wording"
+                )
+            if line.wording is not None and "{value}" not in line.wording:
+                errors.append(f"Group {g.id} has a block line wording with no {{value}}")
 
     if errors:
         raise RegistryValidationError(

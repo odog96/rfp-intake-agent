@@ -385,7 +385,9 @@ def _row_cells(r: Row, styles: dict, *, scope_only: bool) -> list[object]:  # ty
 def _first_cell(r: Row, scope_only: bool) -> str:
     # scope_only: a schedule row, or a further row of the variable just above it.
     if scope_only:
-        return f'<font color="#555555">{escape(r.scope or "Part not stated")}</font>'
+        # A row with no scope is drawn first (report_model._rows_for), so here it
+        # is only ever a schedule row, whose blank "Applies to" says the same.
+        return f'<font color="#555555">{escape(r.scope or "")}</font>'
     text = escape(r.label)
     if r.budget_driver:
         text += ' <font size="6.5" color="#1565c0">BUDGET</font>'
@@ -395,6 +397,8 @@ def _first_cell(r: Row, scope_only: bool) -> str:
 
 
 def _value_cell(r: Row) -> str:
+    if r.block_lines:
+        return _block_cell(r)
     if r.parts:
         return "<br/>".join(_part_block(p) for p in r.parts)
     if r.follow_lines:
@@ -412,6 +416,15 @@ def _value_cell(r: Row) -> str:
     if r.evidence_pages:
         body += f'<br/><font size="7" color="#757575">{escape(r.evidence_pages)}</font>'
     return body
+
+
+def _block_cell(r: Row) -> str:
+    """A group's block (fix 9 of the 2026-10-12 brief): the headline value, then
+    each line, indented as the report model says."""
+    indent = "&nbsp;&nbsp;&nbsp;"
+    head = "; ".join(_value_text(v) for v in r.values)
+    lines = [indent * (1 + t.indent) + escape(t.text) for t in r.block_lines]
+    return "<br/>".join([head, *lines])
 
 
 def _part_block(p: Row) -> str:
@@ -551,6 +564,10 @@ def _scored(r: Row) -> list[float]:
         if any(p.sides and not _scored(p) for p in r.parts):
             return []
         return [c for p in r.parts for c in _scored(p)]
+    # A block holding such a disagreement has no figure either; otherwise its
+    # figure is its headline value's.
+    if any(m.sides and not _scored(m) for m in r.members):
+        return []
     return [
         v.confidence for v in r.values
         if v.status != "not_found" and not (v.on_sides and v.text == "—")

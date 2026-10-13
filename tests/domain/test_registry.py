@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import pytest
@@ -272,6 +273,13 @@ _WORDING = {
     "derived_status": "Worked out",
     "derived_why": "Why: {why}",
     "evidence_pages": "Pages: {pages}",
+    "block_stated": '{label}: {value} "{quote}"{cut} {pages}',
+    "block_value": "{label}: {value} {pages}",
+    "block_disagree": "{label}: see {n}",
+    "block_side": '{pages}: "{quote}"{cut}',
+    "block_side_value": "{pages}: {value}",
+    "block_not_found": "{label}: none",
+    "scope_kind": "{kind}: {name}",
 }
 
 
@@ -645,3 +653,83 @@ def test_scope_has_phrase(scope: str | None, phrases: list[str], expected: bool)
     from rfp_intake.domain.registry import scope_has_phrase
 
     assert scope_has_phrase(scope, phrases) is expected
+
+
+class TestAGroupBlock:
+    """Fix 9 of the 2026-10-12 brief: a group's `block`, and the fix 11 scope
+    words, are read from config/fields.yaml and checked when it loads."""
+
+    def _write(self, tmp_path: Path, block: dict[str, object],
+               wording: dict[str, object] | None = None) -> Path:
+        data = {
+            "version": 1,
+            "groups": [{"id": "g1", "label": "Group 1", "block": block},
+                       {"id": "g2", "label": "Group 2"}],
+            "fields": [
+                {"id": "g1.a", "group": "g1", "label": "A", "type": "text"},
+                {"id": "g1.b", "group": "g1", "label": "B", "type": "text"},
+                {"id": "g2.c", "group": "g2", "label": "C", "type": "text"},
+            ],
+            "report_wording": dict(_WORDING, **(wording or {})),
+        }
+        p = tmp_path / "fields.yaml"
+        p.write_text(yaml.dump(data, allow_unicode=True))
+        return p
+
+    @staticmethod
+    def _block(**extra: object) -> dict[str, object]:
+        block: dict[str, object] = {"label": "AB", "headline": "g1.a", "replaces": ["g1.a", "g1.b"]}
+        block.update(extra)
+        return block
+
+    def test_a_block_is_read(self, tmp_path: Path) -> None:
+        registry = load_registry(self._write(tmp_path, self._block(lines=[
+            {"field": "g1.b", "label": "Bee"},
+            {"field": "g2.c", "wording": "{doc} says {value} ({pages})"},
+        ])))
+        block = registry.get_group("g1").block
+        assert block is not None
+        assert (block.label, block.headline, block.replaces) == ("AB", "g1.a", ["g1.a", "g1.b"])
+        assert [(ln.field, ln.label, ln.wording) for ln in block.lines] == [
+            ("g1.b", "Bee", None), ("g2.c", None, "{doc} says {value} ({pages})"),
+        ]
+
+    def test_the_real_blinding_block_replaces_the_six_rows(self, fields_yaml_path: Path) -> None:
+        block = load_registry(fields_yaml_path).get_group("blinding_monitoring").block
+        assert block is not None
+        assert block.headline == "monitoring.unblinded_required"
+        assert len(block.replaces) == 6
+
+    @pytest.mark.parametrize(("block", "match"), [
+        ({"replaces": ["g1.a", "g1.z"]}, "replacing an unknown field"),
+        ({"replaces": ["g1.a", "g2.c"]}, "of another group"),
+        ({"headline": "g1.b", "replaces": ["g1.a"]}, "headline it does not replace"),
+        ({"lines": [{"field": "g1.z"}]}, "line on an unknown field"),
+        ({"lines": [{"field": "g2.c"}]}, "g2.c"),
+        ({"lines": [{"field": "g2.c", "wording": "{doc} asks ({pages})"}]}, "no {value}"),
+    ])
+    def test_a_wrong_block_does_not_load(
+        self, tmp_path: Path, block: dict[str, object], match: str
+    ) -> None:
+        with pytest.raises(RegistryValidationError, match=re.escape(match)):
+            load_registry(self._write(tmp_path, self._block(**block)))
+
+    @pytest.mark.parametrize(("key", "phrase"), [
+        ("block_stated", '{value} "{quote}"{cut} {pages}'),
+        ("block_stated", '{label}: {value} "{quote}" {pages}'),
+        ("block_side", '"{quote}"{cut}'),
+        ("block_side", '{pages}: "{quote}"'),
+        ("block_side_value", "{pages}"),
+        ("block_disagree", "{label}: documents disagree"),
+        ("block_not_found", "not found"),
+        ("scope_kind", "{kind}"),
+    ])
+    def test_a_block_phrase_must_have_its_slots(
+        self, tmp_path: Path, key: str, phrase: str
+    ) -> None:
+        with pytest.raises(RegistryValidationError, match="must contain"):
+            load_registry(self._write(tmp_path, self._block(), {key: phrase}))
+
+    def test_a_scope_kind_needs_a_word(self, tmp_path: Path) -> None:
+        with pytest.raises(RegistryValidationError):
+            load_registry(self._write(tmp_path, self._block(), {"scope_kinds": {"arm": " "}}))

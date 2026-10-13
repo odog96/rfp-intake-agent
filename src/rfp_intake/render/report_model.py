@@ -23,11 +23,13 @@ from __future__ import annotations
 import re
 from collections import Counter, defaultdict
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import PurePath
 from typing import Any
 
 from rfp_intake.domain.registry import (
+    Block,
+    BlockLine,
     FieldDef,
     GroupDef,
     Registry,
@@ -66,6 +68,9 @@ DECISION_VALUE_CHARS = 110
 # Most attention first. A row takes the status of its most-attention entry, so
 # merging can only ever make a row look less certain, never more.
 _STATUS_RANK = {"needs_review": 0, "not_found": 1, "not_specified": 2, "confirmed": 3}
+# A value that answers "the document does not say", as reconcile/__init__.py's
+# _SAYS_NOTHING reads it.
+_NOT_SPECIFIED = frozenset({"not_specified", "not specified"})
 
 # Verdicts that put a variable in the Disagreements table and mark its row
 # "Disagreement" — the ones where the reviewer found something a person still has
@@ -190,6 +195,20 @@ class Row:
     derived_status: str | None = None
     why: str | None = None
     evidence_pages: str | None = None
+    # A group's `block` (Block in domain/registry.py), fix 9 of the same brief:
+    # one row for the variables the block replaces, each kept in `members` so
+    # the review list still sees it, and the lines printed under its value,
+    # each already in report_wording's words.
+    members: list[Row] = field(default_factory=list)
+    block_lines: list[BlockText] = field(default_factory=list)
+
+
+@dataclass
+class BlockText:
+    """One line of a block, and how far it is indented under the line above."""
+
+    text: str
+    indent: int = 0
 
 
 @dataclass
@@ -318,11 +337,12 @@ class ReportModel:
     removed: list[RemovedText] = field(default_factory=list)
 
     def all_rows(self) -> list[Row]:
-        """Every row with a value, a row of a `scopes` display as its parts."""
+        """Every row with a value, a row of a `scopes` display as its parts and
+        a block as the rows it replaced."""
         rows: list[Row] = []
         for g in self.groups:
             for r in g.rows:
-                rows += r.parts or [r]
+                rows += r.parts or r.members or [r]
             for s in g.schedules:
                 rows += s.rows
         return rows
@@ -562,19 +582,33 @@ def build_report_model(state: RunState, registry: Registry) -> ReportModel:
     for rf in state.resolved:
         by_field[rf.field_id].append(rf)
 
+    # Every variable's rows first: a block can quote a variable of another group.
+    rows_by_field: dict[str, list[Row]] = {}
+    for fd in registry.fields:
+        leader = field_by_id.get(fd.follows_conflict_of or "")
+        rows_by_field[fd.id] = _rows_for(
+            fd, by_field.get(fd.id, []), docs, decision_no, registry.report_wording,
+            leader.label if leader else None,
+        )
+
     sections: list[GroupSection] = []
     found = 0
     for group in registry.groups:
         rows: list[Row] = []
         schedules: list[Schedule] = []
+        taken = set(group.block.replaces) if group.block is not None else set()
         for fd in (f for f in registry.fields if f.group == group.id):
-            leader = field_by_id.get(fd.follows_conflict_of or "")
-            field_rows = _rows_for(
-                fd, by_field.get(fd.id, []), docs, decision_no, registry.report_wording,
-                leader.label if leader else None,
-            )
+            field_rows = rows_by_field[fd.id]
             if any(r.status != "not_found" for r in field_rows):
                 found += 1
+            if fd.id in taken:
+                # The block's row stands where the first variable it replaces stood.
+                if group.block is not None and not any(r.members for r in rows):
+                    rows.append(_block_row(
+                        group.block, rows_by_field, by_field, field_by_id, docs,
+                        registry.report_wording,
+                    ))
+                continue
             if len(field_rows) > SCHEDULE_THRESHOLD:
                 schedules.append(Schedule(fd.id, fd.label, fd.budget_driver, field_rows))
                 rows.append(_pointer_row(fd, field_rows))
@@ -665,7 +699,10 @@ def _rows_for(
         by_scope.setdefault(normalize_scope(rf.scope), []).append(rf)
 
     rows = []
-    for scope_key, group in by_scope.items():
+    # The row with no scope first, so that it is the one drawn beside the
+    # variable's label and needs no label of its own (fix 11 of the 2026-10-12
+    # brief: it used to come later, labelled "Part not stated").
+    for scope_key, group in sorted(by_scope.items(), key=lambda kv: kv[0] is not None):
         values: dict[str, ValueLine] = {}
         for rf in group:
             items = format_value(rf.value, fd) if rf.status not in ("not_found",) else ["—"]
@@ -706,7 +743,7 @@ def _rows_for(
             label=fd.label,
             # name_ids: an entry RECONCILE kept out of the arm match carries its
             # document's id in its scope (reconcile/__init__.py:_scope_checks).
-            scope=docs.name_ids(group[0].scope)
+            scope=_scope_words(docs.name_ids(group[0].scope), wording)
             if scope_key is not None and group[0].scope else None,
             budget_driver=fd.budget_driver,
             status=min((ln.status for ln in lines), key=lambda s: _STATUS_RANK.get(s, 0)),
@@ -725,6 +762,157 @@ def _rows_for(
     if fd.display is not None and fd.display.kind == "scopes":
         return [_scope_parts(fd, rows)]
     return rows
+
+
+def _scope_words(scope: str, wording: ReportWording) -> str:
+    """A scope as the report prints it: its `<kind>:` prefix, as the design.parts
+    hint defines the kinds, as a word from report_wording.scope_kinds, so that
+    "cohort:NEOD001 arm" reads "Cohort: NEOD001 arm". A scope with no listed
+    prefix is printed as stored; Appendix A always prints it as stored."""
+    kind, sep, name = scope.partition(":")
+    word = wording.scope_kinds.get(re.sub(r"[\s-]+", "_", kind.strip().lower()))
+    if not sep or word is None or not name.strip():
+        return scope
+    return ReportWording.fill(wording.scope_kind, kind=word, name=name.strip())
+
+
+def _block_row(
+    block: Block,
+    rows_by_field: dict[str, list[Row]],
+    by_field: dict[str, list[ResolvedField]],
+    field_by_id: dict[str, FieldDef],
+    docs: _Docs,
+    wording: ReportWording,
+) -> Row:
+    """A group's `block`: one row with the headline variable's value and a line
+    for each of `block.lines`. The rows it replaces are its `members`, so the
+    review list and the counts still see each one; Appendix A is built from the
+    resolved values and never sees the block.
+
+    Its status is its most-attention member's, as a `scopes` row's is its
+    most-attention part's, and it carries a member's disagreement number, so a
+    block holding a disagreement reads Disagreement.
+    """
+    members = [r for fid in block.replaces for r in rows_by_field.get(fid, [])]
+    lines: list[BlockText] = []
+    for line in block.lines:
+        fd = field_by_id[line.field]
+        label = line.label or fd.label
+        for row in rows_by_field.get(line.field, []):
+            named = f"{label} ({row.scope})" if row.scope else label
+            lines += _block_lines(
+                line, named, row, by_field.get(line.field, []), fd, docs, wording,
+            )
+    # A variable the block takes with no line of its own is in Appendix A when
+    # it was found; when it was not, that is said here, as its row said it.
+    # When it is in a numbered disagreement — the headline included — both sides
+    # are said here too, as they are on every Disagreement row (fix 2), so the
+    # block never names a disagreement it does not describe.
+    on_lines = {line.field for line in block.lines}
+    for fid in block.replaces:
+        if fid in on_lines:
+            continue
+        own = rows_by_field.get(fid, [])
+        for row in own:
+            if row.sides and row.decision_no is not None:
+                named = f"{field_by_id[fid].label} ({row.scope})" if row.scope else (
+                    field_by_id[fid].label
+                )
+                lines += _block_lines(
+                    BlockLine(field=fid), named, row, by_field.get(fid, []), field_by_id[fid],
+                    docs, wording,
+                )
+        if fid != block.headline and all(r.status == "not_found" for r in own):
+            lines.append(BlockText(ReportWording.fill(
+                wording.block_not_found, label=field_by_id[fid].label,
+            )))
+    # The block's own scope is None, so a scoped headline value says its part,
+    # or two parts' values would read "Needed; Not needed" with no way to tell
+    # which is which.
+    head = [
+        replace(v, items=[f"{r.scope}: {v.items[0]}", *v.items[1:]]) if r.scope else v
+        for r in rows_by_field.get(block.headline, []) for v in r.values
+    ]
+    return Row(
+        field_id=block.headline,
+        label=block.label,
+        scope=None,
+        budget_driver=any(field_by_id[f].budget_driver for f in block.replaces),
+        status=min((m.status for m in members), key=lambda st: _STATUS_RANK.get(st, 0)),
+        values=head,
+        decision_no=next((m.decision_no for m in members if m.decision_no is not None), None),
+        members=members,
+        block_lines=lines,
+    )
+
+
+def _block_lines(
+    line: BlockLine,
+    label: str,
+    row: Row,
+    entries: list[ResolvedField],
+    fd: FieldDef,
+    docs: _Docs,
+    wording: ReportWording,
+) -> list[BlockText]:
+    """One variable's lines in a block, in report_wording's sentences: what it
+    was found to be and where, each document's side where the documents
+    disagree, or a derived variable's reasons."""
+    fill = ReportWording.fill
+    if row.status == "not_found":
+        return [BlockText(fill(wording.block_not_found, label=label))]
+    if row.status == "not_specified":
+        # Its value is None, printed "—"; the line says what the status says.
+        pages = docs.pages([p for v in row.values for rf in v.entries for p in rf.sources])
+        return [BlockText(fill(
+            wording.block_value, label=label, value=_ENUM_WORDS["not_specified"], pages=pages,
+        ))]
+    # Only the pages that state the value (fix 2), not every record's page.
+    stating = [p for v in row.values for rf in v.entries for p in _stating(rf, fd)]
+    # A line's wording says a document asks for something, so it is used only
+    # where a document states a value: not on a disagreement, which gives both
+    # sides below, and not where the document says it does not specify one.
+    states = not (row.sides and row.decision_no is not None) and bool(stating) and all(
+        rf.status != "not_specified" and rf.value is not None
+        and str(rf.value).strip().casefold() not in _NOT_SPECIFIED
+        for v in row.values for rf in v.entries
+    )
+    if line.wording is not None and states:
+        codes = list(dict.fromkeys(docs.code(p.doc_id) for p in stating))
+        text = fill(
+            line.wording, doc=_join_words(codes), value="; ".join(v.text for v in row.values),
+            pages=docs.pages(stating),
+        )
+        # The wording names no variable, so a scoped row says its part first.
+        return [BlockText(f"{row.scope}: {text}" if row.scope else text)]
+    if row.sides and row.decision_no is not None:
+        out = [BlockText(fill(wording.block_disagree, n=row.decision_no, label=label))]
+        for side in row.sides:
+            text = (
+                fill(wording.block_side, pages=side.sources, quote=side.quote,
+                     cut="…" if side.quote_cut else "")
+                if side.quote
+                else fill(wording.block_side_value, pages=side.sources, value=side.text)
+            )
+            out.append(BlockText(text, indent=1))
+        return out
+    why = next((rf.why for rf in entries if rf.why), None)
+    if why is not None:
+        return [BlockText(docs.name_ids(why))]
+    out = []
+    for v in row.values:
+        quote = next((rf.quote for rf in v.entries if rf.quote), None)
+        if quote is None:
+            out.append(BlockText(fill(
+                wording.block_value, label=label, value=v.text, pages=v.sources,
+            )))
+            continue
+        first, cut = _first_sentence(quote)
+        out.append(BlockText(fill(
+            wording.block_stated, label=label, value=v.text,
+            quote=first, cut="…" if cut else "", pages=v.sources,
+        )))
+    return out
 
 
 def _add_derived(

@@ -995,6 +995,19 @@ day added two more report-only keys, also never sent to a model: `display` (`kin
 scopes as headed parts of one row, in a declared order) and `value_words` (the word printed for an enum
 value). All three are checked when the registry loads.
 
+**A group's `block`** (fix 9 of the same brief) draws several of the group's variables as one row: a
+headline variable's value, then one line per declared variable — its value and first quoted sentence, each
+side of its disagreement, or a derived variable's reasons — and a "not found" line for a replaced variable
+with no line of its own that no document gives. A line may read a variable from another group through a
+`wording` with `{doc}`, `{value}` and `{pages}` (the RFP's pharmacy monitoring visits under the blinding
+block); the value is printed as stored, never parsed. The replaced rows stay the block's `members`, so
+`ReportModel.all_rows()`, the page-1 counts and Flagged for review still see each variable under its own
+label, and Appendix A is built from the resolved values as before. The block's status is its
+most-attention member's. The sentences are the `block_` phrases in `report_wording`. The same section's
+`scope_kind` and `scope_kinds` print a scope's `<kind>:` prefix as a word in the main table ("cohort:NEOD001
+arm" reads "Cohort: NEOD001 arm"); Appendix A prints the scope as stored. A row with no scope is drawn
+first in its variable, with no label in place of the former "Part not stated".
+
 **A row with a `review_note` stays in review, added 2026-10-12.** RECONCILE writes the note on a
 `design.parts` arm only one of several documents lists, or on an entry whose own words do not say what its
 scope names (§4.6). GATE checks it after the budget-driver rule for lists holding more than one value, which

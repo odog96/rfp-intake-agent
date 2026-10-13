@@ -64,6 +64,12 @@
 #                  genuinely spread across more sections than that, and say in a
 #                  comment which sections and which run measured it — every extra
 #                  section is sent to the model on every run of every document.
+#   block          several of the group's variables drawn as one row of report.pdf:
+#                  `label`; `headline`, the variable whose value the row shows; `replaces`,
+#                  the rows it takes out of the table (each stays in Appendix A and the
+#                  review list); `lines`, one per variable, printed under the value with
+#                  the report_wording `block_` sentences, or a line's own `wording` for a
+#                  variable of another group ({doc}, {value}, {pages}). Never sent to a model.
 #
 # REPORT WORDING
 #   report_wording phrases report.pdf prints that belong to no one field. Written for the
@@ -95,6 +101,27 @@ report_wording:
   # Under its value, the rubric's reasons in plain words, then the pages they rest on:
   derived_why: "Why: {why}"
   evidence_pages: "Evidence pages: {pages}."
+  # A group's `block` (fix 9), one line per variable under the block's value. A variable
+  # with a quote, then one with none. `{cut}` is "…" after a quote cut short, outside the
+  # quotation marks, and empty otherwise:
+  block_stated: '{label}: {value} — "{quote}"{cut} ({pages})'
+  block_value: "{label}: {value} ({pages})"
+  # A variable the documents disagree about, then each document's side under it:
+  block_disagree: "{label}: documents disagree (Disagreement {n})"
+  block_side: '{pages}: "{quote}"{cut}'
+  # A side resting on several passages, so with no one quote (each is in Appendix A):
+  block_side_value: "{pages}: {value}"
+  # A variable no document gives:
+  block_not_found: "{label}: not found"
+  # A scope's `<kind>:` prefix, as the design.parts hint defines the kinds (fix 11). A
+  # prefix not listed here is printed as stored.
+  scope_kind: "{kind}: {name}"
+  scope_kinds:
+    part: Part
+    cohort: Cohort
+    arm: Arm
+    dose_level: Dose level
+    treatment_group: Treatment group
 
 groups:
   - id: study_design
@@ -182,6 +209,23 @@ groups:
     plain: >
       Who is allowed to know which treatment a participant was given, and whether keeping that
       secret forces a second, separately staffed monitor onto the study.
+    # One row for the question these six variables answer between them, whether unblinded
+    # staff have to be paid for: as six rows they read as unconnected answers (fix 9 of the
+    # 2026-10-12 brief). Each of the six stays in extraction.json, Appendix A and the review
+    # list; the factors and the reason are in Appendix A only.
+    block:
+      label: Unblinded staff and monitoring
+      headline: monitoring.unblinded_required
+      replaces: [blinding.placebo_matching, blinding.unblinded_staff_stated,
+                 monitoring.unblinded_required, monitoring.unblinded_factors,
+                 monitoring.unblinded_rationale, blinding.placebo_assumption]
+      lines:
+        - field: blinding.unblinded_staff_stated
+          label: Stated in the documents
+        - field: blinding.placebo_matching
+        - field: blinding.placebo_assumption
+        - field: ops.visits_pharmacy_monitoring
+          wording: "{doc} asks for pharmacy monitoring visits: {value} ({pages})."
     search_hints:
       # "Placebo" as a heading and "placebo"/"matching" as keywords are what make protocol
       # section "6.3 Placebo" reachable. Before 2026-10-02 that section scored 0.000 for this
@@ -802,6 +846,12 @@ fields:
     label: Unblinded monitoring likely required
     type: enum
     values: [yes, likely, no, not_specified]
+    # Quoted: YAML reads unquoted yes and no as booleans, and the registry stores the
+    # values above as "true" and "false". The block on this group prints these.
+    value_words:
+      "true": Needed
+      likely: Likely needed
+      "false": Not needed
     aliases: ["unblinded monitor", "unblinded CRA", "unblinded site staff", "unblinded pharmacist"]
     hint: >
       "yes" when the document states it directly. "likely" when the document does not say so but

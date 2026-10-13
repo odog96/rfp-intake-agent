@@ -914,7 +914,7 @@ class TestArmsMatchedAcrossDocuments:
         state, model = self._report(run_20261009_225414_records())
         rows = self._parts_rows(model)
 
-        assert [r.scope for r in rows] == ["arm:NEOD001", "arm:Placebo"]
+        assert [r.scope for r in rows] == ["Arm: NEOD001", "Arm: Placebo"]
         for row in rows:
             [line] = row.values
             assert "Amendment p." in line.sources and "RFP p.3" in line.sources
@@ -930,8 +930,8 @@ class TestArmsMatchedAcrossDocuments:
         ])
         by_scope = {r.scope: r for r in self._parts_rows(model)}
 
-        assert by_scope["arm:DrugX"].status == "confirmed"
-        placebo = by_scope["arm:Placebo"]
+        assert by_scope["Arm: DrugX"].status == "confirmed"
+        placebo = by_scope["Arm: Placebo"]
         assert placebo.status == "needs_review"
         assert placebo.reasons == ["Listed only in RFP, not in Amendment."]
         assert_nothing_lost(state, get_registry(), model)
@@ -945,7 +945,7 @@ class TestArmsMatchedAcrossDocuments:
         ])
         scopes = sorted(r.scope or "" for r in self._parts_rows(model))
 
-        assert scopes == ["arm:Placebo", "arm:Placebo (not matched, Amendment)"]
+        assert scopes == ["Arm: Placebo", "Arm: Placebo (not matched, Amendment)"]
         assert_nothing_lost(state, get_registry(), model)
 
 
@@ -1024,7 +1024,10 @@ class TestAppendixAMarkers:
             shown_provisional="Used", not_used="Set aside ({n})", no_value_chosen="Open ({n})",
             row_shown_provisional="{value} ({n})", row_no_value_chosen="Open ({n})",
             depends_on="After {n}", derived_status="Worked out", derived_why="Why: {why}",
-            evidence_pages="Pages: {pages}",
+            evidence_pages="Pages: {pages}", block_stated="{label}: {value} {quote}{cut} {pages}",
+            block_value="{label}: {value} {pages}", block_disagree="{label} ({n})",
+            block_side="{pages}: {quote}{cut}", block_side_value="{pages}: {value}",
+            block_not_found="{label}: none", scope_kind="{kind}: {name}",
         )})
         model = build_report_model(self._state(resolved_value="0", index=1), registry)
         assert self._markers(model) == {
@@ -1306,3 +1309,223 @@ class TestADerivedRow:
             "Total number of subject visits",
         ]
         assert e.notes is not None and "Scored 6 points" in e.notes
+
+
+class TestTheBlindingBlock:
+    """Fix 9 of the 2026-10-12 brief: the six blinding rows are one row, with the
+    six variables kept as its members for the counts and in Appendix A."""
+
+    SIX = {
+        "blinding.placebo_matching", "blinding.unblinded_staff_stated",
+        "monitoring.unblinded_required", "monitoring.unblinded_factors",
+        "monitoring.unblinded_rationale", "blinding.placebo_assumption",
+    }
+
+    def _model(self) -> tuple[RunState, ReportModel]:
+        from rfp_intake.derive import derive_node
+
+        c = _contradiction("blinding.placebo_matching", "conflict", [
+            ("not_matching_stated", 53, "d-prot"), ("matching_stated", 3, "d-rfp"),
+        ])
+        matching = _rf("blinding.placebo_matching", None, status="needs_review",
+                       contradiction=c, quote=None)
+        matching.sources = [r.provenance for r in c.records]
+        state = RunState(run_id="r-1", resolved=[
+            _rf("blinding.unblinded_staff_stated", "true", status="needs_review", pages=(52,),
+                quote="The Unblinded Pharmacist will be provided access to the treatment "
+                      "assignment. Nobody else will."),
+            matching,
+            _rf("monitoring.unblinded_required", "likely", status="needs_review", pages=(12,)),
+            _rf("ops.visits_pharmacy_monitoring", "4 visits per site", pages=(4,),
+                doc="d-rfp", kind="rfp"),
+            _rf("ip.form", ["infusion_iv"], status="needs_review", pages=(54,),
+                quote="Study drug consists of IV NEOD001 or placebo."),
+            _rf("blinding.design", "double_blind", status="needs_review", pages=(11,)),
+        ], contradictions=[c])
+        state.resolved = derive_node(state)["resolved"]
+        model = build_report_model(state, get_registry())
+        assert_nothing_lost(state, get_registry(), model)
+        return state, model
+
+    @staticmethod
+    def _block(model: ReportModel) -> Row:
+        [group] = [g for g in model.groups if g.group.id == "blinding_monitoring"]
+        [row] = [r for r in group.rows if r.members]
+        return row
+
+    def test_one_row_takes_the_place_of_the_six(self) -> None:
+        _, model = self._model()
+        [group] = [g for g in model.groups if g.group.id == "blinding_monitoring"]
+        assert [r.label for r in group.rows] == [
+            "Blinding design", "Unblinded staff and monitoring",
+        ]
+        assert {m.field_id for m in self._block(model).members} == self.SIX
+
+    def test_the_headline_is_the_monitoring_answer_in_words(self) -> None:
+        _, model = self._model()
+        row = self._block(model)
+        assert row.field_id == "monitoring.unblinded_required"
+        assert [v.text for v in row.values] == ["Likely needed"]
+        assert row.budget_driver
+
+    def test_the_lines_read_as_the_brief_lays_them_out(self) -> None:
+        _, model = self._model()
+        lines = [(t.indent, t.text) for t in self._block(model).block_lines]
+        assert lines[:4] == [
+            (0, 'Stated in the documents: Yes — "The Unblinded Pharmacist will be provided '
+                'access to the treatment assignment." (Protocol p.52)'),
+            (0, "Placebo matches the study drug: documents disagree (Disagreement 1)"),
+            (1, 'Protocol p.53: "not_matching_stated"'),
+            (1, 'RFP p.3: "matching_stated"'),
+        ]
+        assert lines[4][1].startswith("The drug is given by IV infusion")
+        assert lines[5] == (
+            0, "RFP asks for pharmacy monitoring visits: 4 visits per site (RFP p.4).",
+        )
+
+    def test_a_member_with_no_line_says_it_was_not_found(self) -> None:
+        _, model = self._model()
+        texts = [t.text for t in self._block(model).block_lines]
+        assert "Factors driving unblinded monitoring: not found" in texts
+
+    def test_the_block_reads_disagreement_and_the_counts_still_see_each_member(self) -> None:
+        _, model = self._model()
+        row = self._block(model)
+        assert (row.status, row.decision_no) == ("needs_review", 1)
+        reviewed = {r.field_id for r in model.review_rows()}
+        assert {"blinding.unblinded_staff_stated", "monitoring.unblinded_required"} <= reviewed
+        assert "blinding.placebo_matching" not in reviewed  # a page-1 decision
+
+    def test_appendix_a_keeps_every_member(self) -> None:
+        _, model = self._model()
+        kept = {e.field_id for e in model.evidence}
+        assert {"blinding.placebo_matching", "blinding.unblinded_staff_stated",
+                "monitoring.unblinded_required", "blinding.placebo_assumption"} <= kept
+
+
+class TestABlockDescribesEveryDisagreementItNames:
+    """A block member with no line of its own, the headline included, still
+    gives both sides of its numbered disagreement (fix 2), and a scoped row read
+    through a line's wording says which part it is."""
+
+    @staticmethod
+    def _block_lines(
+        resolved: list[ResolvedField], contradictions: list[Contradiction]
+    ) -> list[tuple[int, str]]:
+        state = RunState(run_id="r-1", resolved=resolved, contradictions=contradictions)
+        model = build_report_model(state, get_registry())
+        assert_nothing_lost(state, get_registry(), model)
+        [group] = [g for g in model.groups if g.group.id == "blinding_monitoring"]
+        [row] = [r for r in group.rows if r.members]
+        return [(t.indent, t.text) for t in row.block_lines]
+
+    @staticmethod
+    def _disputed(
+        fid: str, values: list[tuple[str, int, str]]
+    ) -> tuple[ResolvedField, Contradiction]:
+        c = _contradiction(fid, "conflict", values)
+        rf = _rf(fid, None, status="needs_review", contradiction=c, quote=None)
+        rf.sources = [r.provenance for r in c.records]
+        return rf, c
+
+    def test_the_headline_in_a_disagreement_gives_both_sides(self) -> None:
+        rf, c = self._disputed("monitoring.unblinded_required", [
+            ("true", 12, "d-prot"), ("false", 4, "d-rfp"),
+        ])
+        lines = self._block_lines([rf], [c])
+        start = lines.index(
+            (0, "Unblinded monitoring likely required: documents disagree (Disagreement 1)")
+        )
+        assert [indent for indent, _ in lines[start + 1:start + 3]] == [1, 1]
+        assert lines[start + 1][1].startswith("Protocol p.12")
+        assert lines[start + 2][1].startswith("RFP p.4")
+
+    def test_a_member_with_no_line_in_a_disagreement_gives_both_sides(self) -> None:
+        rf, c = self._disputed("monitoring.unblinded_factors", [
+            ("pharmacy", 53, "d-prot"), ("dosing", 3, "d-rfp"),
+        ])
+        lines = self._block_lines([rf], [c])
+        label = get_registry().get_field("monitoring.unblinded_factors").label
+        assert (0, f"{label}: documents disagree (Disagreement 1)") in lines
+        assert f"{label}: not found" not in [t for _, t in lines]
+
+    def test_a_scoped_row_read_through_a_wording_says_its_part(self) -> None:
+        lines = self._block_lines([
+            _rf("ops.visits_pharmacy_monitoring", "4 visits per site", pages=(4,),
+                doc="d-rfp", kind="rfp", scope="part:Part A"),
+        ], [])
+        assert (
+            0, "Part: Part A: RFP asks for pharmacy monitoring visits: 4 visits per site (RFP p.4)."
+        ) in lines
+
+    def test_a_line_read_through_a_wording_cites_only_the_pages_stating_its_value(self) -> None:
+        # "reconcilable": one row with a value and no numbered disagreement, so
+        # the line's wording is used, and its sources hold both records' pages.
+        fid = "ops.visits_pharmacy_monitoring"
+        c = _contradiction(fid, "reconcilable", [
+            ("4 visits per site", 4, "d-rfp"), ("2 visits per site", 9, "d-prot"),
+        ])
+        rf = _rf(fid, "4 visits per site", status="needs_review", contradiction=c,
+                 pages=(4,), doc="d-rfp", kind="rfp")
+        rf.sources = [r.provenance for r in c.records]
+        lines = self._block_lines([rf], [c])
+        assert (
+            0, "RFP asks for pharmacy monitoring visits: 4 visits per site (RFP p.4)."
+        ) in lines
+        assert not any("p.9" in t for _, t in lines)
+
+    def test_a_line_with_a_wording_in_a_disagreement_gives_both_sides(self) -> None:
+        fid = "ops.visits_pharmacy_monitoring"
+        rf, c = self._disputed(fid, [("4 visits per site", 4, "d-rfp"), ("2", 9, "d-prot")])
+        lines = self._block_lines([rf], [c])
+        assert not any("asks for" in t for _, t in lines)
+        assert any("documents disagree (Disagreement 1)" in t for _, t in lines)
+
+    def test_a_line_with_a_wording_does_not_say_a_document_asks_for_not_specified(
+        self,
+    ) -> None:
+        fid = "ops.visits_pharmacy_monitoring"
+        lines = self._block_lines([
+            _rf(fid, None, status="not_specified", pages=(4,), doc="d-rfp", kind="rfp"),
+        ], [])
+        assert not any("asks for" in t for _, t in lines)
+        assert any("Not specified" in t and "RFP p.4" in t for _, t in lines)
+
+    def test_a_scoped_headline_value_says_its_part(self) -> None:
+        state = RunState(run_id="r-1", resolved=[
+            _rf("monitoring.unblinded_required", True, scope="cohort:Part A", pages=(12,)),
+            _rf("monitoring.unblinded_required", False, scope="cohort:Part B", pages=(13,)),
+        ])
+        model = build_report_model(state, get_registry())
+        assert_nothing_lost(state, get_registry(), model)
+        [group] = [g for g in model.groups if g.group.id == "blinding_monitoring"]
+        [row] = [r for r in group.rows if r.members]
+        assert [v.text.split(": ")[0] for v in row.values] == ["Cohort", "Cohort"]
+        assert {v.text.split(": ")[1] for v in row.values} == {"Part A", "Part B"}
+
+
+class TestScopeWords:
+    """Fix 11 of the 2026-10-12 brief: no raw `<kind>:` prefix and no
+    "Part not stated" in the main table."""
+
+    def test_a_listed_kind_is_a_word_and_an_unlisted_scope_is_kept(self) -> None:
+        from rfp_intake.render.report_model import _scope_words
+
+        wording = get_registry().report_wording
+        assert _scope_words("cohort:NEOD001 arm", wording) == "Cohort: NEOD001 arm"
+        assert _scope_words("Dose-Level: 3", wording) == "Dose level: 3"
+        assert _scope_words("ITT Population", wording) == "ITT Population"
+        assert _scope_words("part:", wording) == "part:"
+        assert _scope_words("note: see below", wording) == "note: see below"
+
+    def test_the_unscoped_row_comes_first_and_appendix_a_keeps_the_stored_scope(self) -> None:
+        state = RunState(run_id="r-1", resolved=[
+            _rf("study.population", "Adults with AL amyloidosis", scope="cohort:Part A",
+                pages=(5,)),
+            _rf("study.population", "Adults with AL amyloidosis", pages=(4,)),
+        ])
+        fid = "study.population"
+        model = build_report_model(state, get_registry())
+        assert_nothing_lost(state, get_registry(), model)
+        assert [r.scope for r in model.all_rows() if r.field_id == fid] == [None, "Cohort: Part A"]
+        assert "cohort:Part A" in {e.scope for e in model.evidence if e.field_id == fid}

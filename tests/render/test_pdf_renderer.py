@@ -498,3 +498,45 @@ class TestReportText:
             evidence
         )
         assert "visits.intensity" not in text
+
+    def test_the_blinding_block_and_the_scope_words_are_printed(
+        self, fields_yaml_path: Path,
+    ) -> None:
+        """Fixes 9 and 11 of the 2026-10-12 brief, read back out of the PDF: one
+        "Unblinded staff and monitoring" row in place of six, a scope's kind as a
+        word, and no "Part not stated"."""
+        _use_real_registry(fields_yaml_path)
+
+        def rf(field_id: str, value: object, page: int, scope: str | None = None,
+               quote: str = "q") -> ResolvedField:
+            return ResolvedField(
+                field_id=field_id, value=value, status="needs_review", confidence=0.9,
+                scope=scope, quote=quote,
+                sources=[Provenance(doc_id="d-prot", doc_kind="protocol", page=page)],
+            )
+
+        state = RunState(run_id="r-1", resolved=[
+            rf("monitoring.unblinded_required", "likely", 12),
+            rf("blinding.unblinded_staff_stated", "true", 52,
+               quote="The Unblinded Pharmacist will be provided access."),
+            rf("ops.subjects_total", 130, 15, scope="cohort:NEOD001 arm"),
+            rf("ops.subjects_total", 260, 43),
+        ])
+        text = " ".join(_pdf_text(build_report_pdf(state, _registry(), generated_at="t")).split())
+        # The main table: Flagged for review names each member under its own label.
+        main = text[:text.rindex("Flagged for review", 0, text.index("Appendix A — Evidence"))]
+        assert "Unblinded staff and monitoring" in main
+        assert "Likely needed" in main
+        assert (
+            'Stated in the documents: Yes — "The Unblinded Pharmacist will be provided '
+            'access." (Protocol p.52)'
+        ) in main
+        assert "Factors driving unblinded monitoring: not found" in main
+        assert "Unblinded monitoring likely required" not in main
+        assert "Cohort: NEOD001 arm" in main
+        assert "cohort:" not in main
+        assert "Part not stated" not in text
+        # Appendix A keeps each variable under its own label and the scope as stored.
+        evidence = text[text.index("Appendix A — Evidence"):]
+        assert "Unblinded monitoring likely required" in evidence
+        assert "cohort:NEOD001 arm" in evidence
