@@ -374,6 +374,55 @@ class TestTimeline:
             f"Whole study: 42 months vs {rfp_says} (Disagreement {no})"
         )
 
+    def test_a_wording_that_starts_with_an_amount_gives_only_the_amount(self) -> None:
+        # Item 4 of the 2026-10-13 prompt: run r-20261012-angus2's amendment
+        # gave three wordings and no record NORMALIZE read as an amount, and the
+        # line printed all three. The duration row keeps every wording.
+        long = "approximately 42 months, including the enrollment and treatment periods"
+        records = _timeline() + [
+            _rec("timeline.total_duration", long, "study", AM, 15, long),
+            _rec("timeline.total_duration", "42 months (total study duration)", "study", AM,
+                 24, "42 months (total study duration)"),
+            _rec("timeline.total_duration", "42 months total study duration", "study", AM,
+                 24, "42 months total study duration"),
+            _rec("timeline.total_duration", "40 months", "study", RFP, 3, "40 months"),
+        ]
+        _, model = _report(records)
+        [no] = [d.no for d in model.decisions if d.field_id == "timeline.total_duration"]
+        assert _lines(_row(model, "timeline.periods"))[-1] == (
+            f"Whole study: 42 vs 40 months (Disagreement {no})"
+        )
+        row = _row(model, "timeline.total_duration")
+        shown = [s.text for p in (row.parts or [row]) for s in p.sides]
+        assert long in shown and "42 months (total study duration)" in shown
+
+    def test_a_document_with_no_amount_gives_its_wording(self) -> None:
+        # "approximately 42 months" starts with a word, so it is not an amount.
+        records = _timeline() + [
+            _rec("timeline.total_duration", "approximately 42 months", "study", AM, 15,
+                 "approximately 42 months"),
+            _rec("timeline.total_duration", "40 months", "study", RFP, 3, "40 months"),
+        ]
+        _, model = _report(records)
+        [no] = [d.no for d in model.decisions if d.field_id == "timeline.total_duration"]
+        assert _lines(_row(model, "timeline.periods"))[-1] == (
+            f"Whole study: approximately 42 months vs 40 months (Disagreement {no})"
+        )
+
+    def test_a_document_with_no_amount_gives_each_of_its_values(self) -> None:
+        # Two wordings that read differently are two values; neither is left out.
+        records = _timeline() + [
+            _rec("timeline.total_duration", "about 3.5 years", "study", AM, 15,
+                 "about 3.5 years"),
+            _rec("timeline.total_duration", "about 4 years", "study", AM, 24, "about 4 years"),
+            _rec("timeline.total_duration", "40 months", "study", RFP, 3, "40 months"),
+        ]
+        _, model = _report(records)
+        [no] = [d.no for d in model.decisions if d.field_id == "timeline.total_duration"]
+        assert _lines(_row(model, "timeline.periods"))[-1] == (
+            f"Whole study: about 3.5 years vs about 4 years vs 40 months (Disagreement {no})"
+        )
+
     def test_without_a_disagreement_the_whole_study_line_only_points(self) -> None:
         _, model = _report(_timeline() + _durations()[:1])
         assert _lines(_row(model, "timeline.periods"))[-1] == (
@@ -519,3 +568,34 @@ def test_the_pdf_prints_the_three_rows() -> None:
         "Whole study: 42 vs 40 months (Disagreement",
     ):
         assert said in text, said
+
+
+class TestLeadingAmount:
+    """Which wordings start with an amount, for the whole-study line."""
+
+    @pytest.mark.parametrize(("value", "words"), [
+        ("42 months (total study duration)", "42 months"),
+        ("42 months total study duration", "42 months"),
+        ("3.5 years from first patient in", "3.5 years"),
+        ({"n": 40, "unit": "months"}, "40 months"),
+    ])
+    def test_an_amount_is_read(self, value: Any, words: str) -> None:
+        from rfp_intake.render.report_model import _leading_amount
+
+        record = _rec("timeline.total_duration", value, "study", AM, 24, "q")
+        record.value = value
+        found = _leading_amount(record)
+        assert found is not None and found[1] == words
+
+    @pytest.mark.parametrize("value", [
+        "approximately 42 months",
+        "the study lasts 42 months",
+        "1 visit per site",
+        "3.5-4 years",
+    ])
+    def test_anything_else_is_not(self, value: str) -> None:
+        from rfp_intake.render.report_model import _leading_amount
+
+        record = _rec("timeline.total_duration", value, "study", AM, 24, "q")
+        record.value = value
+        assert _leading_amount(record) is None

@@ -1118,10 +1118,14 @@ grouped by Oliver's fixed list of periods (2026-10-12), reads "Early treatment (
 "Screening: …" where the document's label only repeats the period; `notes` adds words after a stretch
 ("(budgeted separately)"), a stretch scoped to a part is printed under the part's heading, and
 `see_also` ends with a line pointing at another variable, naming its disagreement and its values if it
-has one ("Whole study: 42 vs 40 months (Disagreement 2)"). Those values are NORMALIZE's amounts where
-every document in the disagreement has one and all are in one unit (`_amounts`), and otherwise each
-side's text as the variable's own row prints it, both taken from the disagreement that row's sides
-come from (`Row.disagreement`). The phrases are the `entries_` phrases and `other_wordings` in
+has one ("Whole study: 42 vs 40 months (Disagreement 2)"). Those values come one document at a time
+from the disagreement that row's sides come from (`Row.disagreement`), by item 4 of Oliver's
+2026-10-13 prompt, after run `r-20261012-angus2` printed the amendment's three wordings there: a
+document with a record NORMALIZE read as an amount, or whose wording starts with a number and unit
+("42 months (total study duration)", read by NORMALIZE's duration reader), gives only those amounts,
+and any other document gives each of its values as its side on the variable's own row words it; where
+every document gives amounts in one unit, the unit is printed once (`_disputed_values`). Nothing is
+converted or added up, and the disagreement's own row and Appendix A keep every wording. The phrases are the `entries_` phrases and `other_wordings` in
 `report_wording`. Appendix A gives each statement its own line, value, page and quote, so every
 document's wording is there. A period's other records are only there, the line giving, for each key,
 the wording document precedence and then confidence choose, and "Other wordings are quoted in Appendix A." under the row. A record

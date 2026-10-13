@@ -51,6 +51,7 @@ from rfp_intake.domain.schemas import (
     RunState,
 )
 from rfp_intake.gate import CONFIDENCE_CONFIRMED, DISMISSED_VERDICTS
+from rfp_intake.normalize.duration import normalize_duration
 from rfp_intake.normalize.scope import normalize_scope
 from rfp_intake.reconcile.entries import MergedEntry, group_entries, merge_entry, same_key
 
@@ -1672,23 +1673,64 @@ def _word_key(text: str) -> str:
     return " ".join(re.sub(r"[\W_]+", " ", text).split()).casefold()
 
 
-def _amounts(c: Contradiction) -> str | None:
-    """The disputed values as amounts of one unit, "42 vs 40 months", where
-    every document in the disagreement has a record NORMALIZE read as an amount
-    and all those amounts are in one unit; else None. A document's other
-    wordings of its value ("approximately 42 months, including …") are on the
-    variable's own row and in Appendix A; this is the short form for a line
-    that only points there. Nothing is parsed: the amounts are NORMALIZE's."""
-    by_doc: dict[str, list[dict[str, Any]]] = {}
-    for r in c.records:
-        amounts = by_doc.setdefault(r.provenance.doc_id, [])
-        if isinstance(r.value, dict) and set(r.value) == {"n", "unit"}:
-            amounts.append(r.value)
-    found = [a for amounts in by_doc.values() for a in amounts]
-    if not all(by_doc.values()) or len({str(a["unit"]).casefold() for a in found}) != 1:
+# The amount a wording starts with: "42 months" of "42 months (total study
+# duration)". Not "approximately 42 months": that wording starts with a word.
+_LEADING_AMOUNT = re.compile(r"\s*(\d+(?:\.\d+)?\s+[^\W\d_]+)\b")
+
+
+def _leading_amount(r: FieldRecord) -> tuple[dict[str, Any], str] | None:
+    """The amount a record's value is, or its wording starts with, and the words
+    to print for it; else None. The words read as an amount only if NORMALIZE's
+    duration reader reads them as one, so "1 visit per site" is no amount."""
+    if isinstance(r.value, dict) and set(r.value) == {"n", "unit"}:
+        return r.value, format_value(r.value, None)[0]
+    m = _LEADING_AMOUNT.match(r.value) if isinstance(r.value, str) else None
+    if m is None:
         return None
-    ns = dict.fromkeys(format_value(a["n"], None)[0] for a in found)
-    return " vs ".join(ns) + f" {found[0]['unit']}"
+    amount = normalize_duration(m.group(1))
+    if amount is None or set(amount) != {"n", "unit"}:
+        return None
+    return amount, m.group(1)
+
+
+def _disputed_values(c: Contradiction, fd: FieldDef | None) -> str:
+    """The disputed values for a line that only points at the disagreement, one
+    per document: "42 vs 40 months".
+
+    Item 4 of Oliver's 2026-10-13 prompt, with his change: a document with a
+    record that is an amount, or whose wording starts with one ("42 months
+    (total study duration)"), gives only its amounts; any other document gives
+    each of its values as its side on the row words it (the chosen record's
+    wording, else the most confident record's). When every
+    document gives amounts and they are all in one unit, the unit is printed
+    once. Run r-20261012-angus2 printed the amendment's three wordings and the
+    RFP's 40 months here. The disagreement's own row and Appendix A keep every
+    wording. Nothing is converted or added up.
+    """
+    by_doc: dict[str, list[tuple[int, FieldRecord]]] = {}
+    for i, r in enumerate(c.records, 1):
+        by_doc.setdefault(r.provenance.doc_id, []).append((i, r))
+    amounts: list[tuple[dict[str, Any], str]] = []
+    said: list[str] = []
+    for recs in by_doc.values():
+        mine = [a for _, r in recs if (a := _leading_amount(r)) is not None]
+        if mine:
+            amounts += mine
+            said += [words for _, words in mine]
+            continue
+        # Each value the document gives, worded as its side on the row words it.
+        groups: dict[str, list[tuple[int, FieldRecord]]] = {}
+        for i, r in recs:
+            groups.setdefault(_same_key(_record_items(r, fd)), []).append((i, r))
+        for group in groups.values():
+            chosen = next((r for i, r in group if i == c.winning_record_index), None)
+            best = chosen or max((r for _, r in group), key=lambda r: r.confidence)
+            said.append("; ".join(_record_items(best, fd)))
+    units = {str(a["unit"]).casefold() for a, _ in amounts}
+    if len(amounts) == len(said) and len(units) == 1:
+        ns = dict.fromkeys(format_value(a["n"], None)[0] for a, _ in amounts)
+        return " vs ".join(ns) + f" {amounts[0][0]['unit']}"
+    return " vs ".join(dict.fromkeys(said))
 
 
 def _periods_row(
@@ -1750,7 +1792,7 @@ def _periods_row(
         disputed = next((r for r in rows if r.sides and r.decision_no is not None), None)
         if disputed is not None and disputed.decision_no is not None:
             own = disputed.disagreement
-            values = (own and _amounts(own)) or " vs ".join(
+            values = _disputed_values(own, other) if own else " vs ".join(
                 dict.fromkeys(s.text for s in disputed.sides)
             )
             lines.append(BlockText(fill(
