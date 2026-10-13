@@ -35,6 +35,7 @@ from rfp_intake.domain.registry import (
     EntryKey,
     FieldDef,
     GroupDef,
+    NotFoundNote,
     PeriodsDisplay,
     Registry,
     ReportWording,
@@ -585,7 +586,7 @@ def build_report_model(state: RunState, registry: Registry) -> ReportModel:
     docs = _Docs(state)
     field_by_id = {f.id: f for f in registry.fields}
 
-    decisions = _decisions(state, field_by_id, docs)
+    decisions = _decisions(state, field_by_id, docs, registry.report_wording)
     decision_no = {d.signature: d.no for d in decisions}
 
     by_field: dict[str, list[ResolvedField]] = defaultdict(list)
@@ -632,6 +633,20 @@ def build_report_model(state: RunState, registry: Registry) -> ReportModel:
                 registry.report_wording,
             )
 
+    # A variable no document gives, with what its `when_not_found` says about
+    # why (fix 4 of the 2026-10-12 brief).
+    for fd in registry.fields:
+        note = fd.when_not_found
+        if note is None or fd.id in shown_as:
+            continue
+        entries = by_field.get(fd.id, [])
+        # A record scoped "why no total" that nonetheless gives a value is a
+        # value, so the variable is printed as usual.
+        if all(rf.status == "not_found"
+               or (rf.value is None and scope_has_phrase(rf.scope, note.because_scopes))
+               for rf in entries):
+            shown_as[fd.id] = _not_found_row(fd, note, entries, rows_by_field, field_by_id, docs)
+
     sections: list[GroupSection] = []
     found = 0
     for group in registry.groups:
@@ -640,7 +655,8 @@ def build_report_model(state: RunState, registry: Registry) -> ReportModel:
         taken = set(group.block.replaces) if group.block is not None else set()
         for fd in (f for f in registry.fields if f.group == group.id):
             field_rows = rows_by_field[fd.id]
-            if any(r.status != "not_found" for r in field_rows):
+            noted = fd.id in shown_as and shown_as[fd.id].status == "not_found"
+            if not noted and any(r.status != "not_found" for r in field_rows):
                 found += 1
             if fd.id in in_headline:
                 continue
@@ -680,7 +696,7 @@ def build_report_model(state: RunState, registry: Registry) -> ReportModel:
         documents=docs.refs,
         groups=sections,
         decisions=decisions,
-        dismissed=_dismissed(state, field_by_id, docs),
+        dismissed=_dismissed(state, field_by_id, docs, registry.report_wording),
         evidence=_evidence(state, field_by_id, docs, decision_no, registry.report_wording),
         glossary=[Term(f.label, f.plain) for f in registry.fields if f.plain],
         variables_total=len(registry.fields),
@@ -789,7 +805,7 @@ def _rows_for(
             label=fd.label,
             # name_ids: an entry RECONCILE kept out of the arm match carries its
             # document's id in its scope (reconcile/__init__.py:_scope_checks).
-            scope=_scope_words(docs.name_ids(group[0].scope), wording)
+            scope=_capital(_scope_words(docs.name_ids(group[0].scope), wording))
             if scope_key is not None and group[0].scope else None,
             budget_driver=fd.budget_driver,
             status=min((ln.status for ln in lines), key=lambda s: _STATUS_RANK.get(s, 0)),
@@ -810,11 +826,69 @@ def _rows_for(
     return rows
 
 
+def _not_found_row(
+    fd: FieldDef,
+    note: NotFoundNote,
+    entries: list[ResolvedField],
+    rows_by_field: dict[str, list[Row]],
+    field_by_id: dict[str, FieldDef],
+    docs: _Docs,
+) -> Row:
+    """A variable no document gives, as its `when_not_found` explains it: the
+    note's own lines, then each passage saying why there is no value, quoted
+    with its pages, then where to look instead.
+
+    Fix 4 of the 2026-10-12 brief. The reason is only ever a document's own
+    sentence, from a record scoped as `because_scopes` names; with none, no
+    reason is printed. Those records stay the row's `members`, so they are
+    still counted, listed and quoted in Appendix A. Nothing here works out a
+    value.
+    """
+    # The note's own lines stand where the value would, as the approved layout
+    # reads; "—" only if the note has none.
+    head = " ".join(note.lines) or "—"
+    lines: list[BlockText] = []
+    for rf in entries:
+        if rf.quote and scope_has_phrase(rf.scope, note.because_scopes):
+            lines.append(BlockText(note.because_line.format(
+                quote=" ".join(rf.quote.split()), pages=docs.pages(rf.sources),
+            )))
+    for other in note.see:
+        lines.append(BlockText(note.see_line.format(label=field_by_id[other].label)))
+    return Row(
+        field_id=fd.id,
+        label=fd.label,
+        scope=None,
+        budget_driver=fd.budget_driver,
+        status="not_found",
+        values=[ValueLine(items=[head], status="not_found", confidence=0.0, sources="")],
+        members=[r for r in rows_by_field.get(fd.id, []) if r.values[0].entries],
+        block_lines=lines,
+    )
+
+
+_LEADING_WORD = re.compile(r"(\s*)([^\W\d_]+)")
+
+
+def _capital(text: str) -> str:
+    """A label the documents worded, with its first letter capitalised:
+    "accrual period" reads "Accrual period" and "cohort:NEOD001 arm" reads
+    "Cohort:NEOD001 arm" (addition 3 to stage 6 of the 2026-10-12 plan). Only
+    when the letters the label starts with are all lower case, so "mL", "eCRF"
+    and "iPad" stay as written."""
+    m = _LEADING_WORD.match(text)
+    if m is None or not m.group(2).islower():
+        return text
+    at = m.start(2)
+    return text[:at] + text[at].upper() + text[at + 1:]
+
+
 def _scope_words(scope: str, wording: ReportWording) -> str:
     """A scope as the report prints it: its `<kind>:` prefix, as the design.parts
     hint defines the kinds, as a word from report_wording.scope_kinds, so that
     "cohort:NEOD001 arm" reads "Cohort: NEOD001 arm". A scope with no listed
-    prefix is printed as stored; Appendix A always prints it as stored."""
+    prefix is printed as stored; Appendix A prints every scope as stored,
+    with only its first letter capitalised (_capital)."""
     kind, sep, name = scope.partition(":")
     word = wording.scope_kinds.get(re.sub(r"[\s-]+", "_", kind.strip().lower()))
     if not sep or word is None or not name.strip():
@@ -1296,7 +1370,7 @@ def _display_row(
 def _part_title(display: EntriesDisplay, words: dict[str, str], n: int) -> str:
     """The title an `entries` display gives its `n`th part, from the part's
     keys as `_entry_words` prints them."""
-    return _pick(display.title, {**words, "n": str(n)}) or str(n)
+    return _capital(_pick(display.title, {**words, "n": str(n)}) or str(n))
 
 
 def _titled_parts(
@@ -1352,7 +1426,7 @@ def _entries_row(
         for alternatives in display.lines:
             line = _pick(alternatives, words)
             if line is not None:
-                lines.append(BlockText(line, 1))
+                lines.append(BlockText(_capital(line), 1))
         lines += _differ_lines(
             entry, unsettled, rf.statements, display.key_words, docs, wording, indent=1,
         )
@@ -1497,8 +1571,7 @@ def _breakdown_row(
         return _block_lines(BlockLine(field=fd.id), name, row, entries, fd, docs, wording)
 
     def named(row: Row) -> str:
-        name = row.scope or fd.label
-        return name[:1].upper() + name[1:]
+        return _capital(row.scope or fd.label)
 
     parts: list[tuple[int, str, Row]] = []
     each: list[Row] = []
@@ -1654,19 +1727,19 @@ def _periods_row(
     for part, statements in sorted(by_part.items(), key=lambda kv: kv[0] is not None):
         indent = 0
         if part is not None:
-            lines.append(BlockText(_scope_words(docs.name_ids(part), wording) + ":"))
+            lines.append(BlockText(_capital(_scope_words(docs.name_ids(part), wording)) + ":"))
             indent = 1
         for group in sorted(group_entries(statements, display.one_per), key=place):
             entry = merge_entry(fd, group)
             unsettled = entry.differing(None)
             words = _entry_words(entry, None, wording, set(unsettled))
-            heading = _pick(
+            heading = _capital(_pick(
                 [w for w in display.heading
                  if len({_word_key(words.get(k, "")) for k in placeholders(w)})
                  == len(placeholders(w))],
                 words,
-            ) or "—"
-            text = _pick(display.lines, {**words, "heading": heading}) or heading
+            ) or "—")
+            text = _capital(_pick(display.lines, {**words, "heading": heading}) or heading)
             note = display.notes.get(str(entry.value(display.order_key)))
             lines.append(BlockText(f"{text} {note}" if note else text, indent))
             lines += _differ_lines(entry, unsettled, group, {}, docs, wording, indent + 1)
@@ -1736,9 +1809,11 @@ def _stating(rf: ResolvedField, fd: FieldDef | None) -> list[Provenance]:
     if rf.value is None:
         return []
     want = _same_key(format_value(rf.value, fd))
+    off = set(c.off_topic_record_indexes)
     pages = {
         (r.provenance.doc_id, r.provenance.page)
-        for r in c.records if _same_key(_record_items(r, fd)) == want
+        for i, r in enumerate(c.records, start=1)
+        if i not in off and _same_key(_record_items(r, fd)) == want
     }
     return [p for p in rf.sources if (p.doc_id, p.page) in pages]
 
@@ -1763,9 +1838,12 @@ def _fold_rewordings(fd: FieldDef, row: Row) -> Row:
         or len(row.values) < 2
     ):
         return row
-    shown = max(row.values, key=lambda v: len(v.entries))
-    row.folded = [v for v in row.values if v is not shown]
-    row.values = [shown]
+    # Every wording tied for the most entries is shown: picking one of a tie
+    # would be the order the records came in deciding what the reader sees
+    # (fix 5 of the 2026-10-12 brief).
+    most = max(len(v.entries) for v in row.values)
+    row.folded = [v for v in row.values if len(v.entries) < most]
+    row.values = [v for v in row.values if len(v.entries) == most]
     return row
 
 
@@ -1868,7 +1946,7 @@ def _label(field_by_id: dict[str, FieldDef], field_id: str) -> str:
 
 
 def _decisions(
-    state: RunState, field_by_id: dict[str, FieldDef], docs: _Docs
+    state: RunState, field_by_id: dict[str, FieldDef], docs: _Docs, wording: ReportWording,
 ) -> list[Decision]:
     out: list[Decision] = []
     for c in state.contradictions:
@@ -1879,7 +1957,8 @@ def _decisions(
             no=len(out) + 1,
             field_id=c.field_id,
             label=_label(field_by_id, c.field_id),
-            scope=c.records[0].scope if c.records else None,
+            scope=_capital(_scope_words(docs.name_ids(c.records[0].scope), wording))
+            if c.records and c.records[0].scope else None,
             verdict=c.verdict,
             severity=c.severity,
             positions=_positions(c, fd, docs),
@@ -1927,7 +2006,7 @@ def _provisional(c: Contradiction, fd: FieldDef | None, docs: _Docs) -> str | No
 
 
 def _dismissed(
-    state: RunState, field_by_id: dict[str, FieldDef], docs: _Docs
+    state: RunState, field_by_id: dict[str, FieldDef], docs: _Docs, wording: ReportWording,
 ) -> list[Dismissed]:
     """Appendix B's dismissed list: every adjudicated verdict except "conflict".
 
@@ -1962,7 +2041,8 @@ def _dismissed(
         out.append(Dismissed(
             field_id=c.field_id,
             label=_label(field_by_id, c.field_id),
-            scope=c.records[0].scope if c.records else None,
+            scope=_capital(_scope_words(docs.name_ids(c.records[0].scope), wording))
+            if c.records and c.records[0].scope else None,
             values=_positions(c, fd, docs),
             # Through `name_ids`, like the Disagreements explanations in
             # `_decisions`: ADJUDICATE's prompt prints `doc_id=` for every
@@ -2022,13 +2102,41 @@ def _evidence(
         c = _own_disagreement(rf)
         marker = _marker(c, fd, decision_no, wording)
         shown: set[tuple[str, str]] = set()
-        for r in c.records if c is not None else []:
+        # Records ADJUDICATE said are not about this variable: no row, but a
+        # line here each, marked, for whichever verdict (fix 5 of the
+        # 2026-10-12 brief). A `not_a_conflict` row has no own disagreement, so
+        # these are read from the row's contradiction itself.
+        about = rf.contradiction if (
+            rf.contradiction is not None and rf.contradiction.field_id == rf.field_id
+        ) else None
+        off_topic = [
+            r for i, r in enumerate(about.records, start=1)
+            if i in set(about.off_topic_record_indexes)
+        ] if about is not None else []
+        for r in off_topic:
             said = "; ".join(_record_items(r, fd))
             shown.add((said.casefold(), r.quote.strip()))
             add(Evidence(
                 field_id=rf.field_id,
                 label=label,
-                scope=docs.name_ids(rf.scope) if rf.scope else None,
+                scope=_capital(docs.name_ids(r.scope)) if r.scope else None,
+                value=said,
+                sources=docs.pages([r.provenance]),
+                confidence=r.confidence,
+                quote=r.quote,
+                derived_from=[],
+                notes=None,
+                marker=wording.off_topic,
+            ))
+        for r in c.records if c is not None else []:
+            if any(r is o for o in off_topic):
+                continue
+            said = "; ".join(_record_items(r, fd))
+            shown.add((said.casefold(), r.quote.strip()))
+            add(Evidence(
+                field_id=rf.field_id,
+                label=label,
+                scope=_capital(docs.name_ids(rf.scope)) if rf.scope else None,
                 value=said,
                 sources=docs.pages([r.provenance]),
                 confidence=r.confidence,
@@ -2050,7 +2158,7 @@ def _evidence(
             add(Evidence(
                 field_id=rf.field_id,
                 label=label,
-                scope=docs.name_ids(rf.scope) if rf.scope else None,
+                scope=_capital(docs.name_ids(rf.scope)) if rf.scope else None,
                 value=said,
                 sources=docs.pages([r.provenance]),
                 confidence=r.confidence,
@@ -2059,6 +2167,30 @@ def _evidence(
                 notes=None,
                 marker=marker(None),
             ))
+        # Each page's own quote, where RECONCILE folded several records into
+        # this row: the row's quote is only the most confident one (fix 11 of
+        # the 2026-10-12 brief). Appendix A used to print that one quote beside
+        # every page, so RFP p.1, which says no route, read as saying "IV".
+        # An `object[]` row's statements, listed above, already do this.
+        own_quotes = (
+            c is None and not rf.statements and len(rf.source_quotes) == len(rf.sources)
+        )
+        if own_quotes:
+            for source, quote in zip(rf.sources, rf.source_quotes, strict=True):
+                if quote.strip() == (rf.quote or "").strip():
+                    continue
+                add(Evidence(
+                    field_id=rf.field_id,
+                    label=label,
+                    scope=_capital(docs.name_ids(rf.scope)) if rf.scope else None,
+                    value=value,
+                    sources=docs.pages([source]),
+                    confidence=rf.confidence,
+                    quote=quote,
+                    derived_from=[],
+                    notes=None,
+                    marker=marker(None),
+                ))
         if not rf.quote and not rf.derived_from:
             continue
         if (value.casefold(), (rf.quote or "").strip()) in shown:
@@ -2066,9 +2198,14 @@ def _evidence(
         add(Evidence(
             field_id=rf.field_id,
             label=label,
-            scope=docs.name_ids(rf.scope) if rf.scope else None,
+            scope=_capital(docs.name_ids(rf.scope)) if rf.scope else None,
             value=value,
-            sources=docs.pages(_stating(rf, fd)),
+            # With each page's own quote listed above, only the pages whose own
+            # quote this is are printed beside it.
+            sources=docs.pages([
+                p for p, q in zip(rf.sources, rf.source_quotes, strict=True)
+                if q.strip() == (rf.quote or "").strip()
+            ] if own_quotes else _stating(rf, fd)),
             confidence=rf.confidence,
             quote=rf.quote,
             # By label: Appendix A is read by the same people as the tables above.

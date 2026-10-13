@@ -142,6 +142,9 @@ report_wording:
   entries_differ_value: "{value} ({pages})"
   # Where the documents word a text key differently:
   other_wordings: "Other wordings are quoted in Appendix A."
+  # Appendix A's marker on a passage the adjudicating reviewer said is not about the
+  # variable (fix 5); the reviewer's reason is printed in Appendix B.
+  off_topic: "Not about this variable — see Appendix B"
 
 groups:
   - id: study_design
@@ -202,7 +205,8 @@ groups:
       How often a participant comes into the clinic and how much is done at each appointment.
       These are the participant's visits, not the monitor's visits to the site.
     search_hints:
-      headings: ["Schedule of Assessments", "Schedule of Activities", "SoA", "Study Procedures",
+      headings: ["Schedule of Events", "Schedule of Assessments", "Schedule of Activities", "SoA",
+                 "Study Procedures",
                  "Visit Schedule", "Study Flow Chart", "Table of Assessments", "Study Calendar",
                  "Assessments", "Trial Procedures"]
       keywords: ["screening visit", "baseline", "Day 1", "Week 4", "follow-up visit",
@@ -212,6 +216,14 @@ groups:
                  "observation period", "unscheduled visit"]
       # SoA tables carry most of this group. INGEST must preserve them as structured rows.
       requires_tables: true
+    # Addition 1 to stage 6 of the 2026-10-12 plan ranks a record from the schedule table
+    # above a summary paragraph, which needs the table in the excerpt. Measured offline on
+    # samples/Example protocol 2.pdf on 2026-10-13: with the default 3 and no "Schedule of
+    # Events" heading hint PLAN kept PROTOCOL SYNOPSIS p11-26, Table 2 p82-83 and Appendix 3
+    # p111-113, so "Table 1: Schedule of Events" p26-30 never reached the model; with the
+    # hint and 3 it replaced the synopsis. 4 keeps all four. tests/plan/test_plan_sections_samples.py
+    # fails if the table or the synopsis drops out.
+    top_k: 4
 
   - id: timelines
     label: Study Timelines
@@ -508,6 +520,9 @@ fields:
       headache". State the population in one or two sentences (e.g. "adults 18-75 with moderate to
       severe ulcerative colitis who have failed conventional therapy"). Do NOT enumerate the full
       inclusion/exclusion criteria list — Angus has flagged that as out of scope.
+      The analysis populations of the statistics section (intent-to-treat, ITT, safety,
+      per-protocol, full analysis set) are not the study population: they say which subjects'
+      data an analysis uses, not who takes part. Leave them out, and leave scope empty.
     plain: >
       Who takes part in this study. Not the same question as which disease the drug is for: an early
       study of a headache drug may be run in healthy people who have no headache.
@@ -619,6 +634,13 @@ fields:
     hint: >
       Multiple forms allowed (e.g. IV loading dose then SC maintenance). Route of administration
       determines the form for injectables. Use `other` with a note for anything unlisted.
+      Quote the sentence that states the route ("administered by intravenous infusion"), not
+      one that only names the drug.
+    # Fix 11 of the 2026-10-12 brief: run r-20261012-angus read an IV infusion from RFP p.1,
+    # which names only an antibody. A record giving infusion_iv with a quote saying none of
+    # these words is rejected by EXTRACT (extract/validate.py:answers_field).
+    quote_must_say:
+      infusion_iv: [IV, intravenous, intravenously, infusion, infusions, infused]
     plain: >
       How the drug gets into the body — a tablet, an injection under the skin, a drip into a vein.
       A drip ties up a clinic room and a nurse for hours; a tablet does not.
@@ -696,6 +718,11 @@ fields:
     budget_driver: true
     # One row, a line per period in the order of `period`'s values (fix 3), the
     # document's own label beside the period where the two differ.
+    # Addition 1 to stage 6 of the 2026-10-12 plan: a record read from the schedule table
+    # outranks a summary paragraph of the same document, whatever their confidence. The
+    # heading is the section EXTRACT read the quote from.
+    prefer_sections: ["schedule of events", "schedule of activities", "schedule of assessments",
+                      "study flow chart"]
     display:
       kind: periods
       order_key: period
@@ -710,9 +737,20 @@ fields:
     label: Total number of subject visits
     type: int
     scoped: true
-    hint: Only if stated or directly countable from the Schedule of Assessments. Do not estimate.
+    hint: >
+      Only if stated or directly countable from the Schedule of Assessments. Do not estimate.
+      If the document gives no total because the number of visits differs from subject to
+      subject (for example, visits continue for as long as each subject stays on treatment, or
+      until an event), give the sentence that says so instead: status "not_specified", scope
+      "why no total", that sentence as the quote.
     source_priority: protocol
     budget_driver: true
+    # Fix 4 of the 2026-10-12 brief. The reason line is the document's own sentence, from a
+    # record scoped "why no total"; where the model gives none, it is left out.
+    when_not_found:
+      lines: ["No document gives a total."]
+      because_scopes: ["why no total"]
+      see: [visits.frequency_by_period]
 
   - id: visits.schedule_present
     group: visits
@@ -1379,5 +1417,7 @@ fields:
               "risk-based monitoring", "quality tolerance limits"]
     hint: >
       Any sponsor-mandated monitoring model, restriction, or required visit type not captured
-      by the more specific fields above.
+      by the more specific fields above. Monitoring here means the sponsor's or CRO's oversight
+      of the sites. Instructions for measuring or handling subjects' samples (laboratory tests,
+      drug or antibody levels) are not site monitoring: leave them out.
     source_priority: rfp

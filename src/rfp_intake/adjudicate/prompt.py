@@ -28,6 +28,14 @@ winning_record unset and the highest-confidence record is used.
 Do not set winning_record for a conflict verdict — a separate deterministic \
 precedence rule decides that, not you.
 
+off_topic_records: the NUMBERS of any candidate records that are not about \
+this field at all — a passage about something else that was read as this \
+field (for example, an instruction for measuring a laboratory sample read as \
+a site monitoring strategy). Judge your verdict on the other records only, and \
+say in the explanation why each listed record is not about the field. A \
+record that is about the field but gives a different value is never \
+off-topic. Leave the list empty when every record is about the field.
+
 Your explanation must be complete enough for an analyst to act on without \
 re-reading the source documents: state both values, and name the specific \
 distinguishing detail (or the specific absence of one) that drove your verdict. \
@@ -49,6 +57,8 @@ def build_adjudicate_prompt(
 
     lines = [
         f"FIELD: {field_def.label} ({field_def.id})",
+        *([f"What the field asks for: {' '.join(field_def.hint.split())}"]
+          if field_def.hint else []),
         f"Budget driver: {'yes' if field_def.budget_driver else 'no'}",
         f"Domain authority for this field: {authority} — {authority_note}",
         "",

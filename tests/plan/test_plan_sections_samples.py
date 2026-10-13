@@ -380,6 +380,25 @@ class TestProtocol:
             assert set(task.section_ids) <= known
             assert 1 <= task.page_window[0] <= task.page_window[1] <= last_page
 
+    def test_the_schedule_table_and_the_synopsis_both_reach_the_visits_group(
+        self, protocol: Document, registry
+    ) -> None:  # type: ignore[no-untyped-def]
+        """Addition 1 to stage 6 of the 2026-10-12 plan ranks a visit-frequency
+        record read from the schedule table above a summary paragraph. On this
+        protocol the table is "Table 1: Schedule of Events", p26-30; until the
+        visits group gained the "Schedule of Events" heading hint and `top_k: 4`
+        PLAN never chose it, so the ranking had nothing to act on. The synopsis
+        must stay too: it holds the follow-up sentences."""
+        from rfp_intake.domain.registry import scope_has_phrase
+
+        by_id = {s.id: s.heading for s in protocol.sections}
+        chosen = {by_id[i] for t in plan_extraction([protocol], registry) if t.group == "visits"
+                  for i in t.section_ids}
+        preferred = registry.get_field("visits.frequency_by_period").prefer_sections
+        assert "Table 1: Schedule of Events" in chosen
+        assert scope_has_phrase("Table 1: Schedule of Events", preferred)
+        assert "PROTOCOL SYNOPSIS" in chosen
+
 
 @pytest.mark.slow
 class TestBothDocuments:

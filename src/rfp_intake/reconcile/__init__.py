@@ -313,6 +313,9 @@ def _merge_collection(
         confidence=confidence,
         sources=[r.provenance for r in records],
         quote=best.quote,
+        # Each page's own words, so Appendix A shows what every cited page says
+        # rather than one quote beside all of them (fix 11 of the 2026-10-12 brief).
+        source_quotes=[r.quote for r in records],
         scope=scope,
         review_note=review_note,
         statements=(

@@ -25,6 +25,10 @@ class Provenance(BaseModel):
     # `domain/dynamic.py:extraction_response_to_records`, and None whenever the
     # two numbers agree or no printed number could be read.
     printed_page: str | None = None
+    # The heading of the section the quote was read from, set by EXTRACT since
+    # 2026-10-12 (extract/prompt.py:quote_section). None when no chosen
+    # section's text on the record's page holds the quote. A field's
+    # `prefer_sections` in config/fields.yaml reads it.
     section: str | None = None
     char_span: tuple[int, int] | None = None
 
@@ -70,6 +74,13 @@ class Contradiction(BaseModel):
     # not decide.
     winning_record_index: int | None = None
     severity: Literal["high", "medium", "low"] | None = None
+    # 1-based positions in `records`, numbered as `winning_record_index` is, of
+    # the records ADJUDICATE said are not about this field at all (fix 5 of the
+    # 2026-10-12 brief: a lab instruction read as a monitoring strategy). They
+    # get no row; Appendix A still lists each one, marked. The records stay in
+    # `records`, so nothing is lost. Empty for a `conflict`, where they are
+    # kept as sides (adjudicate/__init__.py:_off_topic).
+    off_topic_record_indexes: list[int] = Field(default_factory=list)
 
 
 class ResolvedField(BaseModel):
@@ -104,6 +115,11 @@ class ResolvedField(BaseModel):
     # Filled by RECONCILE for an `object[]` field with a schema; empty otherwise.
     # Added 2026-10-12, fix 1 of that day's brief.
     statements: list[FieldRecord] = Field(default_factory=list)
+    # Each source's own quote, in the order of `sources`, where RECONCILE folded
+    # several records into this row (_merge_collection). `quote` is only the
+    # most confident one, and Appendix A prints each of these beside its own
+    # page. Empty on any other row, and on rows made before 2026-10-12.
+    source_quotes: list[str] = Field(default_factory=list)
 
 
 class OutlineEntry(BaseModel):
@@ -282,10 +298,15 @@ class RunError(BaseModel):
     kind: Literal["call_failed", "validation"] = "call_failed"
     # The answer EXTRACT threw away, kept so a dropped record can be read
     # rather than inferred. Set only for a record that failed validation after
-    # the repair retry. Before 2026-10-11 only the reason was kept, so the quote
+    # the repair retry, or that extract/validate.py:answers_field rejected,
+    # which gets no retry. Before 2026-10-11 only the reason was kept, so the quote
     # behind run r-20261009-225414's Site selection error could not be shown.
     rejected_value: str | None = None
     rejected_quote: str | None = None
+    # The page the rejected record named. Added 2026-10-12 so the records the
+    # two rules of extract/validate.py:answers_field reject can be listed by
+    # field, page and quote.
+    rejected_page: int | None = None
     timestamp: datetime = Field(default_factory=datetime.now)
 
 

@@ -536,7 +536,8 @@ class TestReportText:
         assert "Cohort: NEOD001 arm" in main
         assert "cohort:" not in main
         assert "Part not stated" not in text
-        # Appendix A keeps each variable under its own label and the scope as stored.
+        # Appendix A keeps each variable under its own label and the scope as
+        # stored, with a capital (addition 3 to stage 6 of the 2026-10-12 plan).
         evidence = text[text.index("Appendix A — Evidence"):]
         assert "Unblinded monitoring likely required" in evidence
-        assert "cohort:NEOD001 arm" in evidence
+        assert "Cohort:NEOD001 arm" in evidence

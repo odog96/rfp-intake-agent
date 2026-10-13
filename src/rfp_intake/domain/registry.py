@@ -286,6 +286,37 @@ class EntriesDisplay(BaseModel):
     key_words: dict[str, str] = Field(default_factory=dict)
 
 
+class NotFoundNote(BaseModel):
+    """What a variable's row says under "Not found" when no document gives its
+    value (fix 4 of the 2026-10-12 brief), `when_not_found` in
+    config/fields.yaml. `lines` are printed as written. A record whose scope
+    has one of `because_scopes` (scope_has_phrase) is a passage saying why
+    there is no value: it is printed as `because_line`, `{quote}` its own
+    words and `{pages}` its page, never reworded. Each field in `see` gets
+    `see_line`, `{label}` that field's label. Where any other record gives a
+    value, the row is printed as usual and none of this is used."""
+
+    lines: list[str] = Field(default_factory=list)
+    because_scopes: list[str] = Field(default_factory=list)
+    because_line: str = Field(default='"{quote}" ({pages})', min_length=1)
+    see: list[str] = Field(default_factory=list)
+    see_line: str = Field(default="See {label}.", min_length=1)
+
+    @field_validator("because_line")
+    @classmethod
+    def _quotes(cls, v: str) -> str:
+        if "{quote}" not in v:
+            raise ValueError("must contain {quote}, the passage's own words")
+        return v
+
+    @field_validator("see_line")
+    @classmethod
+    def _names(cls, v: str) -> str:
+        if "{label}" not in v:
+            raise ValueError("must contain {label}")
+        return v
+
+
 class SeeAlso(BaseModel):
     """A line of a `periods` row sending the reader to another variable's row.
     `{label}` is that variable's label; `disagree` is printed instead where its
@@ -472,6 +503,21 @@ class FieldDef(BaseModel):
     # like `plain`. A value not listed is printed by render/report_model.py's
     # humanize_enum. Added 2026-10-12, fix 2 of that day's brief.
     value_words: dict[str, str] = Field(default_factory=dict)
+    # Words a record's quote must contain for each enum value it gives, any one
+    # of them, matched as whole words ignoring case. A record giving the value
+    # with a quote saying none of them is rejected by EXTRACT
+    # (extract/validate.py:answers_field): run r-20261012-angus read an IV
+    # infusion from RFP p.1, which names only an antibody. Fix 11 of the
+    # 2026-10-12 brief, declared for ip.form only.
+    quote_must_say: dict[str, list[str]] = Field(default_factory=dict)
+    # Section headings, as phrases (scope_has_phrase), whose records outrank
+    # every other record of the same document for this field, whatever their
+    # confidence: the schedule table over a summary paragraph. Read from the
+    # heading EXTRACT records (Provenance.section) by reconcile/entries.py.
+    # Addition 1 to stage 6 of the 2026-10-12 plan.
+    prefer_sections: list[str] = Field(default_factory=list)
+    # What the row says when no document gives a value. See NotFoundNote.
+    when_not_found: NotFoundNote | None = None
 
     model_config = {"populate_by_name": True}
 
@@ -546,6 +592,9 @@ class ReportWording(BaseModel):
     entries_differ: str = Field(min_length=1)
     entries_differ_value: str = Field(min_length=1)
     other_wordings: str = Field(min_length=1)
+    # Appendix A's marker on a passage ADJUDICATE said is not about the
+    # variable (fix 5 of the 2026-10-12 brief); its reason is in Appendix B.
+    off_topic: str = Field(min_length=1)
 
     @field_validator("entries_count", "entries_all_docs")
     @classmethod
@@ -752,6 +801,40 @@ def _validate_registry(groups: list[GroupDef], fields: list[FieldDef]) -> None:
         words = [w.casefold() for w in f.value_words.values()]
         if len(words) != len(set(words)):
             errors.append(f"Field {f.id} prints two values with the same value_words word")
+
+    # Required words name values the field allows, and say something.
+    for f in fields:
+        unknown = [v for v in f.quote_must_say if not f.values or v not in f.values]
+        if unknown:
+            errors.append(
+                f"Field {f.id} has quote_must_say for values it does not allow: "
+                f"{', '.join(unknown)}"
+            )
+        if any(not [w for w in ws if w.strip()] for ws in f.quote_must_say.values()):
+            errors.append(f"Field {f.id} has a quote_must_say value with no words")
+        if any(not p.strip() for p in f.prefer_sections):
+            errors.append(f"Field {f.id} has an empty prefer_sections phrase")
+
+    # A not-found note sends the reader to fields that exist, and a passage
+    # saying why can only be told apart by its scope.
+    for f in fields:
+        note = f.when_not_found
+        if note is None:
+            continue
+        for other in note.see:
+            if other not in seen_ids or other == f.id:
+                errors.append(f"Field {f.id} when_not_found sees unknown field {other}")
+        if note.because_scopes and not f.scoped:
+            errors.append(f"Field {f.id} has because_scopes but is not scoped")
+        if any(not p.strip() for p in note.because_scopes):
+            errors.append(f"Field {f.id} has an empty because_scopes phrase")
+        unknown_ph = set(placeholders(note.because_line)) - {"quote", "pages"}
+        unknown_ph |= set(placeholders(note.see_line)) - {"label"}
+        if unknown_ph:
+            errors.append(
+                f"Field {f.id} when_not_found uses unknown placeholders: "
+                f"{', '.join(sorted(unknown_ph))}"
+            )
 
     # A follower's wording needs a disagreement to follow.
     for f in fields:

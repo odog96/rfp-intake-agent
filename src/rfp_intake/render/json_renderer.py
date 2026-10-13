@@ -41,6 +41,9 @@ def build_extraction_document(state: RunState, registry: Registry) -> dict[str, 
             # these, not from `value`, so without them a re-render of the run
             # falls back to one row per scope.
             "statements": [s.model_dump(mode="json") for s in rf.statements],
+            # Each source's own quote (fix 11 of the 2026-10-12 brief). Without it
+            # a re-render quotes one passage beside every page again.
+            "source_quotes": rf.source_quotes,
         })
 
     return {

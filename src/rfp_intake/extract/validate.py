@@ -6,6 +6,10 @@ Non-negotiable per ARCHITECTURE.md §4.4:
 3. enum values must be in registry's allowed set
 4. numeric fields must parse
 5. an `object[]` field's entry must be one JSON object of its schema's keys
+
+`answers_field` adds two rules of 2026-10-12 (stage 6 of that day's plan) that
+reject a record without a repair retry, since a retry cannot make the passage
+say what it does not say.
 """
 
 from __future__ import annotations
@@ -16,6 +20,12 @@ from collections import Counter
 
 from rfp_intake.domain.dynamic import FieldExtractionItem
 from rfp_intake.domain.registry import FieldDef
+from rfp_intake.normalize.types import normalize_value
+
+# A "not specified" record below this confidence is rejected (fix 4 of the
+# 2026-10-12 brief). In run r-20261012-angus a guess that the documents were
+# silent outweighed nothing and still printed as "Not specified".
+NOT_SPECIFIED_MIN_CONFIDENCE = 0.50
 
 
 def _normalize_whitespace(text: str) -> str:
@@ -196,4 +206,32 @@ def validate_entry(raw_value: str, quote: str, field_def: FieldDef) -> str | Non
             stated = {m.group(0) for m in _WHOLE_NUMBER.finditer(quote)}
             if not written & stated:
                 return f"entry_{name}_number_not_in_quote_{n}"
+    return None
+
+
+def answers_field(item: FieldExtractionItem, field_def: FieldDef) -> str | None:
+    """Why a record that passed `validate_record` is still rejected, or None.
+
+    Two rules, both of stage 6 of the 2026-10-12 plan:
+    - a "not specified" record the model rates below
+      NOT_SPECIFIED_MIN_CONFIDENCE is a guess that the document is silent, not
+      a document saying so;
+    - a value the field lists under `quote_must_say` in config/fields.yaml needs
+      a quote containing one of its words, whole and in any case. The value is
+      read as NORMALIZE will read it, so "IV infusion" and "infusion_iv" are the
+      same value.
+    """
+    if item.status == "not_specified":
+        if item.confidence < NOT_SPECIFIED_MIN_CONFIDENCE:
+            return f"not_specified_below_{NOT_SPECIFIED_MIN_CONFIDENCE:.2f}_confidence"
+        return None
+    if not field_def.quote_must_say:
+        return None
+    value = normalize_value(item.raw_value, field_def.type, field_def.values)
+    values = value if isinstance(value, list) else [value]
+    quote_words = {w.casefold() for w in re.findall(r"\w+", item.quote)}
+    for v in values:
+        words = field_def.quote_must_say.get(str(v)) if v is not None else None
+        if words and not any(w.casefold() in quote_words for w in words):
+            return f"quote_does_not_say_{v}"
     return None

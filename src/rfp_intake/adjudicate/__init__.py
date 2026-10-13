@@ -43,6 +43,9 @@ class AdjudicationResult(BaseModel):
     # name one of several records from the same document.
     winning_record: int | None = None
     severity: Literal["high", "medium", "low"] = Field(default="medium")
+    # 1-based positions, numbered as winning_record is, of records the model
+    # says are not about this field at all. Fix 5 of the 2026-10-12 brief.
+    off_topic_records: list[int] = Field(default_factory=list)
 
 
 def adjudicate_node(state: RunState) -> dict[str, Any]:
@@ -109,6 +112,7 @@ def _adjudicate_one(
         "verdict": result.verdict,
         "explanation": result.explanation,
         "severity": result.severity,
+        "off_topic_record_indexes": _off_topic(contradiction, result),
     })
 
     if result.verdict == "not_a_conflict":
@@ -135,7 +139,7 @@ def _handle_not_a_conflict(
             contradiction=contradiction,
             notes=f"NOT_A_CONFLICT — {contradiction.explanation}",
         )
-        for r in contradiction.records
+        for r in _on_topic(contradiction)
     ]
     return contradiction, fields
 
@@ -143,7 +147,10 @@ def _handle_not_a_conflict(
 def _handle_reconcilable(
     contradiction: Contradiction, result: AdjudicationResult
 ) -> tuple[Contradiction, list[ResolvedField]]:
-    index = _winning_index(contradiction.records, result.winning_record)
+    on_topic = _on_topic(contradiction)
+    index = _winning_index(
+        contradiction.records, result.winning_record, contradiction.off_topic_record_indexes,
+    )
     winner = contradiction.records[index]
 
     contradiction = contradiction.model_copy(update={
@@ -156,7 +163,7 @@ def _handle_reconcilable(
         value=winner.value,
         status="needs_review",
         confidence=winner.confidence,
-        sources=[r.provenance for r in contradiction.records],
+        sources=[r.provenance for r in on_topic],
         quote=winner.quote,
         scope=winner.scope,
         contradiction=contradiction,
@@ -198,20 +205,56 @@ def _handle_conflict(
     return contradiction, [rf]
 
 
-def _winning_index(records: list[FieldRecord], winning_record: int | None) -> int:
+def _winning_index(
+    records: list[FieldRecord], winning_record: int | None, off_topic: list[int] | None = None,
+) -> int:
     """Index in `records` of the record ADJUDICATE chose, by its prompt number.
 
-    Falls back to the highest-confidence record when the model named no record or
-    named one that is not in the list — earlier ties going to the earlier record,
-    so the choice is deterministic. `records` is never empty: RECONCILE only
-    raises a candidate for two or more records.
+    Falls back to the highest-confidence record when the model named no record,
+    named one that is not in the list, or named one it also called off-topic —
+    earlier ties going to the earlier record, so the choice is deterministic.
+    Off-topic records are never the fallback. `records` is never empty, and
+    `_off_topic` never marks every record, so a candidate always remains.
     """
-    if winning_record is not None and 1 <= winning_record <= len(records):
+    excluded = set(off_topic or [])
+    if (winning_record is not None and 1 <= winning_record <= len(records)
+            and winning_record not in excluded):
         return winning_record - 1
     if winning_record is not None:
         logger.warning(
-            "adjudicate_winning_record_out_of_range",
+            "adjudicate_winning_record_not_usable",
             winning_record=winning_record,
             record_count=len(records),
+            off_topic=sorted(excluded),
         )
-    return max(range(len(records)), key=lambda i: records[i].confidence)
+    usable = [i for i in range(len(records)) if i + 1 not in excluded]
+    return max(usable, key=lambda i: records[i].confidence)
+
+
+def _off_topic(contradiction: Contradiction, result: AdjudicationResult) -> list[int]:
+    """The model's off-topic record numbers that ADJUDICATE acts on.
+
+    Numbers outside the list are dropped. A `conflict` acts on none: its
+    records stay sides of the disagreement, so a person sees each one, which is
+    the safe direction if the model is wrong. Nor does a list naming every
+    record: a field with no record about it is not this verdict's to decide.
+    Either case is logged.
+    """
+    count = len(contradiction.records)
+    numbers = sorted({n for n in result.off_topic_records if 1 <= n <= count})
+    if numbers and (result.verdict == "conflict" or len(numbers) == count):
+        logger.warning(
+            "adjudicate_off_topic_ignored",
+            field_id=contradiction.field_id,
+            verdict=result.verdict,
+            off_topic=numbers,
+            record_count=count,
+        )
+        return []
+    return numbers
+
+
+def _on_topic(contradiction: Contradiction) -> list[FieldRecord]:
+    """The records that get a row: every record not marked off-topic."""
+    off = set(contradiction.off_topic_record_indexes)
+    return [r for i, r in enumerate(contradiction.records, start=1) if i not in off]

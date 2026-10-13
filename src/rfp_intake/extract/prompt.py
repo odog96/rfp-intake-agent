@@ -7,6 +7,7 @@ from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
 
 from rfp_intake.domain.registry import FieldDef, Registry
 from rfp_intake.domain.schemas import Document, ExtractionTask, Section, TableData
+from rfp_intake.extract.validate import _normalize_whitespace
 from rfp_intake.sections import section_page_texts
 
 logger = structlog.get_logger()
@@ -18,7 +19,9 @@ RULES
 - Return a record ONLY if the document states it. Never infer, never estimate, never use \
 outside knowledge.
 - `quote` must be copied character-for-character from the excerpt. It is validated.
-- If the document explicitly says none/not applicable, set status="not_specified".
+- Set status="not_specified" only where the passage you quote itself says the item does not \
+apply, will not be done, or is none. A document that simply does not mention the item is \
+not "not specified": omit the field.
 - If you cannot find it, omit the field entirely. Do not guess.
 - Set `scope` when the value applies to a cohort/arm/part/country rather than the whole study.
 - If a value differs by cohort, emit one record PER cohort. Do not average or merge.
@@ -226,6 +229,26 @@ def _chosen_sections(task: ExtractionTask, doc: Document) -> list[Section]:
         return []
     wanted = set(task.section_ids)
     return [section for section in doc.sections if section.id in wanted]
+
+
+def quote_section(task: ExtractionTask, doc: Document, quote: str, page: int) -> str | None:
+    """The heading of the first chosen section whose text on `page` holds `quote`.
+
+    EXTRACT stores it on the record (Provenance.section) so a field's
+    `prefer_sections` can rank the schedule table above a summary paragraph
+    (addition 1 to stage 6 of the 2026-10-12 plan). The quote is matched as
+    `validate_quote` matches it, so a quote that validated against this page
+    finds its section. None for a task with no sections, or a quote no chosen
+    section holds on that page.
+    """
+    wanted = _normalize_whitespace(quote)
+    if not wanted:
+        return None
+    for section in _chosen_sections(task, doc):
+        text = section_page_texts(doc, section).get(page)
+        if text and wanted in _normalize_whitespace(text):
+            return section.heading.strip()
+    return None
 
 
 def _chosen_headings(task: ExtractionTask, doc: Document) -> str:

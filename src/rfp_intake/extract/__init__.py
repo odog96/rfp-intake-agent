@@ -11,7 +11,7 @@ from rfp_intake.domain.dynamic import (
     build_extraction_model,
     extraction_response_to_records,
 )
-from rfp_intake.domain.registry import Registry, get_registry
+from rfp_intake.domain.registry import FieldDef, Registry, get_registry
 from rfp_intake.domain.schemas import (
     Document,
     ExtractionTask,
@@ -24,8 +24,9 @@ from rfp_intake.extract.prompt import (
     build_extract_prompt,
     build_repair_prompt,
     describe_violation,
+    quote_section,
 )
-from rfp_intake.extract.validate import nearest_passage, validate_record
+from rfp_intake.extract.validate import answers_field, nearest_passage, validate_record
 from rfp_intake.llm.provider import get_llm
 from rfp_intake.llm.structured import get_structured_output_for_role
 
@@ -69,6 +70,18 @@ def extract_group(
     valid_records: list[FieldRecord] = []
     violations: list[str] = []
     failed_records: list[FieldRecord] = []
+    errors: list[RunError] = []
+
+    def accept(record: FieldRecord, item: FieldExtractionItem, field_def: FieldDef) -> None:
+        """Keep a record that passed validate_record, unless answers_field
+        rejects it. That rejection gets no repair retry: the passage does not
+        say what the field asks, and a retry cannot change the passage."""
+        rejected = answers_field(item, field_def)
+        if rejected is not None:
+            errors.append(_rejected(task, record, f"Rejected: {rejected}"))
+            return
+        record.provenance.section = quote_section(task, doc, record.quote, record.provenance.page)
+        valid_records.append(record)
 
     for record in raw_records:
         field_def = field_map.get(record.field_id)
@@ -90,7 +103,7 @@ def extract_group(
 
         is_valid, reason = validate_record(item, excerpt, task.page_window, field_def)
         if is_valid:
-            valid_records.append(record)
+            accept(record, item, field_def)
         else:
             reason = reason or "invalid"
             passage = (
@@ -99,8 +112,6 @@ def extract_group(
             )
             violations.append(describe_violation(record.field_id, reason, passage))
             failed_records.append(record)
-
-    errors: list[RunError] = []
 
     # One repair retry if there were violations
     if violations and len(violations) <= len(raw_records):
@@ -130,16 +141,11 @@ def extract_group(
 
                 is_valid, reason = validate_record(item, excerpt, task.page_window, field_def)
                 if is_valid:
-                    valid_records.append(record)
+                    accept(record, item, field_def)
                 else:
-                    errors.append(RunError(
-                        node="EXTRACT",
-                        task_id=f"{task.doc_id}:{task.group}:{record.field_id}",
-                        error=f"Validation failed after retry: {reason}",
-                        kind="validation",
-                        rejected_value=record.raw_value,
-                        rejected_quote=record.quote,
-                    ))
+                    errors.append(
+                        _rejected(task, record, f"Validation failed after retry: {reason}")
+                    )
         except Exception as e:
             logger.error("repair_retry_failed", error=str(e), task=task.group)
             for v in violations:
@@ -203,6 +209,19 @@ def extract_node(state: RunState) -> dict[str, Any]:
             ))
 
     return {"records": all_records, "errors": all_errors}
+
+
+def _rejected(task: ExtractionTask, record: FieldRecord, error: str) -> RunError:
+    """A dropped record as an error, keeping its value, quote and page."""
+    return RunError(
+        node="EXTRACT",
+        task_id=f"{task.doc_id}:{task.group}:{record.field_id}",
+        error=error,
+        kind="validation",
+        rejected_value=record.raw_value,
+        rejected_quote=record.quote,
+        rejected_page=record.provenance.page,
+    )
 
 
 def _find_doc(state: RunState, doc_id: str) -> Document | None:

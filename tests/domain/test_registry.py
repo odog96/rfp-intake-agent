@@ -295,6 +295,7 @@ _WORDING = {
     "entries_differ": "{label}: differ — {values}",
     "entries_differ_value": "{value} ({pages})",
     "other_wordings": "Other wordings in Appendix A.",
+    "off_topic": "Not about this variable — see Appendix B",
 }
 
 
@@ -965,3 +966,80 @@ class TestABreakdownDisplay:
         shown = [f.id for f in registry.fields if isinstance(f.display, BreakdownDisplay)]
         assert shown == ["ops.subjects_total", "ops.crf_pages"]
         assert registry.get_field("ops.crf_pages").scoped
+
+
+def _with_stage6_keys(tmp_path: Path, **keys: object) -> Path:
+    """One enum field and one scoped int field, the second carrying `keys`
+    where they name `g1.count`, the first otherwise. Stage 6 of the
+    2026-10-12 plan."""
+    form: dict[str, object] = {
+        "id": "g1.form", "group": "g1", "label": "Form", "type": "enum",
+        "values": ["tablet", "infusion"],
+    }
+    count: dict[str, object] = {
+        "id": "g1.count", "group": "g1", "label": "Count", "type": "int", "scoped": True,
+    }
+    for name, value in keys.items():
+        (count if name == "when_not_found" else form)[name] = value
+    data = {
+        "version": 1,
+        "groups": [{"id": "g1", "label": "Group 1"}],
+        "fields": [form, count],
+        "report_wording": _WORDING,
+    }
+    p = tmp_path / "fields.yaml"
+    p.write_text(yaml.dump(data))
+    return p
+
+
+def test_the_stage6_keys_are_read(tmp_path: Path) -> None:
+    registry = load_registry(_with_stage6_keys(
+        tmp_path,
+        quote_must_say={"infusion": ["IV", "infusion"]},
+        prefer_sections=["schedule of assessments"],
+        when_not_found={"lines": ["No total."], "because_scopes": ["why no total"],
+                        "see": ["g1.form"]},
+    ))
+    form, count = registry.get_field("g1.form"), registry.get_field("g1.count")
+    assert form.quote_must_say == {"infusion": ["IV", "infusion"]}
+    assert form.prefer_sections == ["schedule of assessments"]
+    note = count.when_not_found
+    assert note is not None and note.see == ["g1.form"]
+    assert note.because_line == '"{quote}" ({pages})'
+    assert note.see_line == "See {label}."
+
+
+@pytest.mark.parametrize(("keys", "message"), [
+    ({"quote_must_say": {"capsule": ["oral"]}}, "quote_must_say for values it does not allow"),
+    ({"quote_must_say": {"infusion": [" "]}}, "quote_must_say value with no words"),
+    ({"prefer_sections": ["schedule", " "]}, "empty prefer_sections phrase"),
+    ({"when_not_found": {"see": ["g1.nothing"]}}, "when_not_found sees unknown field"),
+    ({"when_not_found": {"see": ["g1.count"]}}, "when_not_found sees unknown field"),
+    ({"when_not_found": {"because_scopes": [""]}}, "empty because_scopes phrase"),
+    ({"when_not_found": {"see_line": "See {label} on {page}."}}, "unknown placeholders: page"),
+])
+def test_the_stage6_keys_are_checked(
+    tmp_path: Path, keys: dict[str, object], message: str
+) -> None:
+    with pytest.raises(RegistryValidationError, match=message):
+        load_registry(_with_stage6_keys(tmp_path, **keys))
+
+
+@pytest.mark.parametrize(("note", "message"), [
+    ({"because_line": "({pages})"}, "must contain {quote}"),
+    ({"see_line": "See it."}, "must contain {label}"),
+])
+def test_a_not_found_note_keeps_the_quote_and_the_label(
+    tmp_path: Path, note: dict[str, str], message: str
+) -> None:
+    with pytest.raises(Exception, match=message):
+        load_registry(_with_stage6_keys(tmp_path, when_not_found=note))
+
+
+def test_because_scopes_need_a_scoped_field(tmp_path: Path) -> None:
+    p = _with_stage6_keys(tmp_path, when_not_found={"because_scopes": ["why no total"]})
+    data = yaml.safe_load(p.read_text())
+    data["fields"][1]["scoped"] = False
+    p.write_text(yaml.dump(data))
+    with pytest.raises(RegistryValidationError, match="has because_scopes but is not scoped"):
+        load_registry(p)

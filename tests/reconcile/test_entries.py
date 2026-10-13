@@ -128,3 +128,34 @@ def test_group_entries_by_their_one_per_keys() -> None:
     d = _rec({"period": "screening"}, "d-am", "amendment", 26)
     e = _rec("not an entry", "d-am", "amendment", 26)
     assert group_entries([a, b, c, d, e], ["period", "label"]) == [[a, c], [b], [d]]
+
+
+def _visit(value: Any, page: int, confidence: float, section: str | None) -> FieldRecord:
+    r = FieldRecord(
+        field_id="visits.frequency_by_period", group="visits", raw_value=str(value),
+        quote="q", confidence=confidence,
+        provenance=Provenance(doc_id="d-am", doc_kind="amendment", page=page, section=section),
+    )
+    r.value = value
+    return r
+
+
+def test_a_record_from_the_schedule_table_outranks_a_more_confident_summary() -> None:
+    # Addition 1 to stage 6 of the 2026-10-12 plan: the field's prefer_sections.
+    fields = get_registry().get_field("visits.frequency_by_period")
+    summary = _visit({"period": "follow_up", "frequency": "every 3 months"}, 12, 0.95,
+                     "1.2 Synopsis")
+    table = _visit({"period": "follow_up", "frequency": "every 12 weeks"}, 79, 0.8,
+                   "Appendix 1 Schedule of Assessments")
+    for order in ([summary, table], [table, summary]):
+        merged = merge_entry(fields, order)
+        assert merged.keys["frequency"].shown is table
+        assert merged.value("frequency") == "every 12 weeks"
+
+
+def test_with_no_schedule_record_the_most_confident_is_still_shown() -> None:
+    fields = get_registry().get_field("visits.frequency_by_period")
+    low = _visit({"period": "follow_up", "frequency": "every 3 months"}, 12, 0.7, None)
+    high = _visit({"period": "follow_up", "frequency": "every 12 weeks"}, 42, 0.9,
+                  "7.1.8 Follow-up")
+    assert merge_entry(fields, [low, high]).keys["frequency"].shown is high

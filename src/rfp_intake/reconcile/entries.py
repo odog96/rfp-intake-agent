@@ -9,10 +9,11 @@ agreement (`one_answer_when_documents_agree`) and RENDER the shown values, so
 both read the same merge. Pure functions over records; no I/O, no LLM.
 
 The value shown for a key is chosen by `reconcile/precedence.py`, the same
-rules a disagreement is settled by, over each document's most confident record
-stating the key. Where no rule decides, the most confident of those records is
-shown, and the first of them on a tie. A text key's other wordings are not
-dropped: they stay in `by_doc` and in Appendix A.
+rules a disagreement is settled by, over each document's best record stating
+the key: one read from a section the field's `prefer_sections` names, else the
+most confident (since 2026-10-12). Where no rule decides, the best of those
+records is shown, by the same ranking, and the first of them on a tie. A text
+key's other wordings are not dropped: they stay in `by_doc` and in Appendix A.
 """
 
 from __future__ import annotations
@@ -21,7 +22,7 @@ import re
 from dataclasses import dataclass
 from typing import Any
 
-from rfp_intake.domain.registry import EntryKey, FieldDef
+from rfp_intake.domain.registry import EntryKey, FieldDef, scope_has_phrase
 from rfp_intake.domain.schemas import FieldRecord
 from rfp_intake.reconcile.precedence import apply_precedence
 
@@ -124,7 +125,7 @@ def merge_entry(field_def: FieldDef, statements: list[FieldRecord]) -> MergedEnt
             seen = by_doc.setdefault(doc, [])
             if all(same_key(v) != same_key(said) for v, _ in seen):
                 seen.append((said, r))
-            if doc not in best or r.confidence > best[doc].confidence:
+            if doc not in best or _rank(field_def, r) > _rank(field_def, best[doc]):
                 best[doc] = r
         shown = _shown(field_def, key, list(best.values()))
         keys[key.name] = KeyMerge(
@@ -139,8 +140,16 @@ def _shown(field_def: FieldDef, key: EntryKey, candidates: list[FieldRecord]) ->
     winner = apply_precedence(field_def, as_key).winner
     if winner is not None:
         return candidates[as_key.index(winner)]
-    top = max(r.confidence for r in candidates)
-    return next(r for r in candidates if r.confidence == top)
+    top = max(_rank(field_def, r) for r in candidates)
+    return next(r for r in candidates if _rank(field_def, r) == top)
+
+
+def _rank(field_def: FieldDef, record: FieldRecord) -> tuple[bool, float]:
+    """A record read from one of the field's `prefer_sections` (the schedule
+    table) before any other, whatever their confidence; then the more confident.
+    Addition 1 to stage 6 of the 2026-10-12 plan."""
+    preferred = scope_has_phrase(record.provenance.section, field_def.prefer_sections)
+    return preferred, record.confidence
 
 
 def group_entries(statements: list[FieldRecord], one_per: list[str]) -> list[list[FieldRecord]]:

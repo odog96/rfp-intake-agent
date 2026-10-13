@@ -258,7 +258,8 @@ class Provenance(BaseModel):
     doc_date: str | None = None         # ISO; drives recency precedence
     page: int                            # 1-indexed position in the PDF file
     printed_page: str | None = None      # the number printed on that page, when it differs
-    section: str | None = None           # nearest enclosing heading
+    section: str | None = None           # heading of the chosen section the quote was read
+                                         # from (quote_section, 2026-10-12); ranks by prefer_sections
     char_span: tuple[int, int] | None = None
 
 class FieldRecord(BaseModel):
@@ -291,6 +292,8 @@ class Contradiction(BaseModel):
     # precedence chose (2026-10-12); None when precedence could not decide.
     winning_record_index: int | None = None
     severity: Literal["high", "medium", "low"] | None = None   # high = changes the budget
+    # 1-based positions of records ADJUDICATE called not about the field (§4.7, 2026-10-12).
+    off_topic_record_indexes: list[int] = []
 
 class ResolvedField(BaseModel):
     field_id: str
@@ -308,6 +311,9 @@ class ResolvedField(BaseModel):
                                           # printed in the report
     why: str | None = None                # a derived row's reasons in plain words,
                                           # printed under its value (2026-10-12)
+    review_note: str | None = None        # keeps the row in review (§4.6, 2026-10-12)
+    statements: list[FieldRecord] = []    # each document's own entry, object[] fields only (§4.6)
+    source_quotes: list[str] = []         # each merged record's own quote (§4.6, 2026-10-12)
 
 class Replace(list):
     """Marker: this update overwrites the collection instead of appending."""
@@ -696,8 +702,12 @@ Pure Python, no model call. For each `(doc, group)`:
    (`plan/scoring.py:select_sections`). **A zero-scoring section is never chosen to fill k.** k is the
    group's own `top_k` in `fields.yaml`, defaulted to 3 by `GroupDef` in `domain/registry.py` — it is per
    group because how widely a group's evidence is scattered is a property of the group, and raising one
-   number for all nine would send the other eight more text than they need. `blinding_monitoring` is the
-   only group above the default, at 7; CLAUDE.md's second 2026-10-03 entry has the measurement.
+   number for all nine would send the other eight more text than they need. `blinding_monitoring` is at
+   7 (CLAUDE.md's second 2026-10-03 entry has the measurement) and, since stage 6 of the 2026-10-12 plan,
+   `visits` is at 4 with a "Schedule of Events" heading hint: on `samples/Example protocol 2.pdf` PLAN
+   never chose "Table 1: Schedule of Events" (p26–30) before, and with the hint alone at 3 the table
+   pushed out the synopsis, which holds the follow-up sentences.
+   `tests/plan/test_plan_sections_samples.py` asserts both reach the group.
 4. If nothing scored: send every section when the whole document fits one extraction call, otherwise the
    group's first `top_k` sections, logged as `plan_no_section_scored`. A document that FIND_SECTIONS rule 2
    made one section is therefore sent whole to every group — which is what finally reads page 6 of
@@ -728,8 +738,10 @@ You are extracting {group_label} from a clinical study document for a delivery-b
 RULES
 - Return a record ONLY if the document states it. Never infer, never estimate, never use outside knowledge.
 - `quote` must be copied character-for-character from the excerpt. It is validated.
-- If the document explicitly says none/not applicable → status="not_specified".
-- If you cannot find it → omit the field entirely. Do not guess.
+- Set status="not_specified" only where the passage you quote itself says the item does not apply,
+  will not be done, or is none. A document that simply does not mention the item is not
+  "not specified": omit the field.
+- If you cannot find it, omit the field entirely. Do not guess.
 - Set `scope` when the value applies to a cohort/arm/part/country rather than the whole study.
 - If a value differs by cohort, emit one record PER cohort. Do not average or merge.
 
@@ -769,7 +781,24 @@ Where two sections share a page, the table may belong to the other one. Accepted
 3. Enum values must be in the registry's allowed set.
 4. Numeric fields must parse.
 
+5. **The record must answer the field, added 2026-10-12** (numbered here as the fifth check on every
+   record; `extract/validate.py`'s own docstring numbers its checks differently) (stage 6 of that day's plan,
+   `extract/validate.py:answers_field`), after the quote check, which is unchanged. A "not specified"
+   record rated below `NOT_SPECIFIED_MIN_CONFIDENCE` (0.50) is rejected: it is a guess that the document
+   is silent. A value a field lists under `quote_must_say` in `config/fields.yaml` is rejected when its
+   quote says none of the listed words, as whole words with case ignored; only `ip.form`'s `infusion_iv`
+   declares words. A rejected record goes to `errors` as "Rejected: <reason>" with its value, quote and
+   page (`RunError.rejected_page`), and gets **no repair retry**, because the quote was found and a retry
+   cannot change what the passage says. The prompt says "not_specified" only where the quoted passage
+   itself says the item does not apply.
+
 Record-level rejection, not response-level. One bad field does not discard 8 good ones.
+
+**Each kept record carries the heading of the section its quote was read from, added 2026-10-12**
+(`Provenance.section`, set by `extract/prompt.py:quote_section`). It is None for a task with no
+sections, and for a quote no chosen section holds on the page the record names: one that validated
+against a table block, or one whose page the model gave as another page than the one holding the text.
+RECONCILE's `prefer_sections` (§4.6) cannot rank such a record.
 
 **An `object[]` field with a `schema` is extracted one JSON object per entry, added 2026-10-12** (fix 1
 of that day's brief). The prompt lists each schema key and what it may hold (`extract/prompt.py:
@@ -852,8 +881,24 @@ stored: GATE and RENDER each call it on `statements`, so both read one merge, an
 grows by the statement records of these three fields (every other resolved row carries an empty
 `statements` list; `render/json_renderer.py` wrote none at all until the stage 4 fix commit, so
 `r-20261012-stage4check` cannot be re-rendered). `statements` was planned for stage 6 of the
-2026-10-12 plan, as each source's own quote; stage 4 needed it first, so stage 6 builds on it rather
-than adding a second list.
+2026-10-12 plan, as each source's own quote, and stage 4 built it first; stage 6 then added a separate
+list, `source_quotes` (below), because `statements` holds entries and is filled only for these three
+fields, while a list field such as `ip.form` needs each source's quote.
+
+**A record from the schedule table outranks a summary paragraph, added 2026-10-12** (stage 6 addition
+1). A field may list section headings under `prefer_sections` in `config/fields.yaml`; only
+`visits.frequency_by_period` does (schedule of events, activities or assessments, study flow chart).
+When `merge_entry` picks each document's best record stating an entry's key, `reconcile/entries.py:
+_rank` orders them by (`Provenance.section` names one of those headings, confidence), so within one
+document such a record wins whatever the confidences. The precedence rules between documents are
+unchanged and still come first; but where no precedence rule decides, `_shown` takes the top `_rank`
+across the documents' best records, so there a schedule-table record from one document beats a more
+confident summary from another.
+
+**Each source keeps its own quote, added 2026-10-12** (fix 11). Where RECONCILE merges a list field
+such as `ip.form`, `ResolvedField.source_quotes` holds each merged record's own quote, so Appendix A
+quotes each page with its own words. It is empty on every other row and on runs saved before it, which
+print one quote line as before.
 
 Precedence policy (`config/precedence.yaml`), applied only after adjudication:
 1. **Recency** — a later amendment beats an earlier protocol version. Always first.
@@ -886,6 +931,15 @@ severity. Three verdicts:
   Changed 2026-10-12: precedence used to return only the winning document, and the quote was then
   looked up among that document's records, which in runs made before commit `bf038be` (2026-10-03)
   paired one record's value with another's quote.
+
+**ADJUDICATE may name records that are not about the field, added 2026-10-12** (fix 5 of that day's
+plan). The result's `off_topic_records`, by number, is stored as `Contradiction.off_topic_record_indexes`.
+On a `not_a_conflict` or `reconcilable` verdict those records get no row and are not cited as the row's
+sources, and a winner named off-topic falls back to the most confident record that is not. A `conflict`
+verdict acts on none of them, a list naming every record is ignored, and numbers outside the list are
+dropped. The records stay in the contradiction, so Appendix A still quotes each one, marked with
+`report_wording.off_topic`. The prompt now carries the field's hint for every field, so the reviewer
+knows what the field asks for.
 
 `severity: high` when the field feeds a budget driver (site count, subject count, visit count, monitoring
 frequency, duration). Mark this in `fields.yaml` with `budget_driver: true`.
@@ -1147,6 +1201,15 @@ is what makes the whole pipeline testable without a filesystem.
   is cut, and that a ReportLab upgrade has not changed the row heights `_Table` reads.
   The reason on each flagged row is recomputed in `render/report_model.py:_review_reasons` from the same
   inputs GATE used, so the report cannot name a rule that did not fire.
+  *Since 2026-10-12 (stage 6 of that day's plan)* three more display rules. A field may declare
+  `when_not_found` in `config/fields.yaml` (only `visits.total_count`): when no record gives a value,
+  the row reads the declared note ("No document gives a total."), then the document's own sentence
+  saying why, quoted from a valueless record with a scope the note names, then where to look instead;
+  the row's status is Not found and such a variable is not counted as found. A label the documents
+  worded (a scope, an entry or period label) starts with a capital when the letters it starts with are
+  all lower case (`_capital`), so "mL" and "eCRF" stay; Appendix A prints the stored scope with that
+  capital, and the Disagreements and Appendix B print it as the variable table does. A tie between
+  wordings in `_fold_rewordings` shows every tied wording.
 - **`report.xlsx` (renderer)** — a renderer alongside the two above, not the primary path. One row per field:
   `Group | Variable | Value | Status | Confidence | Source Doc | Page | Quote | Contradiction`.
   Conditional formatting: red = conflict, amber = needs_review, green = confirmed, grey = not found.

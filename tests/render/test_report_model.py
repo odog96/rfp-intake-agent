@@ -155,6 +155,29 @@ def assert_nothing_lost(state: RunState, registry: Registry, model: ReportModel)
         if line in row.folded:
             assert row.verdict == "not_a_conflict" and not row.budget_driver
             assert any(e.field_id == rf.field_id and e.value == want for e in model.evidence)
+        # Each page's own quote is in Appendix A beside that page (fix 11 of the
+        # 2026-10-12 brief), so no page is quoted with another page's words.
+        if len(rf.source_quotes) == len(rf.sources):
+            for source, quote in zip(rf.sources, rf.source_quotes, strict=True):
+                assert any(
+                    e.field_id == rf.field_id and e.quote == quote
+                    and source.page in _parse_sources(e.sources).get(codes[source.doc_id], set())
+                    for e in model.evidence
+                ), f"{rf.field_id}: p.{source.page}'s own quote is not in Appendix A"
+        # A record ADJUDICATE called off-topic has no row but its own line in
+        # Appendix A, marked (fix 5 of the 2026-10-12 brief).
+        c = rf.contradiction
+        if c is not None and c.field_id == rf.field_id:
+            for i in c.off_topic_record_indexes:
+                r = c.records[i - 1]
+                assert not any(e is r for row in rows for line in row.values for e in line.entries)
+                assert any(
+                    e.field_id == rf.field_id and e.quote == r.quote
+                    and e.marker == registry.report_wording.off_topic
+                    and _parse_sources(e.sources)
+                    == {codes[r.provenance.doc_id]: {r.provenance.page}}
+                    for e in model.evidence
+                ), f"{rf.field_id}: off-topic record p.{r.provenance.page} not in Appendix A"
         # Its quote is in Appendix A.
         if rf.quote:
             assert any(
@@ -241,12 +264,14 @@ def _stating_pages(
         return {(codes[p.doc_id], p.page) for p in rf.sources}
     if rf.value is None:
         return set()
+    off = set(c.off_topic_record_indexes)
     return {
         (codes[r.provenance.doc_id], r.provenance.page)
-        for r in c.records
+        for i, r in enumerate(c.records, start=1)
+        if i not in off
         # Compared joined the way `want` was, so a value of several items
         # matches itself rather than failing on the separator.
-        if _same_key(["; ".join(format_value(
+        and _same_key(["; ".join(format_value(
             r.value if r.value is not None else r.raw_value, fd))]) == _same_key([want])
     }
 
@@ -885,7 +910,7 @@ def test_each_side_of_a_disagreement_keeps_its_own_page_and_quote() -> None:
 
     # The two rows where no value won print "—" with no page beside it, and
     # their records are all in Appendix A.
-    for field_id, scope in (("timeline.total_duration", "study"),
+    for field_id, scope in (("timeline.total_duration", "Study"),
                             ("blinding.placebo_matching", None)):
         [row] = [r for r in model.all_rows()
                  if r.field_id == field_id and r.scope == scope]
@@ -1228,8 +1253,9 @@ class TestScopesDisplay:
             ("Time each patient spends in the study", "about 4 years"),
         ]
         # The parts are the rows; the row holding them is not counted twice.
+        # Capitalised as every label the documents word is (stage 6, 2026-10-12).
         assert [r.scope for r in model.all_rows() if r.field_id == row.field_id] == [
-            "study", "subject",
+            "Study", "Subject",
         ]
 
     def test_a_scope_no_heading_names_comes_last_under_its_own_words(self) -> None:
@@ -1534,4 +1560,5 @@ class TestScopeWords:
         model = build_report_model(state, get_registry())
         assert_nothing_lost(state, get_registry(), model)
         assert [r.scope for r in model.all_rows() if r.field_id == fid] == [None, "Cohort: Part A"]
-        assert "cohort:Part A" in {e.scope for e in model.evidence if e.field_id == fid}
+        # As stored, with a capital (addition 3 to stage 6 of the 2026-10-12 plan).
+        assert "Cohort:Part A" in {e.scope for e in model.evidence if e.field_id == fid}
