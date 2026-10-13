@@ -68,7 +68,25 @@ Source: `/home/cdsw/how_to_resond.txt`, adapted for this project.
 19. **When told "unclear" or "too dense", rewrite with the missing pieces filled in.**
     Do not defend the original or apologise at length.
 
-## Current status (as of 2026-10-12)
+## Current status (as of 2026-10-13)
+
+**The eleven fixes of the 2026-10-12 brief are built in six stages and committed (`feaeb39` to
+`81cd71b`), but not confirmed in a live report.** `docs/OVERNIGHT_2026-10-12.md` has every decision
+taken on Oliver's behalf, each stage's commit, tests and reviewers, and each fix's state. The registry
+now holds 44 fields.
+
+The final live run is `r-20261012-angus2`: 6m56s, 11 contradiction clusters and 16 EXTRACT
+errors, with 40 of the 44 fields found. `scripts/check_review_2026_10_07.py` gives 6 pass and
+2 fail on that run:
+- check 4: the interim-analysis count is not in the Disagreements table;
+- check 9: 35 kept variables found, against 36.
+
+Neither FAIL is diagnosed. The session's permission check denied reading that run's
+`report.pdf` text and its `extraction.json` errors list. So these were not done:
+- the by-page check of the eleven fixes;
+- the list of records the two new EXTRACT rejection rules removed;
+- the run-comparison and report-usability reviews.
+Nothing from the 2026-10-12 brief is pushed.
 
 **The seven changes Oliver and Angus agreed on 2026-10-07, after reviewing the report from run
 `r-20261007-140411`, are built and measured.** Read the 2026-10-08 entry in `docs/JOURNAL.md` for what
@@ -205,15 +223,17 @@ run, and what remains is PLAN keeping only three sections per field group. Read 
 in `docs/JOURNAL.md` before trusting `blinding.placebo_matching` or `blinding.unblinded_staff_stated`.
 Graph topology today:
 `INGEST → CLASSIFY → FIND_SECTIONS → SET_ASIDE_SECTIONS → MARK_OTHER_STUDY → PLAN → EXTRACT → NORMALIZE → RECONCILE → ADJUDICATE → DERIVE → GATE`,
-then RENDER runs after the graph finishes (see the deviations below). 1071 tests passing, 1 skipped, on
-2026-10-12 — the count moves with `runs/`, because `test_nothing_lost_on_a_real_run` runs once per run folder.
+then RENDER runs after the graph finishes (see the deviations below). 1373 tests passing, 1 skipped, at
+`81cd71b` on 2026-10-13, before run `r-20261012-angus2` was added — the count moves with `runs/`,
+because `test_nothing_lost_on_a_real_run` runs once per run folder.
 Pushed to https://github.com/odog96/rfp-intake-agent.git. The push is done from a terminal by
 Oliver, from inside the repository directory — this session's credentials cannot do it. The seven
 changes of the 2026-10-07 review were committed on 2026-10-11 as `c4ecd75`, on top of `dab43e0`
 (Oliver's 2026-10-06 edit to `.project-metadata.yaml` on GitHub), with `GATE_OFF=1` approved by Oliver
 because the session's gate hooks were not loaded. Fix 1 of the 2026-10-09 brief is committed after
 it, fix 2 after that, the visit-intensity fix after that, and the record of open items 8 and 9 after
-that; all five are pushed. The arms fix and CLAUDE.md open items 7, 3 and 4 (2026-10-12) are committed after them and are not pushed; Oliver pushes.
+that; all five are pushed. The arms fix and CLAUDE.md open items 7, 3 and 4 (2026-10-12) are committed after them, and the six
+stages of the 2026-10-12 brief after those; none of these is pushed. Oliver pushes.
 
 Every `### Done` entry that used to be in this file is now in `docs/JOURNAL.md`, newest first, unedited.
 Nothing in `docs/JOURNAL.md` is current state; where the two disagree, this file wins.
