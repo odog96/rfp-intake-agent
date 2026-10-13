@@ -1065,24 +1065,76 @@ fields:
     scoped: true
     aliases: ["number of subjects", "number of patients", "sample size", "planned enrolment",
               "planned enrollment", "N=", "total enrolment", "randomised subjects"]
+    # The scope rules and the display are stage 5 of the 2026-10-12 plan (fix 10 of that
+    # day's brief, approved by Oliver). Run r-20261012-stage4check3 scoped the arm figures
+    # "cohort:NEOD001 arm", printed "per arm" as a row of its own, and put the protocol's
+    # statistical sample size in a cluster with the enrolment total.
     hint: >
       Distinguish SCREENED / ENROLLED / RANDOMISED / COMPLETED — these are different numbers and
-      the document may state several. Record which one it is in `notes`. Emit per-cohort and
-      per-country figures as separate scoped records.
+      the document may state several. Record which one it is in `notes`.
+      Set `scope` on every record. The number of subjects for the whole study is
+      scope="total". A number for one arm is scoped by that arm as "Cohorts / arms / dose
+      levels / parts" scopes it, by what its subjects receive: scope="arm:<study drug>" or
+      scope="arm:placebo", never the arm's number or group name ("Arm 1", "Group A"). A number
+      stated as the same for every arm ("130 per arm") is scope="per arm". A country's figure
+      is scope="country:<code>".
+      A sample size the statistical analysis needs (the number of subjects or events needed to
+      show an effect, from a power calculation) is not the number to be enrolled, even where
+      it is close to it: give it scope="statistical minimum", never scope="total".
+      Record each number only where the document states it; never add arms up to a total or
+      divide a total into arms.
     source_priority: rfp
     budget_driver: true
+    # One row: the total and the figure per arm in the headline, then a line per arm of
+    # "Cohorts / arms / dose levels / parts", named as that row names it, and the total.
+    display:
+      kind: breakdown
+      parts_from: design.parts
+      part_line: "{part}: {value}"
+      each: [per arm]
+      total: [total]
+      total_line: "Total: {value}"
+      each_differs: "Per arm: {value} — does not agree with the arms' own figures above"
+      headline:
+        - "{total} ({each} per arm, {also})"
+        - "{total} ({each} per arm)"
+        - "{total} ({also})"
+        - "{total}"
+        - "{each} per arm"
+        - "See the lines below"
+      also:
+        - field: design.allocation_ratio
+          wording: "randomized {value}"
 
   - id: ops.crf_pages
     group: operational_metrics
     label: Number of CRF pages
     type: int
+    # Scoped by stage 5 of the 2026-10-12 plan (the CRF half of fix 11 of that day's brief):
+    # run r-20261012-stage4check3 gave the RFP's 80 and 20,800 no scope, so they read as two
+    # answers to one question.
+    scoped: true
     aliases: ["CRF pages", "eCRF pages", "unique CRF pages", "case report form pages"]
-    hint: Distinguish unique CRF pages from total pages across all subjects. Note which in `notes`.
+    hint: >
+      Set `scope` on every record: scope="per subject" for the number of pages in one
+      subject's CRF, scope="total" for the number of pages across all subjects, and
+      scope="unique pages" for the number of distinct page designs. Record each number only
+      where the document states it; never work one out from another.
     plain: >
       CRF means case report form — the forms a site fills in for each participant. The page count
       drives data entry, checking and database work.
     source_priority: rfp
     budget_driver: true
+    display:
+      kind: breakdown
+      each: [per subject]
+      total: [total]
+      each_differs: "Per subject: {value}"
+      headline:
+        - "{each} per subject; {total} in total"
+        - "{total} in total"
+        - "{each} per subject"
+        - "See the lines below"
 
   # The five rows below replaced `ops.monitoring_visits` ("Number of monitoring
   # visits by type") on 2026-10-07, change 5 of that day's review. That one field

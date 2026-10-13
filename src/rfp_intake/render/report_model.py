@@ -30,6 +30,7 @@ from typing import Any
 from rfp_intake.domain.registry import (
     Block,
     BlockLine,
+    BreakdownDisplay,
     EntriesDisplay,
     EntryKey,
     FieldDef,
@@ -608,6 +609,14 @@ def build_report_model(state: RunState, registry: Registry) -> ReportModel:
     shown_as: dict[str, Row] = {}
     in_headline: set[str] = set()
     for fd in registry.fields:
+        # A `breakdown` display reads the rows themselves, so it needs no keys.
+        if isinstance(fd.display, BreakdownDisplay):
+            if any(r.status != "not_found" for r in rows_by_field[fd.id]):
+                shown_as[fd.id] = _breakdown_row(
+                    fd, fd.display, rows_by_field, by_field, field_by_id, docs,
+                    registry.report_wording,
+                )
+            continue
         entries = by_field.get(fd.id, [])
         if not any(rf.statements for rf in entries):
             continue
@@ -1284,6 +1293,28 @@ def _display_row(
     )
 
 
+def _part_title(display: EntriesDisplay, words: dict[str, str], n: int) -> str:
+    """The title an `entries` display gives its `n`th part, from the part's
+    keys as `_entry_words` prints them."""
+    return _pick(display.title, {**words, "n": str(n)}) or str(n)
+
+
+def _titled_parts(
+    fd: FieldDef, display: EntriesDisplay, entries: list[ResolvedField], wording: ReportWording,
+) -> list[tuple[str | None, str]]:
+    """Each part of an `entries` display, in its order, as its scope (as
+    normalize_scope reads it) and its title, so another display naming the same
+    parts names them as this one does."""
+    may_differ = fd.may_word_differently if fd.one_answer_when_documents_agree else None
+    out = []
+    parts = [rf for rf in entries if rf.statements]
+    for n, rf in enumerate(parts, 1):
+        entry = merge_entry(fd, rf.statements)
+        words = _entry_words(entry, display.kind_key, wording, set(entry.differing(may_differ)))
+        out.append((normalize_scope(rf.scope), _part_title(display, words, n)))
+    return out
+
+
 def _entries_row(
     fd: FieldDef,
     display: EntriesDisplay,
@@ -1313,9 +1344,10 @@ def _entries_row(
     # this field's documents may word differently, as GATE reads it.
     may_differ = fd.may_word_differently if fd.one_answer_when_documents_agree else None
     differing = [e.differing(may_differ) for e in merged]
-    for n, (rf, entry, unsettled) in enumerate(zip(parts, merged, differing, strict=True), 1):
+    # The titles a `breakdown` display naming these parts prints too.
+    titles = [title for _, title in _titled_parts(fd, display, entries, wording)]
+    for rf, entry, unsettled, title in zip(parts, merged, differing, titles, strict=True):
         words = _entry_words(entry, display.kind_key, wording, set(unsettled))
-        title = _pick(display.title, {**words, "n": str(n)}) or str(n)
         lines.append(BlockText(title))
         for alternatives in display.lines:
             line = _pick(alternatives, words)
@@ -1411,6 +1443,154 @@ def _entries_row(
            for v in r.values for e in v.entries for p in _stating(e, field_by_id[h.field])]
     )
     return _display_row(fd, members, ", ".join(head), sources, lines)
+
+
+def _breakdown_row(
+    fd: FieldDef,
+    display: BreakdownDisplay,
+    rows_by_field: dict[str, list[Row]],
+    by_field: dict[str, list[ResolvedField]],
+    field_by_id: dict[str, FieldDef],
+    docs: _Docs,
+    wording: ReportWording,
+) -> Row:
+    """A `breakdown` display (fix 10 and the CRF half of fix 11 of the
+    2026-10-12 brief): the total and the figure for each part in the headline,
+    and under it a line per part, named as the `parts_from` display names it,
+    and the total.
+
+    Every figure is a row of the variable as the documents state it; nothing
+    is added up or divided. A row that is neither a part, the each figure nor
+    the total keeps its own line, under its scope words, and a row whose
+    documents disagree, or say they do not specify it, gives its lines as a
+    block line does (`_block_lines`), so its sides are on the row. The rows
+    are the display's `members`, so the review list still sees each one.
+    """
+    fill = ReportWording.fill
+    rows = rows_by_field.get(fd.id, [])
+
+    titles: dict[str | None, tuple[int, str]] = {}
+    if display.parts_from is not None:
+        pfd = field_by_id[display.parts_from]
+        if isinstance(pfd.display, EntriesDisplay):
+            for i, (key, title) in enumerate(_titled_parts(
+                pfd, pfd.display, by_field.get(pfd.id, []), wording,
+            )):
+                titles.setdefault(key, (i, title))
+
+    def scope_of(row: Row) -> str | None:
+        return next((rf.scope for v in row.values for rf in v.entries), None)
+
+    def plain(row: Row) -> bool:
+        return row.status not in ("not_found", "not_specified") and not (
+            row.sides and row.decision_no is not None
+        )
+
+    def text(row: Row) -> str:
+        return "; ".join(v.text for v in row.values)
+
+    def figure(row: Row) -> str | None:
+        return _same_key(row.values[0].items) if plain(row) and len(row.values) == 1 else None
+
+    def own_lines(name: str, row: Row) -> list[BlockText]:
+        entries = [rf for v in row.values for rf in v.entries]
+        return _block_lines(BlockLine(field=fd.id), name, row, entries, fd, docs, wording)
+
+    def named(row: Row) -> str:
+        name = row.scope or fd.label
+        return name[:1].upper() + name[1:]
+
+    parts: list[tuple[int, str, Row]] = []
+    each: list[Row] = []
+    total: list[Row] = []
+    other: list[Row] = []
+    for row in rows:
+        if row.status == "not_found":
+            continue
+        scope = scope_of(row)
+        key = normalize_scope(scope)
+        if key is not None and key in titles:
+            parts.append((*titles[key], row))
+        elif scope_has_phrase(scope, display.each):
+            each.append(row)
+        # "total" is the whole-study scope as RECONCILE and GATE read it
+        # (normalize_scope: "all arms", "overall"), whatever the words.
+        elif key == "total" or scope_has_phrase(scope, display.total):
+            total.append(row)
+        else:
+            other.append(row)
+    parts.sort(key=lambda t: t[0])
+
+    lines: list[BlockText] = []
+    for _, title, row in parts:
+        if plain(row):
+            lines.append(BlockText(fill(display.part_line, part=title, value=text(row))))
+        else:
+            lines += own_lines(title, row)
+
+    # The each figure is said once, in the headline, where every part's figure
+    # reads the same as it; one that does not agree is printed as it is.
+    each_figures = {figure(r) for r in each}
+    folds = len(each_figures) == 1 and None not in each_figures and all(
+        figure(r) in each_figures for _, _, r in parts
+    )
+    each_text = "; ".join(dict.fromkeys(text(r) for r in each)) if folds else None
+    for row in each if not folds else []:
+        if plain(row):
+            lines.append(BlockText(fill(display.each_differs, value=text(row))))
+        else:
+            lines += own_lines(named(row), row)
+
+    for row in other:
+        if not plain(row):
+            lines += own_lines(named(row), row)
+        elif row.scope:
+            lines.append(BlockText(fill(display.part_line, part=named(row), value=text(row))))
+        else:
+            lines.append(BlockText(text(row)))
+
+    # The total closes the part lines; with no part lines the headline says it.
+    stated = [r for r in total if plain(r)]
+    for row in total:
+        if not plain(row):
+            lines += own_lines(named(row), row)
+        elif parts:
+            lines.append(BlockText(fill(display.total_line, value=text(row))))
+
+    words: dict[str, str] = {}
+    if stated:
+        words["total"] = "; ".join(dict.fromkeys(text(r) for r in stated))
+    if each_text is not None:
+        words["each"] = each_text
+    also = []
+    for h in display.also:
+        found = list(dict.fromkeys(
+            v.text for r in rows_by_field.get(h.field, [])
+            for v in r.values if r.status != "not_found" and v.text != "—"
+        ))
+        if found:
+            also.append(fill(h.wording, value="; ".join(found)))
+    if also:
+        words["also"] = ", ".join(also)
+    head = _pick(display.headline, words) or "—"
+    chosen = next(
+        (w for w in display.headline if all(k in words for k in placeholders(w))), "",
+    )
+    # A figure the chosen headline does not say, and no line says, gets a line,
+    # so no wording in config/fields.yaml can take a stated figure out of view.
+    if "each" in words and "each" not in placeholders(chosen):
+        lines += [BlockText(fill(display.part_line, part=named(r), value=text(r))) for r in each]
+    if "total" in words and "total" not in placeholders(chosen) and not parts:
+        lines += [BlockText(fill(display.total_line, value=text(r))) for r in stated]
+
+    # The pages of every figure, and of the `also` values where the headline says them.
+    sources = docs.pages(
+        [p for r in rows for v in r.values for rf in v.entries for p in _stating(rf, fd)]
+        + [p for h in display.also if "also" in placeholders(chosen)
+           for r in rows_by_field.get(h.field, [])
+           for v in r.values for e in v.entries for p in _stating(e, field_by_id[h.field])]
+    )
+    return _display_row(fd, rows, head, sources, lines)
 
 
 def _word_key(text: str) -> str:

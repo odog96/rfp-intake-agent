@@ -325,10 +325,45 @@ class PeriodsDisplay(BaseModel):
     see_also: list[SeeAlso] = Field(default_factory=list)
 
 
+class BreakdownDisplay(BaseModel):
+    """A count printed as one row: a line per part of the study, then the
+    total, every figure as a document states it. Added 2026-10-12, fix 10 and
+    the CRF half of fix 11 of that day's brief, for the number of subjects and
+    of CRF pages.
+
+    A row of the variable is a part's where its scope is a part's of the
+    `parts_from` variable, which must have an `entries` display, compared as
+    RECONCILE compares scopes (normalize_scope); its line is `part_line`, the
+    part named as that display titles it. A scope naming one of the `each`
+    phrases (see `scope_has_phrase`) is the figure for each part, and one that
+    is "total" or names a `total` phrase is the total. Nothing is added up:
+    the total is the total a document states.
+
+    `headline` is alternatives, as an entries display's lines are: `{total}`,
+    `{each}` and `{also}`, which is each `also` variable's value in its wording.
+    The each figure is in the headline only where it reads the same as every
+    part's figure, or there are no parts; otherwise `each_differs` prints it,
+    as a line saying it does not agree. A figure the chosen headline does not
+    say gets a line of its own. An `also` variable keeps its own row, or its
+    own place in another display.
+    """
+
+    kind: Literal["breakdown"]
+    parts_from: str | None = None
+    part_line: str = Field(default="{part}: {value}", min_length=1)
+    total: list[str] = Field(default_factory=list)
+    total_line: str = Field(default="Total: {value}", min_length=1)
+    each: list[str] = Field(default_factory=list)
+    each_differs: str = Field(min_length=1)
+    headline: list[str] = Field(min_length=1)
+    also: list[HeadlineField] = Field(default_factory=list)
+
+
 # How report.pdf lays out one variable's rows, where the default of one row per
 # scope reads wrong. The `kind` key says which.
 Display = Annotated[
-    ScopesDisplay | EntriesDisplay | PeriodsDisplay, Field(discriminator="kind")
+    ScopesDisplay | EntriesDisplay | PeriodsDisplay | BreakdownDisplay,
+    Field(discriminator="kind"),
 ]
 
 
@@ -817,6 +852,42 @@ def _validate_registry(groups: list[GroupDef], fields: list[FieldDef]) -> None:
                     errors.append(
                         f"Field {f.id} has a see_also on a field it cannot use: {s.field}"
                     )
+
+    # A breakdown's parts are another variable's entries, and its wordings name
+    # only the figures it has.
+    for f in fields:
+        if not isinstance(f.display, BreakdownDisplay):
+            continue
+        bd = f.display
+        if bd.parts_from is not None and (
+            bd.parts_from not in pre_by_id
+            or not isinstance(pre_by_id[bd.parts_from].display, EntriesDisplay)
+        ):
+            errors.append(
+                f"Field {f.id} has a breakdown whose parts_from has no entries display: "
+                f"{bd.parts_from}"
+            )
+        if not f.scoped:
+            errors.append(f"Field {f.id} has a breakdown display but is not scoped")
+        allowed = {
+            "part_line": (bd.part_line, {"part", "value"}),
+            "total_line": (bd.total_line, {"value"}),
+            "each_differs": (bd.each_differs, {"value"}),
+            **{f"headline {i + 1}": (w, {"total", "each", "also"})
+               for i, w in enumerate(bd.headline)},
+        }
+        for where, (w, names) in allowed.items():
+            unknown = [p for p in placeholders(w) if p not in names]
+            if unknown:
+                errors.append(
+                    f"Field {f.id} has a breakdown {where} naming {', '.join(unknown)}"
+                )
+        if "{value}" not in bd.each_differs:
+            errors.append(f"Field {f.id} has a breakdown each_differs with no {{value}}")
+        for h in bd.also:
+            if h.field not in pre_by_id or h.field == f.id:
+                errors.append(f"Field {f.id} has a breakdown also on a field it cannot use: "
+                              f"{h.field}")
 
     # A field follows a real other field's disagreement, and not its own.
     for f in fields:

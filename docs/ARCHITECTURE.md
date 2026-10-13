@@ -1061,6 +1061,27 @@ document's wording is there. A period's other records are only there, the line g
 the wording document precedence and then confidence choose, and "Other wordings are quoted in Appendix A." under the row. A record
 saved before 2026-10-12 holds text, not an entry, so its row keeps the default layout.
 
+**A fourth display kind, `breakdown`, added 2026-10-12** (stage 5 of that day's plan: fix 10 and the
+CRF half of fix 11), for a count a document states for parts of the study and for the whole
+(`ops.subjects_total`, `ops.crf_pages`). It reads the variable's own rows, so it needs no entries and
+works on runs saved before `statements` existed. A row is a part's where its scope is one of the
+`parts_from` variable's entry scopes, compared by `normalize_scope` as RECONCILE compares them, and its
+line names the part as that variable's `entries` display titles it ("Arm 1 — NEOD001 plus standard of
+care: 130"). A scope naming an `each` phrase ("per arm") is the figure for each part, and one that is
+"total" or names a `total` phrase is the total. The headline is the first `headline` wording whose
+figures exist: `{total}`, `{each}`, and `{also}`, each `also` variable's value in its wording, which
+keeps its own row or its place in another display. The each figure is in the headline only where it
+reads the same as every part's figure, or there are no parts; otherwise `each_differs` prints it as a
+line saying it does not agree. A stated each figure or total the chosen headline wording does not say,
+and no line already says, gets a line of its own, so no wording in `config/fields.yaml` can take a
+stated figure out of view. Nothing is added up or divided: the total is a total a document states,
+and with no such total the headline has none. A row that is no part, each figure or total keeps a line
+under its own scope words ("Statistical minimum: 236"), and a row in a numbered disagreement or saying
+"not specified" gives its lines as a block line does, sides included. The rows are the display row's
+`members`, so the review list and the counts see each one, and Appendix A is unchanged. The scopes are
+asked for in each field's `hint`: an arm's figure scoped as `design.parts` scopes the arm, "per arm",
+"total", and a power calculation's sample size as "statistical minimum", never "total".
+
 **A group's `block`** (fix 9 of the same brief) draws several of the group's variables as one row: a
 headline variable's value, then one line per declared variable — its value and first quoted sentence, each
 side of its disagreement, or a derived variable's reasons — and a "not found" line for a replaced variable

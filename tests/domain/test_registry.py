@@ -894,3 +894,74 @@ class TestEntryKeysAndTheirDisplays:
         assert registry.get_field("design.parts").may_word_differently == [
             "name", "document_label", "description",
         ]
+
+
+class TestABreakdownDisplay:
+    """Stage 5 of the 2026-10-12 plan (fix 10 and the CRF half of fix 11): a
+    `breakdown` display is read and checked when config/fields.yaml loads."""
+
+    _DISPLAY: dict[str, Any] = {
+        "kind": "breakdown", "parts_from": "g1.parts", "each": ["per arm"],
+        "total": ["total"], "each_differs": "Per arm: {value}",
+        "headline": ["{total} ({each} per arm, {also})", "{total}"],
+        "also": [{"field": "g1.ratio", "wording": "randomized {value}"}],
+    }
+
+    def _write(self, tmp_path: Path, scoped: bool = True, **display: Any) -> Path:
+        data = {
+            "version": 1,
+            "groups": [{"id": "g1", "label": "Group 1"}],
+            "fields": [
+                {"id": "g1.parts", "group": "g1", "label": "Arms", "type": "object[]",
+                 "schema": {"name": "text"},
+                 "display": {"kind": "entries", "title": ["{name}"]}},
+                {"id": "g1.ratio", "group": "g1", "label": "Ratio", "type": "text"},
+                {"id": "g1.n", "group": "g1", "label": "N", "type": "int", "scoped": scoped,
+                 "display": dict(self._DISPLAY, **display)},
+            ],
+            "report_wording": _WORDING,
+        }
+        p = tmp_path / "fields.yaml"
+        p.write_text(yaml.dump(data))
+        return p
+
+    def test_it_is_read(self, tmp_path: Path) -> None:
+        from rfp_intake.domain.registry import BreakdownDisplay
+
+        display = load_registry(self._write(tmp_path)).get_field("g1.n").display
+        assert isinstance(display, BreakdownDisplay)
+        assert display.parts_from == "g1.parts"
+        assert display.part_line == "{part}: {value}"
+        assert display.total_line == "Total: {value}"
+
+    def test_its_parts_are_another_fields_entries(self, tmp_path: Path) -> None:
+        with pytest.raises(RegistryValidationError, match="parts_from has no entries"):
+            load_registry(self._write(tmp_path, parts_from="g1.ratio"))
+
+    def test_the_field_is_scoped(self, tmp_path: Path) -> None:
+        with pytest.raises(RegistryValidationError, match="not scoped"):
+            load_registry(self._write(tmp_path, scoped=False))
+
+    @pytest.mark.parametrize(("key", "wording"), [
+        ("headline", ["{total} ({sum})"]), ("part_line", "{part}: {n}"),
+        ("total_line", "{part}"), ("each_differs", "{total}"),
+    ])
+    def test_its_wordings_name_only_what_it_has(
+        self, tmp_path: Path, key: str, wording: object
+    ) -> None:
+        with pytest.raises(RegistryValidationError, match="breakdown"):
+            load_registry(self._write(tmp_path, **{key: wording}))
+
+    def test_an_also_field_must_exist(self, tmp_path: Path) -> None:
+        with pytest.raises(RegistryValidationError, match="also"):
+            load_registry(self._write(
+                tmp_path, also=[{"field": "g1.none", "wording": "{value}"}],
+            ))
+
+    def test_the_two_counts_have_one(self, fields_yaml_path: Path) -> None:
+        from rfp_intake.domain.registry import BreakdownDisplay
+
+        registry = load_registry(fields_yaml_path)
+        shown = [f.id for f in registry.fields if isinstance(f.display, BreakdownDisplay)]
+        assert shown == ["ops.subjects_total", "ops.crf_pages"]
+        assert registry.get_field("ops.crf_pages").scoped

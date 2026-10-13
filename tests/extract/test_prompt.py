@@ -337,6 +337,11 @@ def test_the_exclusions_reach_the_model_in_the_hint(fields_yaml_path) -> None:  
         ("visits", "Leave out the timing of questionnaires, scales and other assessments"),
         ("visits", "site selection, qualification, initiation, monitoring, pharmacy and"),
         ("study_design", "A control arm's dose and schedule go in `dose` and `schedule`"),
+        # Stage 5 of the 2026-10-12 plan: the scopes the `breakdown` displays read.
+        ("operational_metrics", 'give it scope="statistical minimum", never scope="total"'),
+        ("operational_metrics", 'A number stated as the same for every arm ("130 per arm") '
+                                'is scope="per arm"'),
+        ("operational_metrics", 'scope="per subject" for the number of pages in one'),
     ]:
         task = ExtractionTask(doc_id="doc-001", group=group, page_window=(2, 4))
         system = str(build_extract_prompt(task, doc, registry)[0].content)
