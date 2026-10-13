@@ -36,6 +36,11 @@ def build_extraction_document(state: RunState, registry: Registry) -> dict[str, 
             "why": rf.why,
             "review_note": rf.review_note,
             "contradiction": rf.contradiction.model_dump(mode="json") if rf.contradiction else None,
+            # Each document's own statement of an entry (fixes 1, 3 and 7 of the
+            # 2026-10-12 brief). The entries and periods displays are built from
+            # these, not from `value`, so without them a re-render of the run
+            # falls back to one row per scope.
+            "statements": [s.model_dump(mode="json") for s in rf.statements],
         })
 
     return {

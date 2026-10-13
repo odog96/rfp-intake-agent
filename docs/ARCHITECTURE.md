@@ -849,7 +849,9 @@ entries, each with its own page and quote. `reconcile/entries.py:merge_entry` re
 key by key: for each key, the value shown (by `reconcile/precedence.py` over each document's most
 confident record stating the key), every document's values, and whether they agree. Its result is not
 stored: GATE and RENDER each call it on `statements`, so both read one merge, and `extraction.json`
-grows by the statement records of these three fields. `statements` was planned for stage 6 of the
+grows by the statement records of these three fields (every other resolved row carries an empty
+`statements` list; `render/json_renderer.py` wrote none at all until the stage 4 fix commit, so
+`r-20261012-stage4check` cannot be re-rendered). `statements` was planned for stage 6 of the
 2026-10-12 plan, as each source's own quote; stage 4 needed it first, so stage 6 builds on it rather
 than adding a second list.
 
@@ -1109,6 +1111,12 @@ is what makes the whole pipeline testable without a filesystem.
   behind **All variables**, and every flagged row now carries the reason it is flagged rather than only
   its name. The printed order is set in `render/pdf_renderer.py:build_report_pdf` and asserted by
   `tests/render/test_pdf_renderer.py::test_the_five_sections_are_in_the_order_the_customer_asked_for`.
+  *Since 2026-10-12* a table row taller than a whole page no longer stops the report with ReportLab's
+  LayoutError (it stopped `r-20261012-stage4check`): `render/pdf_renderer.py:_Table` breaks the page
+  between rows wherever it can, and cuts a row only when that row is the first under the repeated
+  header and does not fit a whole page. The cut row continues on the next page with blank Variable,
+  Status, Confidence and Where cells. `tests/render/test_entries_display.py` asserts only that row
+  is cut, and that a ReportLab upgrade has not changed the row heights `_Table` reads.
   The reason on each flagged row is recomputed in `render/report_model.py:_review_reasons` from the same
   inputs GATE used, so the report cannot name a rule that did not fire.
 - **`report.xlsx` (renderer)** — a renderer alongside the two above, not the primary path. One row per field:

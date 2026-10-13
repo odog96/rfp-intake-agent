@@ -90,7 +90,11 @@ _STATUS_WORDS = {
 }
 
 _MARGIN = 0.6 * inch
+_BOTTOM_MARGIN = 0.7 * inch
 _WIDTH = LETTER[0] - 2 * _MARGIN
+# The height a flowable has on a page: the page less both margins and the
+# frame's own 6-point padding top and bottom (686.4 points).
+_FRAME_HEIGHT = LETTER[1] - _MARGIN - _BOTTOM_MARGIN - 12
 
 # Variable | Value | Status | Confidence | Where
 _MAIN_COLS = [1.6 * inch, 2.44 * inch, 1.0 * inch, 0.78 * inch, _WIDTH - 5.82 * inch]
@@ -142,7 +146,7 @@ def build_report_pdf(state: RunState, registry: Registry, *, generated_at: str) 
     buf = io.BytesIO()
     doc = SimpleDocTemplate(
         buf, pagesize=LETTER,
-        topMargin=_MARGIN, bottomMargin=0.7 * inch,
+        topMargin=_MARGIN, bottomMargin=_BOTTOM_MARGIN,
         leftMargin=_MARGIN, rightMargin=_MARGIN,
         title="RFP Intake Summary", author="RFP Intake Agent",
     )
@@ -672,8 +676,40 @@ def _where_cell(r: Row) -> str:
     return escape(r.values[0].sources)
 
 
+class _Table(Table):  # type: ignore[misc]
+    """A table whose one row too tall for any page continues on the next page.
+
+    Without that ReportLab raises LayoutError and no report is written at all,
+    which is how live run r-20261012-stage4check failed: its visit-frequency row
+    held 21 stretches, 794 points against a 686-point frame. ReportLab's own
+    `splitInRow` option cannot be used on the whole table: it then cuts a row at
+    every page break and leaves the row's label on the page before
+    (plan-conformance-reviewer and pipeline-rules-reviewer, 2026-10-12). So the
+    page always breaks between rows if it can, and a row is cut only when it is
+    the first after the repeated header and does not fit even a whole page.
+    The pieces ReportLab splits off are built as this class, so the rule holds
+    on every page.
+    """
+
+    def split(self, avail_width: float, avail_height: float) -> list[Table]:
+        self.splitInRow = 0
+        parts: list[Table] = super().split(avail_width, avail_height)
+        if parts:
+            return parts
+        # super().split has measured the rows: _rowHeights is ReportLab's own
+        # list of them, header first. tests/render/test_entries_display.py
+        # fails if a ReportLab upgrade changes it.
+        heights = self._rowHeights
+        head = sum(heights[:self.repeatRows])
+        if len(heights) > self.repeatRows and head + heights[self.repeatRows] > _FRAME_HEIGHT:
+            self.splitInRow = 1
+            parts = super().split(avail_width, avail_height)
+            self.splitInRow = 0
+        return parts
+
+
 def _table(data: list, widths: list[float]) -> Table:  # type: ignore[type-arg]
-    t = Table(data, colWidths=widths, repeatRows=1)
+    t = _Table(data, colWidths=widths, repeatRows=1)
     t.setStyle(TableStyle([
         ("BACKGROUND", (0, 0), (-1, 0), _HEADER_BG),
         ("VALIGN", (0, 0), (-1, -1), "TOP"),

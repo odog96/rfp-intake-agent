@@ -338,6 +338,97 @@ class TestTimeline:
         assert "Other wordings are quoted in Appendix A." in lines
 
 
+def test_extraction_json_keeps_the_statements_so_a_rerender_prints_the_same_rows() -> None:
+    # Run r-20261012-stage4check's extraction.json had no statements, so a
+    # re-render printed these three fields as default rows.
+    from rfp_intake.render.json_renderer import build_extraction_document
+
+    state, model = _report(_arms() + _visits() + _timeline() + _durations())
+    saved = json.loads(json.dumps(build_extraction_document(state, get_registry())))
+    again = RunState(
+        run_id=state.run_id, documents=state.documents,
+        resolved=[ResolvedField.model_validate(r) for r in saved["resolved_fields"]],
+        contradictions=state.contradictions,
+    )
+    rebuilt = build_report_model(again, get_registry())
+    for field_id in ("design.parts", "visits.frequency_by_period", "timeline.periods"):
+        assert _lines(_row(rebuilt, field_id)) == _lines(_row(model, field_id)), field_id
+        assert _lines(_row(rebuilt, field_id))
+
+
+def test_a_row_taller_than_a_page_continues_on_the_next_page() -> None:
+    # Run r-20261012-stage4check wrote no report: its visit-frequency row held
+    # 21 stretches, 794 points against a 686-point frame, and ReportLab raised
+    # LayoutError.
+    from rfp_intake.render.pdf_renderer import build_report_pdf
+
+    long = " ".join(["Day 1, Days 8, 15 and 22, each at the study site"] * 4)
+    records = [_rec("visits.frequency_by_period",
+                    {"period": "treatment", "label": f"Month {n}", "frequency": long},
+                    None, AM, 26, f"Month {n} {long}") for n in range(1, 41)]
+    state, _ = _report(records)
+    pdf = build_report_pdf(state, get_registry(), generated_at="2026-10-12")
+    doc = pymupdf.open(stream=pdf, filetype="pdf")  # type: ignore[no-untyped-call]
+    pages = [page.get_text() for page in doc]  # type: ignore[attr-defined]
+    text = " ".join("\n".join(pages).split())
+    # Every stretch, not only the first and last, so a split that dropped the
+    # middle of the row would fail.
+    for n in range(1, 41):
+        assert f"Month {n}: Day 1" in text, n
+    # And the row did run onto a later page than the one it starts on.
+    first = next(i for i, p in enumerate(pages) if "Month 2:" in p)
+    assert any("Month 40:" in p for p in pages[first + 1:])
+
+
+@pytest.mark.parametrize("tall", [0, 20, 59])
+@pytest.mark.parametrize("start", [0, 200, 470, 600])
+def test_only_a_row_taller_than_a_page_is_cut(start: int, tall: int) -> None:
+    # plan-conformance-reviewer and pipeline-rules-reviewer, 2026-10-12: with
+    # ReportLab's splitInRow on for a whole table, a row is cut at every page
+    # break and its label left on the page before. Only the one row that fits
+    # no page may be cut, wherever on the page the table starts and whether
+    # that row is the table's first, a middle or its last row.
+    import io
+
+    from reportlab.lib.pagesizes import LETTER
+    from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer
+
+    from rfp_intake.render.pdf_renderer import (
+        _BOTTOM_MARGIN,
+        _FRAME_HEIGHT,
+        _MAIN_COLS,
+        _MARGIN,
+        _styles,
+        _table,
+    )
+
+    # The report's own page geometry, less the frame's 6-point padding each side.
+    page = SimpleDocTemplate(io.BytesIO(), pagesize=LETTER, topMargin=_MARGIN,
+                             bottomMargin=_BOTTOM_MARGIN)
+    assert page.height - 12 == _FRAME_HEIGHT
+    cell = _styles()["cell"]
+
+    def row(n: int, lines: int) -> list[object]:
+        value = Paragraph("<br/>".join(f"R{n}x{i}" for i in range(lines)), cell)
+        return [Paragraph(f"Label{n}", cell), value, "", "", ""]
+
+    # Row `tall` is 120 lines, about 1,200 points; the rest are 9 lines each.
+    data = [["Variable", "Value", "", "", ""]] + [row(n, 120 if n == tall else 9)
+                                                  for n in range(60)]
+    buf = io.BytesIO()
+    report_page = SimpleDocTemplate(buf, pagesize=LETTER, topMargin=_MARGIN,
+                                    bottomMargin=_BOTTOM_MARGIN)
+    report_page.build([Spacer(1, start), _table(data, _MAIN_COLS)])
+    doc = pymupdf.open(stream=buf.getvalue(), filetype="pdf")  # type: ignore[no-untyped-call]
+    pages = [p.get_text() for p in doc]  # type: ignore[attr-defined]
+    cut = [n for n in range(60) if sum(f"R{n}x" in p for p in pages) > 1]
+    assert cut == [tall]
+    # Nothing is lost: every line of every row is printed.
+    text = "\n".join(pages)
+    assert all(f"R{n}x8\n" in text for n in range(60))
+    assert f"R{tall}x119" in text
+
+
 def test_the_pdf_prints_the_three_rows() -> None:
     from rfp_intake.render.pdf_renderer import build_report_pdf
 
