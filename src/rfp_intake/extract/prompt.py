@@ -22,6 +22,8 @@ outside knowledge.
 - Set status="not_specified" only where the passage you quote itself says the item does not \
 apply, will not be done, or is none. A document that simply does not mention the item is \
 not "not specified": omit the field.
+- Where a field's hint gives the answer to record when the document says there is none \
+(such as 0), return that answer with status="found", not "not_specified".
 - If you cannot find it, omit the field entirely. Do not guess.
 - Set `scope` when the value applies to a cohort/arm/part/country rather than the whole study.
 - If a value differs by cohort, emit one record PER cohort. Do not average or merge.

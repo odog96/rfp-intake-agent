@@ -122,6 +122,41 @@ class TestReconcileNode:
         assert rf.status == "needs_review"
         assert rf.value == 75
 
+    def test_a_dropped_not_specified_record_is_in_the_errors(self, fields_yaml_path) -> None:  # type: ignore[no-untyped-def]
+        # Item 3 of the 2026-10-13 prompt: the record is still dropped, and the
+        # run's errors now say so, with its page and quote.
+        _use_real_registry(fields_yaml_path)
+        from rfp_intake.reconcile import reconcile_node
+
+        found = _record("ops.sites_total", 75, 0.9, doc_id="protocol")
+        silent = _record("ops.sites_total", None, 0.9, doc_id="rfp", status="not_specified")
+        result = reconcile_node(RunState(run_id="t", records=[found, silent]))
+
+        [error] = result["errors"]
+        assert error.node == "RECONCILE"
+        assert error.kind == "validation", "the model call worked; nothing failed"
+        assert error.task_id == "rfp:operational_metrics:ops.sites_total"
+        assert error.error.startswith("Dropped: not_specified")
+        assert error.rejected_quote == "quote for None"
+        assert error.rejected_page == 1
+        assert error.rejected_value == "None"
+
+    def test_a_not_specified_record_that_is_kept_is_not_an_error(self, fields_yaml_path) -> None:  # type: ignore[no-untyped-def]
+        _use_real_registry(fields_yaml_path)
+        from rfp_intake.reconcile import reconcile_node
+
+        silent = _record("ops.sites_total", None, 0.9, status="not_specified")
+        result = reconcile_node(RunState(run_id="t", records=[silent]))
+        assert result["errors"] == []
+
+    def test_found_records_alone_log_nothing(self, fields_yaml_path) -> None:  # type: ignore[no-untyped-def]
+        _use_real_registry(fields_yaml_path)
+        from rfp_intake.reconcile import reconcile_node
+
+        r1 = _record("ops.sites_total", 75, 0.9, doc_id="rfp")
+        r2 = _record("ops.sites_total", 40, 0.9, doc_id="protocol")
+        assert reconcile_node(RunState(run_id="t", records=[r1, r2]))["errors"] == []
+
     def test_field_with_no_records_is_not_found(self, fields_yaml_path) -> None:  # type: ignore[no-untyped-def]
         _use_real_registry(fields_yaml_path)
         from rfp_intake.reconcile import reconcile_node

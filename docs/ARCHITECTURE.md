@@ -741,6 +741,8 @@ RULES
 - Set status="not_specified" only where the passage you quote itself says the item does not apply,
   will not be done, or is none. A document that simply does not mention the item is not
   "not specified": omit the field.
+- Where a field's hint gives the answer to record when the document says there is none
+  (such as 0), return that answer with status="found", not "not_specified".
 - If you cannot find it, omit the field entirely. Do not guess.
 - Set `scope` when the value applies to a cohort/arm/part/country rather than the whole study.
 - If a value differs by cohort, emit one record PER cohort. Do not average or merge.
@@ -843,6 +845,16 @@ dropped record is still cited in the resolved field's `sources`, so Appendix A k
 longer among the `Contradiction`'s records, so the page on which a document said nothing is no longer
 cited in the Disagreements positions. That second part is a loss of evidence and is recorded as open in
 `CLAUDE.md`.
+
+**A record whose status is `not_specified` is dropped, and written down, where the field has a found
+record, added 2026-10-13** (item 3 of Oliver's 2026-10-13 prompt). Unlike the records above, whose
+status is `found` and whose value is the word not_specified, these never reach a group: `_reconcile_field`
+keeps only found records once any exists. Each one is now a `RunError` in the run's errors, with
+`node="RECONCILE"`, `kind="validation"` (the model call worked), the text "Dropped: not_specified,
+because another record gives this field a value", and the record's value, quote and page
+(`reconcile/__init__.py:_dropped_not_specified`). Run `r-20261012-angus2` confirmed RFP p.4's one
+interim analysis, and whether the amendment's "No interim analyses are planned" was read at all could
+not be told. The same item added the EXTRACT rule that a hint's answer for a stated none is `found`.
 
 **RECONCILE ends by applying the registry's resolution rules, added 2026-10-08** (change 3). After the
 loop above, `reconcile/rules.py:apply_resolution_rules` reads the `resolution_rules` block of

@@ -83,6 +83,16 @@ class TestNotSpecifiedNeedsConfidence:
                 "item does not apply") in rules
         assert 'is not "not specified": omit the field.' in rules
 
+    def test_the_prompt_says_a_hints_answer_for_none_is_found(self) -> None:
+        # Item 3 of the 2026-10-13 prompt: interim.count's hint says a stated
+        # "no interim analyses" is 0, and 0 is an answer, not not_specified.
+        from rfp_intake.extract.prompt import EXTRACT_SYSTEM_TEMPLATE
+
+        rules = " ".join(EXTRACT_SYSTEM_TEMPLATE.split())
+        assert ("Where a field's hint gives the answer to record when the document says there "
+                'is none (such as 0), return that answer with status="found", not '
+                '"not_specified".') in rules
+
 
 class TestTheQuoteMustSayTheRoute:
     def test_an_infusion_from_a_quote_naming_only_the_drug_is_rejected(
