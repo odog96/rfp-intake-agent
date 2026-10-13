@@ -4,13 +4,16 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
+from typing import Any  # Any: test inputs are arbitrary YAML fragments
 
 import pytest
 import yaml
+from pydantic import ValidationError
 
 from rfp_intake.domain.registry import (
     Registry,
     RegistryValidationError,
+    ScopesDisplay,
     load_registry,
 )
 
@@ -280,6 +283,18 @@ _WORDING = {
     "block_side_value": "{pages}: {value}",
     "block_not_found": "{label}: none",
     "scope_kind": "{kind}: {name}",
+    "entries_count": "{n} {kinds}",
+    "entries_agree": "{docs} agree on {what}.",
+    "entries_two_docs": "Both",
+    "entries_all_docs": "All {n}",
+    "entries_same_each": "{value} {what} per {kind}",
+    "entries_each": "the {what} in each {kind}",
+    "entries_only_one": "{what} is in the {doc} only.",
+    "entries_only_many": "{what} are in the {doc} only.",
+    "entries_and": " and ",
+    "entries_differ": "{label}: differ — {values}",
+    "entries_differ_value": "{value} ({pages})",
+    "other_wordings": "Other wordings in Appendix A.",
 }
 
 
@@ -556,7 +571,7 @@ class TestTheDisplayKeysOfThe20261012Brief:
         assert field.follow_wording.only_some == "Only {docs}: {value}"
         # A number in the YAML is read as the stored value's words.
         assert field.follow_wording.when_others_say == ["0"]
-        assert field.display is not None
+        assert isinstance(field.display, ScopesDisplay)
         assert [h.label for h in field.display.scopes] == ["Whole"]
         assert field.value_words == {"yes_stated": "Yes"}
 
@@ -733,3 +748,139 @@ class TestAGroupBlock:
     def test_a_scope_kind_needs_a_word(self, tmp_path: Path) -> None:
         with pytest.raises(RegistryValidationError):
             load_registry(self._write(tmp_path, self._block(), {"scope_kinds": {"arm": " "}}))
+
+
+class TestEntryKeysAndTheirDisplays:
+    """Fixes 1, 3 and 7 of the 2026-10-12 brief: an `object[]` field's `schema`
+    keys, the `entries` and `periods` displays that name them, and the one-answer
+    flag, checked when config/fields.yaml loads."""
+
+    _SCHEMA = {"name": "text", "kind": "enum[arm, cohort]", "n": "int", "label": "text"}
+    _ENTRIES = {
+        "kind": "entries", "title": ["{kind} {n} — {name}"], "kind_key": "kind",
+        "count": {"arm": "arms", "cohort": "cohorts", "mixed": "groups"},
+        "lines": [["Subjects: {n}"]], "label_key": "label", "key_words": {"n": "subjects"},
+    }
+    _PERIODS = {
+        "kind": "periods", "order_key": "kind", "one_per": ["kind"], "heading": ["label"],
+        "lines": ["{heading}: {name}"],
+    }
+
+    def _write(self, tmp_path: Path, wording: dict[str, object] | None = None,
+               **extra: object) -> Path:
+        parts: dict[str, object] = {
+            "id": "g1.parts", "group": "g1", "label": "Parts", "type": "object[]",
+            "schema": self._SCHEMA,
+        }
+        parts.update(extra)
+        data = {
+            "version": 1,
+            "groups": [{"id": "g1", "label": "Group 1"}, {"id": "g2", "label": "Group 2"}],
+            "fields": [
+                parts,
+                {"id": "g1.ratio", "group": "g1", "label": "Ratio", "type": "text"},
+                {"id": "g2.other", "group": "g2", "label": "Other", "type": "text"},
+            ],
+            "report_wording": dict(_WORDING, **(wording or {})),
+        }
+        p = tmp_path / "fields.yaml"
+        p.write_text(yaml.dump(data, allow_unicode=True, sort_keys=False))
+        return p
+
+    @pytest.mark.parametrize(("spec", "kind", "values"), [
+        ("text", "text", []),
+        ("int", "int", []),
+        ("enum[arm, cohort]", "enum", ["arm", "cohort"]),
+        ("enum[screening,\n  treatment]", "enum", ["screening", "treatment"]),
+    ])
+    def test_a_key_spec_parses(self, spec: str, kind: str, values: list[str]) -> None:
+        from rfp_intake.domain.registry import parse_entry_key
+
+        key = parse_entry_key("k", spec)
+        assert (key.type, key.values) == (kind, values)
+
+    @pytest.mark.parametrize("spec", ["float", "enum[]", "list[text]", "enum arm"])
+    def test_any_other_key_spec_does_not_load(self, tmp_path: Path, spec: str) -> None:
+        with pytest.raises(ValidationError, match="is not text, int or enum"):
+            load_registry(self._write(tmp_path, schema={"k": spec}))
+
+    def test_both_displays_and_the_flag_are_read(self, tmp_path: Path) -> None:
+        from rfp_intake.domain.registry import EntriesDisplay
+
+        registry = load_registry(self._write(
+            tmp_path, display=dict(self._ENTRIES, headline_fields=[
+                {"field": "g1.ratio", "wording": "randomized {value}"},
+            ]),
+            check_scopes_across_documents=True, one_answer_when_documents_agree=True,
+        ))
+        field = registry.get_field("g1.parts")
+        assert isinstance(field.display, EntriesDisplay)
+        assert field.display.headline_fields[0].field == "g1.ratio"
+        assert field.one_answer_when_documents_agree
+        assert [k.name for k in field.entry_keys()] == ["name", "kind", "n", "label"]
+
+    @pytest.mark.parametrize(("extra", "match"), [
+        ({"type": "text", "schema": None, "display": _PERIODS}, "is not object[] with a schema"),
+        ({"one_answer_when_documents_agree": True}, "does not check scopes"),
+        ({"may_word_differently": ["name"]}, "is not one answer when documents agree"),
+        ({"check_scopes_across_documents": True, "one_answer_when_documents_agree": True,
+          "may_word_differently": ["name", "n", "colour"]},
+         "not text keys of its schema: n, colour"),
+        ({"display": dict(_ENTRIES, lines=[["Dose: {dose}"]])}, "naming key dose"),
+        ({"display": dict(_ENTRIES, kind_key="name")}, "kind_key that is not an enum"),
+        ({"display": dict(_ENTRIES, count={"arm": "arms"})}, "no count word for: cohort, mixed"),
+        ({"display": dict(_ENTRIES, headline_fields=[{"field": "g2.other",
+                                                      "wording": "{value}"}])},
+         "headline field of another group"),
+        ({"display": dict(_ENTRIES, headline_fields=[{"field": "g1.parts",
+                                                      "wording": "{value}"}])},
+         "headline field it cannot use"),
+        ({"display": dict(_PERIODS, one_per=["period"])}, "periods display naming key period"),
+        ({"display": dict(_PERIODS, order_key="name")}, "order_key that is not an enum"),
+        ({"display": dict(_PERIODS, notes={"dose_level": "(x)"})},
+         "values its order_key does not allow: dose_level"),
+        ({"display": dict(_PERIODS, see_also=[{"field": "g1.none", "wording": "{label}",
+                                               "disagree": "{n}"}])},
+         "see_also on a field it cannot use"),
+    ])
+    def test_a_wrong_display_does_not_load(
+        self, tmp_path: Path, extra: dict[str, Any], match: str
+    ) -> None:
+        with pytest.raises(RegistryValidationError, match=re.escape(match)):
+            load_registry(self._write(tmp_path, **extra))
+
+    @pytest.mark.parametrize(("key", "phrase"), [
+        ("entries_count", "{kinds}"),
+        ("entries_all_docs", "All documents"),
+        ("entries_agree", "{docs} agree."),
+        ("entries_same_each", "{value} per {kind}"),
+        ("entries_each", "each {kind}"),
+        ("entries_only_one", "in the {doc} only."),
+        ("entries_only_many", "in the {doc} only."),
+        ("entries_differ", "{label}: documents differ"),
+        ("entries_differ_value", "{value}"),
+    ])
+    def test_a_summary_phrase_must_have_its_slots(
+        self, tmp_path: Path, key: str, phrase: str
+    ) -> None:
+        with pytest.raises(RegistryValidationError, match="must contain"):
+            load_registry(self._write(tmp_path, {key: phrase}))
+
+    def test_a_headline_wording_names_the_value(self, tmp_path: Path) -> None:
+        with pytest.raises(ValidationError, match="must contain"):
+            load_registry(self._write(tmp_path, display=dict(self._ENTRIES, headline_fields=[
+                {"field": "g1.ratio", "wording": "randomized"},
+            ])))
+
+    def test_the_real_registry_declares_the_three_displays(self, fields_yaml_path: Path) -> None:
+        from rfp_intake.domain.registry import EntriesDisplay, PeriodsDisplay
+
+        registry = load_registry(fields_yaml_path)
+        assert isinstance(registry.get_field("design.parts").display, EntriesDisplay)
+        assert isinstance(registry.get_field("visits.frequency_by_period").display, PeriodsDisplay)
+        assert isinstance(registry.get_field("timeline.periods").display, PeriodsDisplay)
+        flagged = [f.id for f in registry.fields if f.one_answer_when_documents_agree]
+        assert flagged == ["design.parts"]
+        assert registry.get_field("design.parts").may_word_differently == [
+            "name", "document_label", "description",
+        ]

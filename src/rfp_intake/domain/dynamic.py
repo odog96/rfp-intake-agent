@@ -6,9 +6,10 @@ changes the extraction schema with no Python edit.
 
 from __future__ import annotations
 
+import json
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field, create_model
+from pydantic import BaseModel, Field, create_model, field_validator
 
 from rfp_intake.domain.registry import FieldDef, Registry, get_registry
 from rfp_intake.domain.schemas import FieldRecord, Provenance
@@ -26,6 +27,17 @@ class FieldExtractionItem(BaseModel):
     scope: str | None = Field(default=None, description="e.g. 'total', 'cohort:A', 'country:DE'")
     page: int = Field(description="1-indexed page number within the excerpt")
     notes: str | None = None
+
+    @field_validator("raw_value", mode="before")
+    @classmethod
+    def _entry_as_json(cls, v: object) -> object:
+        # An `object[]` field's entry is one JSON object (extract/prompt.py asks
+        # for it as text), and a model may send the object itself. Kept as the
+        # JSON text, so raw_value is still the model's words, checked by
+        # extract/validate.py:validate_entry like a string would be.
+        if isinstance(v, (dict, list)):
+            return json.dumps(v, ensure_ascii=False)
+        return v
 
 
 def _field_id_to_attr(field_id: str) -> str:
@@ -45,6 +57,9 @@ def _build_field_description(field_def: FieldDef) -> str:
         parts.append(field_def.hint.strip())
     if field_def.values:
         parts.append(f"Allowed values: {field_def.values}")
+    if field_def.schema_def:
+        keys = ", ".join(k.name for k in field_def.entry_keys())
+        parts.append(f"raw_value: one JSON object per entry, with keys {keys}")
     if field_def.aliases:
         parts.append(f"Also known as: {', '.join(field_def.aliases[:5])}")
     return " | ".join(parts)

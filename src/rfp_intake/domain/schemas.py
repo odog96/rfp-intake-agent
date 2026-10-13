@@ -98,6 +98,12 @@ class ResolvedField(BaseModel):
     # scope names). GATE keeps the row in review, and the report prints the note
     # as the row's reason. Document ids in it are named by the report.
     review_note: str | None = None
+    # The records an `object[]` field's entries came from, each with its own
+    # document, page and quote, so one entry's keys can be merged across the
+    # documents (reconcile/entries.py) and each document's own words shown.
+    # Filled by RECONCILE for an `object[]` field with a schema; empty otherwise.
+    # Added 2026-10-12, fix 1 of that day's brief.
+    statements: list[FieldRecord] = Field(default_factory=list)
 
 
 class OutlineEntry(BaseModel):

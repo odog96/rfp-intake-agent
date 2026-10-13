@@ -315,6 +315,10 @@ def _merge_collection(
         quote=best.quote,
         scope=scope,
         review_note=review_note,
+        statements=(
+            [r for r in records if isinstance(r.value, dict)]
+            if field_def.type == "object[]" and field_def.schema_def else []
+        ),
     )
 
 

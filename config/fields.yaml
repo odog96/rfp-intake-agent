@@ -122,6 +122,26 @@ report_wording:
     arm: Arm
     dose_level: Dose level
     treatment_group: Treatment group
+  # The summary lines under an `entries` or `periods` display (fixes 1, 3 and 7 of the
+  # 2026-10-12 brief). How many parts, `{kinds}` the display's `count` word:
+  entries_count: "{n} {kinds}"
+  # What every document listing the parts agrees on; `{docs}` is one of the next two:
+  entries_agree: "{docs} agree on {what}."
+  entries_two_docs: "Both documents"
+  entries_all_docs: "All {n} documents"
+  # A counted key with one value in every part, then one whose value differs by part:
+  entries_same_each: "{value} {what} per {kind}"
+  entries_each: "the {what} in each {kind}"
+  # Keys only one document states, one key and then several:
+  entries_only_one: "{what} is stated in the {doc} only."
+  entries_only_many: "{what} are stated in the {doc} only."
+  # How the summary joins the last two of its items:
+  entries_and: " and "
+  # A key the documents give different values for, each value with its pages:
+  entries_differ: "{label}: documents differ — {values}"
+  entries_differ_value: "{value} ({pages})"
+  # Where the documents word a text key differently:
+  other_wordings: "Other wordings are quoted in Appendix A."
 
 groups:
   - id: study_design
@@ -313,8 +333,11 @@ fields:
     label: Cohorts / arms / dose levels / parts
     type: object[]
     schema:
-      name: text            # "Part A", "Cohort 3", "Arm 1: 200mg"
+      name: text            # "Part A", "Cohort 3", "NEOD001 plus standard of care"
       kind: enum[part, cohort, arm, dose_level, treatment_group]
+      document_label: text  # the document's own name for it: "Group 1", "Arm A"
+      dose: text            # "24 mg/kg IV infusion"
+      schedule: text        # "every 28 days"
       description: text
       start_trigger: text   # "after DLT review of Cohort 2" — capture when it starts if stated
       n_subjects: int
@@ -337,12 +360,66 @@ fields:
       by its substance ("normal saline", "vehicle"). Include the dose only when the study's
       arms differ by dose. A study part or a dose-escalation cohort keeps its own name, such as
       scope="part:Part A" or scope="cohort:Cohort 3".
+      In raw_value, `name` is what the part is, as the document names it ("NEOD001 plus
+      standard of care", "Part A"); `document_label` is the document's own number, letter or
+      group name for it ("Group 1", "Arm A"), only where it gives one; `dose` is the dose and
+      how it is given ("24 mg/kg IV infusion") and `schedule` how often ("every 28 days"), each
+      only as the document states it for this part; `n_subjects` is the number of subjects in
+      this part alone, never the study's total.
     plain: >
       The separate groups a study splits into: an arm is one treatment being compared, a cohort a
       group dosed together, a dose level one strength tested. Each one adds work.
     source_priority: protocol
     budget_driver: true
     check_scopes_across_documents: true
+    # Fix 1 of the 2026-10-12 brief, approved by Oliver: where every document lists the
+    # same arms and agrees on each arm's counted keys, the list is one answer and GATE
+    # may confirm it, instead of reviewing it as a budget driver with several values.
+    one_answer_when_documents_agree: true
+    # Keys that only name or describe the arm, which documents word differently ("NEOD001 +
+    # SoC"). A dose, schedule or start two documents both state must read the same.
+    may_word_differently: [name, document_label, description]
+    # One block of lines per arm, its keys merged across the documents
+    # (reconcile/entries.py), and under them what the documents agree on.
+    display:
+      kind: entries
+      title: ["{kind} {n} — {name}", "{n} — {name}", "{kind} {n}"]
+      kind_key: kind
+      count:
+        part: parts
+        cohort: cohorts
+        arm: arms
+        dose_level: dose levels
+        treatment_group: treatment groups
+        mixed: groups
+      headline_fields:
+        - field: design.allocation_ratio
+          wording: "randomized {value}"
+      lines:
+        - ["Dose: {dose}, {schedule}", "Dose: {dose}", "Schedule: {schedule}"]
+        - ["Subjects: {n_subjects}"]
+        - ["Starts: {start_trigger}"]
+      label_key: document_label
+      label_line: "{doc} calls it: {value}"
+      key_words:
+        n_subjects: subjects
+        dose: dose
+        schedule: schedule
+
+  - id: design.allocation_ratio
+    group: study_design
+    label: Allocation ratio
+    type: text
+    aliases: ["randomized 1:1", "randomised 1:1", "randomization ratio", "allocation ratio"]
+    # Added 2026-10-12 (fix 1 of that day's brief, decided by Oliver). It has no row of its
+    # own: "Cohorts / arms / dose levels / parts" prints it in its headline ("2 arms,
+    # randomized 1:1"), and its passages stay in Appendix A.
+    hint: >
+      The ratio in which subjects are randomized to the arms, as the document states it, such
+      as "1:1" or "2:1". Only the ratio.
+    plain: >
+      How subjects are split between the arms when they are randomized: 1:1 means equal numbers.
+    source_priority: protocol
 
   - id: design.first_in_human
     group: study_design
@@ -570,21 +647,43 @@ fields:
     label: Visit frequency by study period
     type: object[]
     schema:
-      period: enum[screening, baseline, treatment, follow_up, long_term_follow_up, other]
+      period: enum[screening, baseline, treatment, end_of_treatment, follow_up,
+                   long_term_follow_up, after_stopping_early, other]
+      label: text            # the stretch as the document names it: "Months 1–3"
       frequency: text        # "weekly for 4 weeks, then every 4 weeks"
-      n_visits: int          # if countable from the SoA
+      n_visits: int          # only where the document states the number
     scoped: true
     aliases: ["schedule of assessments", "SoA", "schedule of activities", "visit schedule",
               "study flow chart", "study calendar"]
+    # The exclusions and after_stopping_early are fix 3 of the 2026-10-12 brief: run
+    # r-20261012-angus mixed the schedule's rows with questionnaire subgroups, the visits of
+    # subjects who stopped early, and the RFP's monitoring visits. ANALYST_PROCEDURE_PROTOCOL.md
+    # section 9: subjects who stopped early are never added to the main periods.
     hint: >
       Read the Schedule of Assessments table where present — it is the authoritative source.
-      Count visits per period where the table permits. If frequency differs by cohort/arm/part,
-      emit one record per scope.
+      One entry per stretch of the study with its own visit pattern. `period` is the kind of
+      stretch; `label` names it as the document does ("Screening", "Months 1–3", "Month 4
+      onwards"); `frequency` says how often the subject visits and on which days, in the
+      document's words, with the number of visits where it is stated; `n_visits` only where the
+      document states the number. Visits after a subject stops treatment early go under period
+      after_stopping_early, never under the main periods. Only the subject's own visits: leave
+      out monitor, pharmacy and site visits, and the timing of questionnaires for subgroups.
+      Leave scope empty unless the schedule differs by arm, cohort or part, and then emit one
+      record per scope, named as for design.parts.
     plain: >
       How often a participant attends the clinic at each stage of the study. These are the
       participant's appointments, not the monitor's visits to the site.
     source_priority: protocol
     budget_driver: true
+    # One row, a line per stretch in the order of `period`'s values (fix 3).
+    display:
+      kind: periods
+      order_key: period
+      one_per: [period, label]
+      heading: [label, period]
+      lines: ["{heading}: {frequency}", "{heading}: {n_visits} visits"]
+      notes:
+        after_stopping_early: "(budgeted separately)"
 
   - id: visits.total_count
     group: visits
@@ -731,16 +830,40 @@ fields:
     label: Timeline components
     type: object[]
     schema:
-      component: enum[start_up, recruitment, screening, treatment, follow_up,
-                      long_term_follow_up, database_lock, final_analysis]
+      component: enum[start_up, screening, recruitment, treatment, end_of_treatment, follow_up,
+                      long_term_follow_up, database_lock, final_analysis, other]
+      label: text            # the component as the document names it: "Accrual period"
       duration: text
       start: text
       end: text
     aliases: ["start-up", "recruitment period", "enrolment period", "screening period",
               "treatment period", "follow-up", "LTFU", "database lock", "DBL", "final analysis"]
-    hint: One entry per component the document states. Omit components not mentioned.
+    # The exclusions are fix 7 of the 2026-10-12 brief: run r-20261012-angus listed Month 1,
+    # Month 2 and other single visits here, which are the visit schedule.
+    hint: >
+      One entry per component of the study's timeline the document states: start-up,
+      enrolment (recruitment), screening, treatment, the end-of-treatment visit window,
+      follow-up after the last dose, database lock, final analysis. `label` names the
+      component as the document does; `duration` is how long it lasts, `start` and `end` when
+      it begins and ends, each in the document's words. Leave out single visits ("Month 1",
+      "Day 8") — they are the visit schedule — and the overall study duration, which is its
+      own variable. Omit components not mentioned.
     source_priority: any
     budget_driver: true
+    # One row, a line per component in the order of `component`'s values (fix 7).
+    display:
+      kind: periods
+      order_key: component
+      one_per: [component]
+      heading: [label, component]
+      # The first alternative whose keys are all stated, so the longer ones come first.
+      lines: ["{heading}: {duration} ({start} to {end})", "{heading}: {duration}, from {start}",
+              "{heading}: {duration}, until {end}", "{heading}: {duration}",
+              "{heading}: {start} to {end}", "{heading}: from {start}", "{heading}: until {end}"]
+      see_also:
+        - field: timeline.total_duration
+          wording: "Whole study: see {label}"
+          disagree: "Whole study: see {label} ({values}, Disagreement {n})"
 
 # --- Group 7: Blinding and Unblinded Monitoring -----------------------------
   - id: blinding.design

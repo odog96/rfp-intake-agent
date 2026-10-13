@@ -9,6 +9,7 @@ Pure Python, no LLM. See ARCHITECTURE.md §4.9.
 | budget_driver field with ANY contradiction, dismissed verdict or not  | needs_review   |
 | field whose `follows_conflict_of` field has such a contradiction      | needs_review   |
 | budget_driver list field holding more than one value                  | needs_review   |
+|   … unless `one_answer_when_documents_agree` and the documents agree  | (rule skipped) |
 | row RECONCILE wrote a `review_note` on                                | needs_review   |
 | conf < CONFIDENCE_CONFIRMED                                           | needs_review   |
 | already not_specified / not_found                                     | unchanged      |
@@ -38,8 +39,9 @@ from typing import Any
 
 import structlog
 
-from rfp_intake.domain.registry import get_registry
+from rfp_intake.domain.registry import FieldDef, get_registry
 from rfp_intake.domain.schemas import Contradiction, ResolvedField, RunState
+from rfp_intake.reconcile.entries import merge_entry
 
 logger = structlog.get_logger()
 
@@ -73,6 +75,16 @@ def gate_node(state: RunState) -> dict[str, Any]:
     """GATE graph node. Reads state.resolved / contradictions, rewrites status."""
     registry = get_registry()
     budget_drivers = {f.id for f in registry.fields if f.budget_driver}
+    one_answer = {f.id: f for f in registry.fields if f.one_answer_when_documents_agree}
+    # Every document that lists any part of the study in such a field, so an
+    # entry is one answer only where all of them list it. A row with no scope,
+    # or the whole study, is not a part, as in reconcile/__init__.py:_scope_checks.
+    listing: dict[str, set[str]] = {}
+    for rf in state.resolved:
+        if rf.field_id in one_answer and rf.scope not in (None, "total"):
+            listing.setdefault(rf.field_id, set()).update(
+                r.provenance.doc_id for r in rf.statements
+            )
     # Fields that config/fields.yaml says share another field's disagreement.
     follows = {
         f.id: f.follows_conflict_of
@@ -90,6 +102,8 @@ def gate_node(state: RunState) -> dict[str, Any]:
             rf,
             _contradiction_for(rf, contradiction_by_key, follows),
             is_budget_driver=rf.field_id in budget_drivers,
+            one_answer=one_answer.get(rf.field_id),
+            listing=listing.get(rf.field_id, set()),
         )
         for rf in state.resolved
     ]
@@ -130,7 +144,12 @@ def _contradiction_for(
 
 
 def _gate_field(
-    rf: ResolvedField, contradiction: Contradiction | None, *, is_budget_driver: bool
+    rf: ResolvedField,
+    contradiction: Contradiction | None,
+    *,
+    is_budget_driver: bool,
+    one_answer: FieldDef | None = None,
+    listing: set[str] | None = None,
 ) -> ResolvedField:
     if rf.status in _TERMINAL_STATUSES:
         return rf
@@ -155,7 +174,21 @@ def _gate_field(
     # 2026-10-07 by five single-visit-type rows (change 5 of that day's review),
     # so the example is history — the rule stays for every other budget-driving
     # list field, ip.form among them.
-    if is_budget_driver and isinstance(rf.value, list) and len(rf.value) > 1:
+    #
+    # The one exception, approved by Oliver on 2026-10-12 (fix 1 of that day's
+    # brief), is a field config/fields.yaml marks `one_answer_when_documents_agree`:
+    # its several values are one entry as each document states it, so where
+    # every document listing any of the field's entries lists this one
+    # (`listing`) and every key they state reads the same in each, but the keys
+    # the field says only name the entry (`may_word_differently`;
+    # reconcile/entries.py), they are one answer. RECONCILE's review_note,
+    # checked below, and the confidence threshold still apply.
+    agreed_entry = (
+        one_answer is not None and bool(rf.statements)
+        and {r.provenance.doc_id for r in rf.statements} == (listing or set())
+        and merge_entry(one_answer, rf.statements).one_answer(one_answer.may_word_differently)
+    )
+    if is_budget_driver and isinstance(rf.value, list) and len(rf.value) > 1 and not agreed_entry:
         return rf.model_copy(update={"status": "needs_review"})
 
     # RECONCILE found a difference between the documents a person should see:

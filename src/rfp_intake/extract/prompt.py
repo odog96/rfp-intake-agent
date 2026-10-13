@@ -104,11 +104,30 @@ def _render_fields_section(fields: list[FieldDef]) -> str:
         parts = [f"- {f.id} ({f.label}): type={f.type}"]
         if f.values:
             parts.append(f"  allowed: {f.values}")
+        if f.schema_def:
+            parts.append(_render_entry_keys(f))
         if f.aliases:
             parts.append(f"  aliases: {', '.join(f.aliases[:5])}")
         if f.hint:
             parts.append(f"  hint: {f.hint.strip()}")
         lines.append("\n".join(parts))
+    return "\n".join(lines)
+
+
+def _render_entry_keys(f: FieldDef) -> str:
+    """An `object[]` field's keys, so the model writes each entry as one JSON
+    object that extract/validate.py:validate_entry can check key by key. Added
+    2026-10-12, fix 1 of that day's brief: before it the schema was never sent,
+    and each entry came back as a sentence in whatever words the model chose."""
+    lines = [
+        "  raw_value: one JSON object for this entry, using only these keys. Leave out "
+        "a key the document does not state. Every number must appear in the quote."
+    ]
+    for k in f.entry_keys():
+        kind = f"one of {k.values}" if k.type == "enum" else (
+            "a whole number" if k.type == "int" else "text"
+        )
+        lines.append(f"    {k.name}: {kind}")
     return "\n".join(lines)
 
 

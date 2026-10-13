@@ -771,6 +771,18 @@ Where two sections share a page, the table may belong to the other one. Accepted
 
 Record-level rejection, not response-level. One bad field does not discard 8 good ones.
 
+**An `object[]` field with a `schema` is extracted one JSON object per entry, added 2026-10-12** (fix 1
+of that day's brief). The prompt lists each schema key and what it may hold (`extract/prompt.py:
+_render_entry_keys`): text, a whole number, or one of an enum's values. The model may send the object
+itself or its JSON text; `domain/dynamic.py` keeps it as JSON text in `raw_value`. After the quote and
+page checks, `extract/validate.py:validate_entry` rejects a record whose `raw_value` is not a JSON object,
+names a key the schema lacks, gives an enum key a value outside its set, or gives an int key anything but
+a whole number that appears as a whole digit run in the record's own quote (with or without thousands
+commas, so 13 does not match inside 130). Text keys are not checked against the quote, as no other `text`
+field is. The quote check itself is unchanged. Three fields use this: `design.parts`,
+`visits.frequency_by_period` and `timeline.periods`. NORMALIZE (`normalize/types.py:normalize_entry`)
+parses the JSON into a dict keyed in schema order.
+
 This validation layer matters more on CAII than it would on a frontier hosted model: see §5.1 on
 structured-output strategy. Validation is the safety net that makes a less reliable schema-follower usable.
 
@@ -829,6 +841,17 @@ Labels ("Group 1", "Arm A") play no part in either direction, and subject counts
 `ResolvedField.review_note` keeps the row in review at GATE (§4.9), and the report prints it as a reason
 with the document ids named. Rows with no scope or scope "total" are not parts and get no note.
 `ops.subjects_total` was deliberately left out of this change.
+
+**Each document's own statement of an entry is kept, added 2026-10-12** (fix 1 of that day's brief).
+For an `object[]` field with a `schema`, `_merge_collection` keeps every record whose value is an entry
+in `ResolvedField.statements`, so an arm both documents describe is one row holding both documents'
+entries, each with its own page and quote. `reconcile/entries.py:merge_entry` reads those statements
+key by key: for each key, the value shown (by `reconcile/precedence.py` over each document's most
+confident record stating the key), every document's values, and whether they agree. Its result is not
+stored: GATE and RENDER each call it on `statements`, so both read one merge, and `extraction.json`
+grows by the statement records of these three fields. `statements` was planned for stage 6 of the
+2026-10-12 plan, as each source's own quote; stage 4 needed it first, so stage 6 builds on it rather
+than adding a second list.
 
 Precedence policy (`config/precedence.yaml`), applied only after adjudication:
 1. **Recency** — a later amendment beats an earlier protocol version. Always first.
@@ -975,6 +998,18 @@ than the table's last row": the clause was not in the table at all then, and the
 different place before change 4 inserted the `follows_conflict_of` row. The table now states the rule,
 so there is nothing left for the code to be stricter than.
 
+**One exception to the several-values rule, approved by Oliver on 2026-10-12** (fix 1 of that day's
+brief). A budget driver whose resolved value holds several members goes to `needs_review` — except on a
+field `config/fields.yaml` marks `one_answer_when_documents_agree` (only `design.parts`), whose members
+are one entry as each document states it. Such a row may confirm when all of these hold: every document
+that lists any of the field's entries states this one; every key two or more documents state reads the
+same in each (case and spacing aside), except the keys the field lists in `may_word_differently` —
+`name`, `document_label` and `description`, which only name the arm — so a dose of 24 mg/kg against 12
+mg/kg keeps the row in review; RECONCILE wrote no `review_note`; and the confidence reaches 0.80. The
+flag cannot load without `check_scopes_across_documents`, the check that says every document lists the
+same arms. Every other budget driver keeps the rule, `visits.frequency_by_period` and `timeline.periods`
+included.
+
 **`follows_conflict_of` gives one field another's disagreement, added 2026-10-08** (change 4 of the
 2026-10-07 review). A field whose registry entry names another field takes that field's `Contradiction`
 **by reference** when it has none of its own, so it goes to `needs_review` and the report prints one
@@ -994,6 +1029,28 @@ records gives one of the field's `when_others_say` values (for the interim timin
 day added two more report-only keys, also never sent to a model: `display` (`kind: scopes` draws a field's
 scopes as headed parts of one row, in a declared order) and `value_words` (the word printed for an enum
 value). All three are checked when the registry loads.
+
+**Two more display kinds, `entries` and `periods`, added 2026-10-12** (fixes 1, 3 and 7 of that day's
+brief), both for `object[]` fields with a `schema` and both drawn from `ResolvedField.statements`
+(§4.6). `entries` (`design.parts`) draws one block per entry: a title from the first of the `title`
+wordings whose keys are stated, then each of `lines` (the first alternative whose keys are all stated),
+the document's own name for it (`label_key`, "RFP calls it: Group 1"), a line for each counted key the
+documents give different values for, with each value's pages (`MergedEntry.differing`, the keys GATE's
+exception reads: a counted key, or a text key two documents state that `may_word_differently` does not
+name, so "Dose: documents differ — …" where GATE reviews a dose), and under the blocks what the documents
+agree on, which keys only one document states, and "Other wordings are quoted in Appendix A." when a
+text key is worded differently. Its headline counts the entries ("2 arms", from `count`) and adds each
+`headline_fields` variable's value through its wording ("randomized 1:1", from `design.allocation_ratio`,
+a field added on 2026-10-12 by Oliver's decision for exactly this); a headline variable has no
+row of its own, and its rows stay members of the row and in Appendix A. `periods`
+(`visits.frequency_by_period`, `timeline.periods`) draws one line per stretch, in the order of the
+`order_key` enum's values, a stretch being the entries with the same `one_per` keys; `notes` adds words
+after a stretch ("(budgeted separately)"), a stretch scoped to a part is printed under the part's
+heading, and `see_also` ends with a line pointing at another variable, naming its disagreement and both
+values if it has one ("Whole study: see Overall study duration (42 months vs 40 months, Disagreement
+2)"). The phrases are the `entries_` phrases and `other_wordings` in `report_wording`. Appendix A gives
+each statement its own line, value, page and quote, so every document's wording is there. A record
+saved before 2026-10-12 holds text, not an entry, so its row keeps the default layout.
 
 **A group's `block`** (fix 9 of the same brief) draws several of the group's variables as one row: a
 headline variable's value, then one line per declared variable — its value and first quoted sentence, each

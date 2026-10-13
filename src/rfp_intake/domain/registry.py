@@ -6,7 +6,7 @@ import hashlib
 import re
 from functools import lru_cache
 from pathlib import Path
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
 import yaml
 from pydantic import BaseModel, Field, field_validator
@@ -225,10 +225,11 @@ class ScopeHeading(BaseModel):
     label: str = Field(min_length=1)
 
 
-class Display(BaseModel):
+class ScopesDisplay(BaseModel):
     """How report.pdf lays out one variable's rows, where the default of one
     row per scope reads wrong. Declared in config/fields.yaml so that no field
-    is named in the renderer (non-negotiable rule 4).
+    is named in the renderer (non-negotiable rule 4). See `Display` for the
+    other kinds.
 
     `scopes` (added 2026-10-12, fix 6 of that day's brief): every scope of the
     variable in one row, a heading above each, in the order `scopes` lists them;
@@ -240,6 +241,126 @@ class Display(BaseModel):
 
     kind: Literal["scopes"]
     scopes: list[ScopeHeading] = Field(default_factory=list)
+
+
+class HeadlineField(BaseModel):
+    """Another variable an `entries` row prints in its headline, after the
+    count: `{value}` is that variable's value. The variable gets no row of its
+    own; its rows are members of this one and stay in Appendix A."""
+
+    field: str
+    wording: str = Field(min_length=1)
+
+    @field_validator("wording")
+    @classmethod
+    def _says_the_value(cls, v: str) -> str:
+        if "{value}" not in v:
+            raise ValueError("must contain {value}")
+        return v
+
+
+class EntriesDisplay(BaseModel):
+    """An `object[]` variable whose rows are the study's parts, one block of
+    lines per part, each key of its entry merged across the documents
+    (reconcile/entries.py). Added 2026-10-12, fix 1 of that day's brief, for
+    "Cohorts / arms / dose levels / parts".
+
+    Every wording names the entry's keys by `{key}`. `title` and each of
+    `lines` are alternatives: the first whose keys the entry states is printed,
+    and none is printed when it states none of them. `{n}` in `title` is the
+    entry's position, and `{<kind_key>}` prints as `report_wording.scope_kinds`
+    words it. `count` is the plural word for each `kind_key` value, and `mixed`
+    the word for several kinds at once. `label_key` is each document's own name
+    for the part, printed with `label_line` where it is not the name shown.
+    `key_words` names the keys the summary lines under the parts speak of.
+    """
+
+    kind: Literal["entries"]
+    title: list[str] = Field(min_length=1)
+    kind_key: str | None = None
+    count: dict[str, str] = Field(default_factory=dict)
+    headline_fields: list[HeadlineField] = Field(default_factory=list)
+    lines: list[list[str]] = Field(default_factory=list)
+    label_key: str | None = None
+    label_line: str = Field(default="{doc} calls it: {value}", min_length=1)
+    key_words: dict[str, str] = Field(default_factory=dict)
+
+
+class SeeAlso(BaseModel):
+    """A line of a `periods` row sending the reader to another variable's row.
+    `{label}` is that variable's label; `disagree` is printed instead where its
+    row is a Disagreement, `{values}` the sides' values and `{n}` its number."""
+
+    field: str
+    wording: str = Field(min_length=1)
+    disagree: str = Field(min_length=1)
+
+    @field_validator("disagree")
+    @classmethod
+    def _names_the_disagreement(cls, v: str) -> str:
+        if "{n}" not in v:
+            raise ValueError("must contain {n}, the Disagreement number")
+        return v
+
+
+class PeriodsDisplay(BaseModel):
+    """An `object[]` variable printed as one row, a line per stretch of the
+    study, in the order of `order_key`'s values. Added 2026-10-12, fixes 3 and
+    7 of that day's brief, for visit frequency and timeline components.
+
+    Entries with the same values of the `one_per` keys make one line, merged
+    across the documents like an `entries` part. The line is named by the first
+    of the `heading` keys it states, as `{heading}`; `lines` are alternatives,
+    as in `EntriesDisplay`. `notes` adds a note to the line of an `order_key`
+    value.
+    """
+
+    kind: Literal["periods"]
+    order_key: str
+    one_per: list[str] = Field(min_length=1)
+    heading: list[str] = Field(min_length=1)
+    lines: list[str] = Field(min_length=1)
+    notes: dict[str, str] = Field(default_factory=dict)
+    see_also: list[SeeAlso] = Field(default_factory=list)
+
+
+# How report.pdf lays out one variable's rows, where the default of one row per
+# scope reads wrong. The `kind` key says which.
+Display = Annotated[
+    ScopesDisplay | EntriesDisplay | PeriodsDisplay, Field(discriminator="kind")
+]
+
+
+class EntryKey(BaseModel):
+    """One key of an `object[]` field's `schema`, parsed from its spec: `text`,
+    `int`, or `enum[a, b, …]` with its values."""
+
+    name: str
+    type: Literal["text", "int", "enum"]
+    values: list[str] = Field(default_factory=list)
+
+
+_ENUM_SPEC = re.compile(r"^enum\[(.*)\]$")
+
+
+def parse_entry_key(name: str, spec: str) -> EntryKey:
+    """A `schema` key's spec as an EntryKey. Raises ValueError on any other spec,
+    so EXTRACT never sends a key whose type the validator cannot check."""
+    spec = " ".join(str(spec).split())
+    if spec == "text":
+        return EntryKey(name=name, type="text")
+    if spec == "int":
+        return EntryKey(name=name, type="int")
+    m =_ENUM_SPEC.match(spec)
+    values = [v.strip() for v in m.group(1).split(",") if v.strip()] if m else []
+    if not values:
+        raise ValueError(f"schema key {name}: {spec!r} is not text, int or enum[...]")
+    return EntryKey(name=name, type="enum", values=values)
+
+
+def placeholders(wording: str) -> list[str]:
+    """The `{name}`s a wording uses."""
+    return re.findall(r"\{([a-z_]+)\}", wording)
 
 
 class FieldDef(BaseModel):
@@ -281,6 +402,18 @@ class FieldDef(BaseModel):
     # design.parts on 2026-10-12. See reconcile/__init__.py:_scope_checks.
     check_scopes_across_documents: bool = False
     schema_def: dict[str, str] | None = Field(default=None, alias="schema")
+    # When every document lists the same set of this variable's entries and
+    # agrees on each one's keys, the entries are one answer, which GATE may
+    # confirm; otherwise a budget driver with more than one value is reviewed.
+    # Approved by Oliver on 2026-10-12 (fix 1 of that day's brief) for
+    # design.parts. See gate/__init__.py:_gate_field.
+    one_answer_when_documents_agree: bool = False
+    # The text keys that only name an entry, which two documents may word
+    # differently and still agree ("NEOD001 + SoC", "NEOD001 plus standard of
+    # care"). Every other key two documents state must read the same for the
+    # one-answer rule: a dose of 24 mg/kg against 12 mg/kg is a difference a
+    # person must see (plan-conformance-reviewer, 2026-10-12).
+    may_word_differently: list[str] = Field(default_factory=list)
     # Answers that follow from another field's answer. See ResolutionRule.
     resolution_rules: list[ResolutionRule] = Field(default_factory=list)
     # Another field whose disagreement is this field's disagreement too, named
@@ -305,6 +438,17 @@ class FieldDef(BaseModel):
     value_words: dict[str, str] = Field(default_factory=dict)
 
     model_config = {"populate_by_name": True}
+
+    @field_validator("schema_def")
+    @classmethod
+    def _keys_parse(cls, v: dict[str, str] | None) -> dict[str, str] | None:
+        for name, spec in (v or {}).items():
+            parse_entry_key(name, spec)
+        return v
+
+    def entry_keys(self) -> list[EntryKey]:
+        """The keys of one entry of an `object[]` field, in `schema` order."""
+        return [parse_entry_key(k, s) for k, s in (self.schema_def or {}).items()]
 
 
 class ReportWording(BaseModel):
@@ -331,6 +475,10 @@ class ReportWording(BaseModel):
     `scope_kind` with `scope_kinds` prints a scope's `<kind>:` prefix as a word
     (fix 11): "cohort:NEOD001 arm" as "Cohort: NEOD001 arm". A prefix not listed
     is printed as stored.
+
+    The `entries_` phrases and `other_wordings` are the summary lines under an
+    `entries` or `periods` display's parts (fixes 1, 3 and 7): what the
+    documents agree on, what only one states, and where they differ.
     """
 
     shown_provisional: str = Field(min_length=1)
@@ -350,6 +498,47 @@ class ReportWording(BaseModel):
     block_not_found: str = Field(min_length=1)
     scope_kind: str = Field(min_length=1)
     scope_kinds: dict[str, str] = Field(default_factory=dict)
+    entries_count: str = Field(min_length=1)
+    entries_agree: str = Field(min_length=1)
+    entries_two_docs: str = Field(min_length=1)
+    entries_all_docs: str = Field(min_length=1)
+    entries_same_each: str = Field(min_length=1)
+    entries_each: str = Field(min_length=1)
+    entries_only_one: str = Field(min_length=1)
+    entries_only_many: str = Field(min_length=1)
+    entries_and: str = Field(min_length=1)
+    entries_differ: str = Field(min_length=1)
+    entries_differ_value: str = Field(min_length=1)
+    other_wordings: str = Field(min_length=1)
+
+    @field_validator("entries_count", "entries_all_docs")
+    @classmethod
+    def _says_how_many(cls, v: str) -> str:
+        if "{n}" not in v:
+            raise ValueError("must contain {n}, how many")
+        return v
+
+    @field_validator("entries_agree", "entries_same_each", "entries_each", "entries_only_one",
+                     "entries_only_many")
+    @classmethod
+    def _says_what(cls, v: str) -> str:
+        if "{what}" not in v:
+            raise ValueError("must contain {what}, what the documents state")
+        return v
+
+    @field_validator("entries_differ")
+    @classmethod
+    def _names_the_key(cls, v: str) -> str:
+        if "{label}" not in v or "{values}" not in v:
+            raise ValueError("must contain {label} and {values}")
+        return v
+
+    @field_validator("entries_differ_value")
+    @classmethod
+    def _cites_the_value(cls, v: str) -> str:
+        if "{value}" not in v or "{pages}" not in v:
+            raise ValueError("must contain {value} and {pages}")
+        return v
 
     @field_validator(
         "not_used", "no_value_chosen", "row_shown_provisional", "row_no_value_chosen",
@@ -536,13 +725,94 @@ def _validate_registry(groups: list[GroupDef], fields: list[FieldDef]) -> None:
     # A scopes display names its scopes by words, and a phrase with none would
     # take every scope under its heading.
     for f in fields:
-        if f.display is None or f.display.kind != "scopes":
+        if not isinstance(f.display, ScopesDisplay):
             continue
         if not f.display.scopes:
             errors.append(f"Field {f.id} has a scopes display with no scopes")
         for heading in f.display.scopes:
             if not heading.phrases or not all(_words(p) for p in heading.phrases):
                 errors.append(f"Field {f.id} has a scopes heading with an empty phrase")
+
+    # The entries and periods displays, and the one-answer rule, read an entry's
+    # keys, so the field must have entries and every key named must be one.
+    pre_by_id = {f.id: f for f in fields}
+    headline_of: dict[str, str] = {}
+    for f in fields:
+        keyed = isinstance(f.display, (EntriesDisplay, PeriodsDisplay))
+        if (keyed or f.one_answer_when_documents_agree) and (
+            f.type != "object[]" or not f.schema_def
+        ):
+            errors.append(f"Field {f.id} reads entry keys but is not object[] with a schema")
+            continue
+        # RECONCILE's scope check is what says every document lists the same
+        # entries, so the one-answer rule cannot hold without it.
+        if f.one_answer_when_documents_agree and not f.check_scopes_across_documents:
+            errors.append(
+                f"Field {f.id} is one answer when documents agree but does not check "
+                "scopes across documents"
+            )
+        keys = {k.name: k for k in f.entry_keys()}
+        if f.may_word_differently and not f.one_answer_when_documents_agree:
+            errors.append(
+                f"Field {f.id} has may_word_differently but is not one answer when "
+                "documents agree"
+            )
+        not_text = [k for k in f.may_word_differently if k not in keys or keys[k].type != "text"]
+        if not_text:
+            errors.append(
+                f"Field {f.id} may_word_differently names keys that are not text keys of "
+                f"its schema: {', '.join(not_text)}"
+            )
+        if isinstance(f.display, EntriesDisplay):
+            d = f.display
+            special = {"n"} | ({d.kind_key} if d.kind_key else set())
+            named = [p for w in d.title for p in placeholders(w) if p not in special]
+            named += [p for alts in d.lines for w in alts for p in placeholders(w)]
+            named += list(d.key_words) + ([d.label_key] if d.label_key else [])
+            named += [d.kind_key] if d.kind_key else []
+            for name in named:
+                if name not in keys:
+                    errors.append(f"Field {f.id} has an entries display naming key {name}")
+            if d.kind_key in keys:
+                kind = keys[d.kind_key]
+                if kind.type != "enum":
+                    errors.append(f"Field {f.id} has an entries kind_key that is not an enum")
+                missing = [v for v in [*kind.values, "mixed"] if v not in d.count]
+                if missing:
+                    errors.append(
+                        f"Field {f.id} has an entries display with no count word for: "
+                        f"{', '.join(missing)}"
+                    )
+            for h in d.headline_fields:
+                if h.field not in pre_by_id or h.field == f.id:
+                    errors.append(f"Field {f.id} has a headline field it cannot use: {h.field}")
+                elif pre_by_id[h.field].group != f.group:
+                    errors.append(f"Field {f.id} has a headline field of another group: {h.field}")
+                elif h.field in headline_of:
+                    errors.append(f"Field {h.field} is a headline field of two displays")
+                else:
+                    headline_of[h.field] = f.id
+        if isinstance(f.display, PeriodsDisplay):
+            d2 = f.display
+            named = [d2.order_key, *d2.one_per, *d2.heading]
+            named += [p for w in d2.lines for p in placeholders(w) if p != "heading"]
+            for name in named:
+                if name not in keys:
+                    errors.append(f"Field {f.id} has a periods display naming key {name}")
+            order = keys.get(d2.order_key)
+            if order is not None and order.type != "enum":
+                errors.append(f"Field {f.id} has a periods order_key that is not an enum")
+            unknown = [v for v in d2.notes if order is None or v not in order.values]
+            if unknown:
+                errors.append(
+                    f"Field {f.id} has periods notes for values its order_key does not allow: "
+                    f"{', '.join(unknown)}"
+                )
+            for s in d2.see_also:
+                if s.field not in pre_by_id or s.field == f.id:
+                    errors.append(
+                        f"Field {f.id} has a see_also on a field it cannot use: {s.field}"
+                    )
 
     # A field follows a real other field's disagreement, and not its own.
     for f in fields:

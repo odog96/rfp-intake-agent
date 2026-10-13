@@ -5,10 +5,12 @@ Non-negotiable per ARCHITECTURE.md §4.4:
 2. page must fall inside task window
 3. enum values must be in registry's allowed set
 4. numeric fields must parse
+5. an `object[]` field's entry must be one JSON object of its schema's keys
 """
 
 from __future__ import annotations
 
+import json
 import re
 from collections import Counter
 
@@ -145,4 +147,53 @@ def validate_record(
     if not validate_numeric(item.raw_value, field_def):
         return False, f"numeric_field_no_digits_{item.raw_value}"
 
+    if field_def.type == "object[]" and field_def.schema_def and item.status == "found":
+        reason = validate_entry(item.raw_value, item.quote, field_def)
+        if reason is not None:
+            return False, reason
+
     return True, None
+
+
+_WHOLE_NUMBER = re.compile(r"\d{1,3}(?:,\d{3})+|\d+")
+
+
+def validate_entry(raw_value: str, quote: str, field_def: FieldDef) -> str | None:
+    """Why an `object[]` entry fails, or None. Added 2026-10-12, fix 1 of that
+    day's brief, when EXTRACT began asking for each entry as one JSON object.
+
+    The entry must be a JSON object whose keys are all in the field's `schema`.
+    An enum key's value must be one of its values, as `validate_enum` reads
+    them but strictly. An int key's value must be a whole number, written as a
+    number or as digits, and the quote must contain that number, alone or with
+    thousands commas: a count no passage states is not evidence. Text keys are
+    not checked against the quote, as no other text value is.
+    """
+    try:
+        entry = json.loads(raw_value)
+    except ValueError:
+        return "entry_not_json"
+    if not isinstance(entry, dict):
+        return "entry_not_a_json_object"
+    keys = {k.name: k for k in field_def.entry_keys()}
+    unknown = [k for k in entry if k not in keys]
+    if unknown:
+        return f"entry_key_not_in_schema_{','.join(unknown)}"
+    for name, value in entry.items():
+        key = keys[name]
+        if value is None:
+            continue
+        if key.type == "enum":
+            said = re.sub(r"[^a-z0-9]", "", str(value).lower())
+            if not any(said == re.sub(r"[^a-z0-9]", "", v) for v in key.values):
+                return f"entry_{name}_value_not_allowed_{value}"
+        elif key.type == "int":
+            text = str(value).strip() if not isinstance(value, bool) else ""
+            if not _WHOLE_NUMBER.fullmatch(text):
+                return f"entry_{name}_not_a_whole_number_{value}"
+            n = int(text.replace(",", ""))
+            written = {str(n), f"{n:,}"}
+            stated = {m.group(0) for m in _WHOLE_NUMBER.finditer(quote)}
+            if not written & stated:
+                return f"entry_{name}_number_not_in_quote_{n}"
+    return None

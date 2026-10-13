@@ -30,10 +30,15 @@ from typing import Any
 from rfp_intake.domain.registry import (
     Block,
     BlockLine,
+    EntriesDisplay,
+    EntryKey,
     FieldDef,
     GroupDef,
+    PeriodsDisplay,
     Registry,
     ReportWording,
+    ScopesDisplay,
+    placeholders,
     scope_has_phrase,
 )
 from rfp_intake.domain.schemas import (
@@ -45,6 +50,7 @@ from rfp_intake.domain.schemas import (
 )
 from rfp_intake.gate import CONFIDENCE_CONFIRMED, DISMISSED_VERDICTS
 from rfp_intake.normalize.scope import normalize_scope
+from rfp_intake.reconcile.entries import MergedEntry, group_entries, merge_entry, same_key
 
 # A variable with more rows than this is a schedule, not a fact: in run
 # r-20260901-172918 visit frequency had 22 rows and timeline components 20,
@@ -591,6 +597,29 @@ def build_report_model(state: RunState, registry: Registry) -> ReportModel:
             leader.label if leader else None,
         )
 
+    # A variable with an `entries` or `periods` display is one row, built from
+    # its entries' keys (fixes 1, 3 and 7 of the 2026-10-12 brief). A run made
+    # before RECONCILE kept those keys (ResolvedField.statements) has none, and
+    # keeps the default rows. A variable printed in an entries row's headline
+    # has no row of its own, but only when that row was built.
+    shown_as: dict[str, Row] = {}
+    in_headline: set[str] = set()
+    for fd in registry.fields:
+        entries = by_field.get(fd.id, [])
+        if not any(rf.statements for rf in entries):
+            continue
+        if isinstance(fd.display, EntriesDisplay):
+            shown_as[fd.id] = _entries_row(
+                fd, fd.display, entries, rows_by_field, field_by_id, docs,
+                registry.report_wording,
+            )
+            in_headline |= {h.field for h in fd.display.headline_fields}
+        elif isinstance(fd.display, PeriodsDisplay):
+            shown_as[fd.id] = _periods_row(
+                fd, fd.display, entries, rows_by_field, field_by_id, docs,
+                registry.report_wording,
+            )
+
     sections: list[GroupSection] = []
     found = 0
     for group in registry.groups:
@@ -601,6 +630,11 @@ def build_report_model(state: RunState, registry: Registry) -> ReportModel:
             field_rows = rows_by_field[fd.id]
             if any(r.status != "not_found" for r in field_rows):
                 found += 1
+            if fd.id in in_headline:
+                continue
+            if fd.id in shown_as and fd.id not in taken:
+                rows.append(shown_as[fd.id])
+                continue
             if fd.id in taken:
                 # The block's row stands where the first variable it replaces stood.
                 if group.block is not None and not any(r.members for r in rows):
@@ -759,8 +793,8 @@ def _rows_for(
         if borrowed is not None and no is not None:
             _add_follow_lines(row, fd, group, docs, wording, no)
         rows.append(row)
-    if fd.display is not None and fd.display.kind == "scopes":
-        return [_scope_parts(fd, rows)]
+    if isinstance(fd.display, ScopesDisplay):
+        return [_scope_parts(fd, fd.display, rows)]
     return rows
 
 
@@ -1089,7 +1123,7 @@ def _add_follow_lines(
         ))
 
 
-def _scope_parts(fd: FieldDef, rows: list[Row]) -> Row:
+def _scope_parts(fd: FieldDef, display: ScopesDisplay, rows: list[Row]) -> Row:
     """A `scopes` display: the variable's rows as the parts of one row, each under
     its heading, in the order config/fields.yaml lists the headings. A scope no
     heading names comes last, under its own words.
@@ -1098,7 +1132,7 @@ def _scope_parts(fd: FieldDef, rows: list[Row]) -> Row:
     most-attention value's, and it carries a part's disagreement number so its
     status reads Disagreement.
     """
-    headings = fd.display.scopes if fd.display is not None else []
+    headings = display.scopes
 
     def place(row: Row) -> int:
         return next(
@@ -1116,6 +1150,330 @@ def _scope_parts(fd: FieldDef, rows: list[Row]) -> Row:
         values=[],
         decision_no=next((p.decision_no for p in parts if p.decision_no is not None), None),
         parts=parts,
+    )
+
+
+# --------------------------------------------------------------------------- #
+# `entries` and `periods` displays (fixes 1, 3 and 7 of the 2026-10-12 brief)
+# --------------------------------------------------------------------------- #
+#
+# Each is one row whose `members` are the variable's own rows, so the review
+# list, the counts and assert_nothing_lost see every value as before, and whose
+# `block_lines` say the entries key by key, merged across the documents by
+# reconcile/entries.py. Every word printed comes from config/fields.yaml: the
+# display's wordings, `report_wording`, or the documents' own values.
+
+
+def _key_text(key: EntryKey, value: Any, as_kind: bool, wording: ReportWording) -> str:
+    """One key's value as the report prints it. An enum value is in words, and
+    the kind of part (`as_kind`) in `scope_kinds`' word for it ("Arm")."""
+    if key.type == "enum":
+        token = str(value)
+        return (wording.scope_kinds.get(token) if as_kind else None) or humanize_enum(token)
+    return format_value(value, None)[0]
+
+
+def _entry_words(
+    entry: MergedEntry, kind_key: str | None, wording: ReportWording,
+    leave_out: set[str] | None = None,
+) -> dict[str, str]:
+    """Each key's shown value as the report prints it, but the keys `leave_out`
+    names."""
+    out: dict[str, str] = {}
+    for name, km in entry.keys.items():
+        if name in (leave_out or set()):
+            continue
+        text = _key_text(km.key, km.value, name == kind_key, wording)
+        if text and text != "—":
+            out[name] = text
+    return out
+
+
+def _pick(alternatives: list[str], words: dict[str, str]) -> str | None:
+    """The first wording whose every `{key}` has a value, filled in."""
+    for alt in alternatives:
+        if all(k in words for k in placeholders(alt)):
+            for k in placeholders(alt):
+                alt = alt.replace("{" + k + "}", words[k])
+            return alt
+    return None
+
+
+def _differ_lines(
+    entry: MergedEntry, names: list[str], records: list[FieldRecord],
+    key_words: dict[str, str], docs: _Docs, wording: ReportWording, indent: int,
+) -> list[BlockText]:
+    """A line for each key in `names`, the keys the records give different
+    values for (`MergedEntry.differing`), each value with the pages that state
+    it. Such a key is left out of the entry's own lines, which would otherwise
+    print one value as settled."""
+    out = []
+    for name in names:
+        km = entry.keys[name]
+        by_value: dict[str, tuple[Any, list[FieldRecord]]] = {}
+        for r in records:
+            if isinstance(r.value, dict) and name in r.value:
+                said = r.value[name]
+                by_value.setdefault(same_key(said), (said, []))[1].append(r)
+        values = "; ".join(
+            ReportWording.fill(
+                wording.entries_differ_value,
+                value=_key_text(km.key, said, False, wording),
+                pages=docs.pages([r.provenance for r in rs]),
+            )
+            for said, rs in by_value.values()
+        )
+        # key_words are written for the middle of a sentence; this line starts with one.
+        label = key_words.get(name) or humanize_enum(name)
+        out.append(BlockText(ReportWording.fill(
+            wording.entries_differ, label=label[:1].upper() + label[1:], values=values,
+        ), indent))
+    return out
+
+
+def _reworded(entry: MergedEntry, leave_out: set[str]) -> bool:
+    """A text key the documents word in more than one way."""
+    return any(
+        len({same_key(v) for vs in km.by_doc.values() for v, _ in vs}) > 1
+        for name, km in entry.keys.items() if km.key.type == "text" and name not in leave_out
+    )
+
+
+def _join_list(items: list[str], wording: ReportWording) -> str:
+    """"a", "a and b", "a, b and c", with `entries_and` before the last."""
+    if len(items) < 2:
+        return "".join(items)
+    return ", ".join(items[:-1]) + wording.entries_and + items[-1]
+
+
+def _leftovers(entries: list[ResolvedField], fd: FieldDef) -> list[BlockText]:
+    """A value of the variable that is not an entry: a record NORMALIZE could
+    not read as one keeps its text, and is printed as it is rather than lost."""
+    return [
+        BlockText(format_value(member, fd)[0])
+        for rf in entries if isinstance(rf.value, list)
+        for member in rf.value if not isinstance(member, dict)
+    ]
+
+
+def _display_row(
+    fd: FieldDef, members: list[Row], head: str, sources: str, lines: list[BlockText],
+) -> Row:
+    """The one row of an `entries` or `periods` display. Its status is its
+    most-attention member's, and its figure the lowest member's, as a block's."""
+    scored = [
+        v.confidence for m in members for v in m.values if v.status != "not_found"
+    ]
+    status = min((m.status for m in members), key=lambda st: _STATUS_RANK.get(st, 0))
+    return Row(
+        field_id=fd.id,
+        label=fd.label,
+        scope=None,
+        budget_driver=fd.budget_driver,
+        status=status,
+        values=[ValueLine(
+            items=[head], status=status, confidence=min(scored, default=0.0), sources=sources,
+        )],
+        decision_no=next((m.decision_no for m in members if m.decision_no is not None), None),
+        members=members,
+        block_lines=lines,
+    )
+
+
+def _entries_row(
+    fd: FieldDef,
+    display: EntriesDisplay,
+    entries: list[ResolvedField],
+    rows_by_field: dict[str, list[Row]],
+    field_by_id: dict[str, FieldDef],
+    docs: _Docs,
+    wording: ReportWording,
+) -> Row:
+    """An `entries` display: a block of lines per part, then what the documents
+    agree on and what only one of them states (fix 1 of the 2026-10-12 brief).
+
+    A part's lines are its keys' shown values, in the display's wordings; a
+    key the documents give different values for (`MergedEntry.differing`: a
+    counted key, or a text key two documents state that is not in
+    `may_word_differently`) is a line naming each value and its pages instead;
+    each document's own name for the part
+    (`label_key`) is printed where the title does not already say it; and
+    RECONCILE's note on a part one document alone lists is printed under it.
+    """
+    fill = ReportWording.fill
+    parts = [rf for rf in entries if rf.statements]
+    merged = [merge_entry(fd, rf.statements) for rf in parts]
+    label = {display.label_key} if display.label_key else set()
+    lines: list[BlockText] = []
+    # A key two documents state differently is a conflict, but the naming keys
+    # this field's documents may word differently, as GATE reads it.
+    may_differ = fd.may_word_differently if fd.one_answer_when_documents_agree else None
+    differing = [e.differing(may_differ) for e in merged]
+    for n, (rf, entry, unsettled) in enumerate(zip(parts, merged, differing, strict=True), 1):
+        words = _entry_words(entry, display.kind_key, wording, set(unsettled))
+        title = _pick(display.title, {**words, "n": str(n)}) or str(n)
+        lines.append(BlockText(title))
+        for alternatives in display.lines:
+            line = _pick(alternatives, words)
+            if line is not None:
+                lines.append(BlockText(line, 1))
+        lines += _differ_lines(
+            entry, unsettled, rf.statements, display.key_words, docs, wording, indent=1,
+        )
+        if display.label_key and display.label_key in entry.keys:
+            for doc, said in entry.keys[display.label_key].by_doc.items():
+                for value, _ in said:
+                    if same_key(value) in same_key(title):
+                        continue
+                    lines.append(BlockText(fill(
+                        display.label_line, doc=docs.code(doc), value=str(value).strip(),
+                    ), 1))
+        if rf.review_note:
+            lines.append(BlockText(docs.name_ids(rf.review_note), 1))
+
+    # How many parts, of which kind.
+    # One kind only when every part states it and all agree.
+    kind: str | None = None
+    kind_key = display.kind_key
+    if kind_key and all(kind_key in e.keys and e.keys[kind_key].agreed for e in merged):
+        kinds = {str(e.keys[kind_key].value) for e in merged}
+        kind = kinds.pop() if len(kinds) == 1 else None
+    one_kind = (wording.scope_kinds.get(kind) or humanize_enum(kind)).lower() if kind else None
+    if len(merged) == 1 and one_kind:
+        kinds_word = one_kind
+    else:
+        kinds_word = display.count.get(kind or "", display.count.get("mixed", ""))
+    count = fill(wording.entries_count, len(merged), kinds=kinds_word).strip()
+
+    # What every document listing a part agrees on: the count when each lists
+    # every part, and each counted key every document states the same in each.
+    listing = list(dict.fromkeys(d for e in merged for d in e.docs))
+    if len(listing) > 1 and all(set(e.docs) == set(listing) for e in merged):
+        agreed = [count]
+        # "per arm" needs one kind of part to name.
+        for name, word in display.key_words.items() if one_kind else ():
+            kms = [km for e in merged if (km := e.keys.get(name)) is not None]
+            if len(kms) < len(merged) or not all(
+                km.key.type != "text" and km.agreed and set(km.stated_by) == set(listing)
+                for km in kms
+            ):
+                continue
+            if len({same_key(km.value) for km in kms}) == 1:
+                agreed.append(fill(
+                    wording.entries_same_each, what=word, kind=one_kind or "",
+                    value=_key_text(kms[0].key, kms[0].value, False, wording),
+                ))
+            else:
+                agreed.append(fill(wording.entries_each, what=word, kind=one_kind or ""))
+        who = wording.entries_two_docs if len(listing) == 2 else fill(
+            wording.entries_all_docs, len(listing),
+        )
+        lines.append(BlockText(fill(
+            wording.entries_agree, docs=who, what=_join_list(agreed, wording),
+        )))
+
+    # Keys one document alone states, wherever any document states them.
+    if len(listing) > 1:
+        alone: dict[str, list[str]] = {}
+        for name, word in display.key_words.items():
+            stating = {d for e in merged if name in e.keys for d in e.keys[name].stated_by}
+            if len(stating) == 1:
+                alone.setdefault(next(iter(stating)), []).append(word)
+        for doc, words_of in alone.items():
+            what = _join_list(words_of, wording)
+            lines.append(BlockText(fill(
+                wording.entries_only_one if len(words_of) == 1 else wording.entries_only_many,
+                what=what[:1].upper() + what[1:], doc=_doc_word(docs.code(doc)),
+            )))
+    if any(_reworded(e, label | set(d)) for e, d in zip(merged, differing, strict=True)):
+        lines.append(BlockText(wording.other_wordings))
+    lines += _leftovers(entries, fd)
+
+    # The headline: the count, then each headline variable's value.
+    head = [count]
+    members = list(rows_by_field.get(fd.id, []))
+    for h in display.headline_fields:
+        own = rows_by_field.get(h.field, [])
+        members += own
+        texts = list(dict.fromkeys(
+            line.text for r in own for line in r.values
+            if r.status != "not_found" and line.text != "—"
+        ))
+        if texts:
+            head.append(fill(h.wording, value="; ".join(texts)))
+    sources = docs.pages(
+        [r.provenance for rf in parts for r in rf.statements]
+        + [p for h in display.headline_fields for r in rows_by_field.get(h.field, [])
+           for v in r.values for e in v.entries for p in _stating(e, field_by_id[h.field])]
+    )
+    return _display_row(fd, members, ", ".join(head), sources, lines)
+
+
+def _periods_row(
+    fd: FieldDef,
+    display: PeriodsDisplay,
+    entries: list[ResolvedField],
+    rows_by_field: dict[str, list[Row]],
+    field_by_id: dict[str, FieldDef],
+    docs: _Docs,
+    wording: ReportWording,
+) -> Row:
+    """A `periods` display: a line per stretch of the study, in the order of
+    `order_key`'s values, each merged across the documents (fixes 3 and 7 of
+    the 2026-10-12 brief). Entries whose scope names a part of the study
+    (`scope_kinds`) are lines under that part's name; every other entry is one
+    of the study's own lines, whatever scope the model gave it."""
+    fill = ReportWording.fill
+    order_key = next(k for k in fd.entry_keys() if k.name == display.order_key)
+
+    def place(records: list[FieldRecord]) -> int:
+        value = next(
+            (r.value[display.order_key] for r in records
+             if isinstance(r.value, dict) and display.order_key in r.value),
+            None,
+        )
+        return order_key.values.index(value) if value in order_key.values else len(
+            order_key.values
+        )
+
+    by_part: dict[str | None, list[FieldRecord]] = {}
+    for rf in entries:
+        part = rf.scope if rf.scope and _scope_words(rf.scope, wording) != rf.scope else None
+        by_part.setdefault(part, []).extend(rf.statements)
+    lines: list[BlockText] = []
+    reworded = False
+    for part, statements in sorted(by_part.items(), key=lambda kv: kv[0] is not None):
+        indent = 0
+        if part is not None:
+            lines.append(BlockText(_scope_words(docs.name_ids(part), wording) + ":"))
+            indent = 1
+        for group in sorted(group_entries(statements, display.one_per), key=place):
+            entry = merge_entry(fd, group)
+            unsettled = entry.differing(None)
+            words = _entry_words(entry, None, wording, set(unsettled))
+            heading = next((words[k] for k in display.heading if k in words), "—")
+            text = _pick(display.lines, {**words, "heading": heading}) or heading
+            note = display.notes.get(str(entry.value(display.order_key)))
+            lines.append(BlockText(f"{text} {note}" if note else text, indent))
+            lines += _differ_lines(entry, unsettled, group, {}, docs, wording, indent + 1)
+            reworded = reworded or _reworded(entry, set(display.one_per))
+    for see in display.see_also:
+        other = field_by_id[see.field]
+        rows = [p for r in rows_by_field.get(see.field, []) for p in (r.parts or [r])]
+        disputed = next((r for r in rows if r.sides and r.decision_no is not None), None)
+        if disputed is not None and disputed.decision_no is not None:
+            values = " vs ".join(dict.fromkeys(s.text for s in disputed.sides))
+            lines.append(BlockText(fill(
+                see.disagree, disputed.decision_no, label=other.label, values=values,
+            )))
+        else:
+            lines.append(BlockText(fill(see.wording, label=other.label)))
+    if reworded:
+        lines.append(BlockText(wording.other_wordings))
+    lines += _leftovers(entries, fd)
+    pages = docs.pages([r.provenance for rf in entries for r in rf.statements])
+    return _display_row(
+        fd, list(rows_by_field.get(fd.id, [])), f"({pages})" if pages else "", "", lines,
     )
 
 
@@ -1463,6 +1821,26 @@ def _evidence(
                 # rows, is printed in Appendix B; see the comment below.
                 notes=None,
                 marker=marker(r),
+            ))
+        # Each document's own statement of an entry, with its own page and quote:
+        # the row's `quote` is only the most confident one, and the entries and
+        # periods rows say the other wordings are quoted here (pipeline-rules-
+        # reviewer, 2026-10-12). A disagreement's records are listed above.
+        for r in rf.statements if c is None else []:
+            said = "; ".join(_record_items(r, fd))
+            if r.quote.strip() == (rf.quote or "").strip():
+                continue
+            add(Evidence(
+                field_id=rf.field_id,
+                label=label,
+                scope=docs.name_ids(rf.scope) if rf.scope else None,
+                value=said,
+                sources=docs.pages([r.provenance]),
+                confidence=r.confidence,
+                quote=r.quote,
+                derived_from=[],
+                notes=None,
+                marker=marker(None),
             ))
         if not rf.quote and not rf.derived_from:
             continue

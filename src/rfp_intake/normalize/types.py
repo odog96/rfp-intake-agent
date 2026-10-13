@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import json
 import re
 from typing import Any
 
+from rfp_intake.domain.registry import EntryKey
 from rfp_intake.normalize.enum_maps import (
     BLINDING_MAP,
     DRUG_FORM_MAP,
@@ -125,6 +127,39 @@ def normalize_text(raw: str) -> str:
     """Normalize free text: collapse whitespace, strip."""
     text = re.sub(r"\s+", " ", raw).strip()
     return text
+
+
+def normalize_entry(raw: str, keys: list[EntryKey]) -> dict[str, Any] | None:
+    """One `object[]` entry, the JSON object EXTRACT validated, with its keys in
+    `schema` order: an int key as an int, an enum key as its allowed value, text
+    with its whitespace collapsed. A key stated empty, or one that does not
+    normalize, is left out, so a missing key and an unstated one read the same.
+    None when `raw` is not a JSON object. Added 2026-10-12, fix 1 of that day's
+    brief.
+    """
+    try:
+        data = json.loads(raw)
+    except ValueError:
+        return None
+    if not isinstance(data, dict):
+        return None
+    entry: dict[str, Any] = {}
+    for key in keys:
+        value = data.get(key.name)
+        if value is None or isinstance(value, (dict, list)):
+            continue
+        text = str(value)
+        normalized: Any
+        if key.type == "int":
+            normalized = value if isinstance(value, int) and not isinstance(value, bool) \
+                else normalize_int(text)
+        elif key.type == "enum":
+            normalized = normalize_enum(text, key.values)
+        else:
+            normalized = normalize_text(text) or None
+        if normalized is not None:
+            entry[key.name] = normalized
+    return entry
 
 
 def normalize_list_enum(raw: str, allowed_values: list[str]) -> list[str] | None:

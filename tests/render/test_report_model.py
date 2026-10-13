@@ -139,6 +139,18 @@ def assert_nothing_lost(state: RunState, registry: Registry, model: ReportModel)
                     f"{rf.field_id}: {said!r} from {codes[r.provenance.doc_id]} "
                     f"p.{r.provenance.page} has no Appendix A line of its own"
                 )
+        # Each document's own statement of an entry has its quote and page in
+        # Appendix A: the entries and periods rows say other wordings are there.
+        for r in rf.statements:
+            assert any(
+                e.field_id == rf.field_id and e.quote == r.quote
+                and codes[r.provenance.doc_id] in _parse_sources(e.sources)
+                and r.provenance.page in _parse_sources(e.sources)[codes[r.provenance.doc_id]]
+                for e in model.evidence
+            ), (
+                f"{rf.field_id}: {codes[r.provenance.doc_id]} p.{r.provenance.page}'s "
+                "statement has no Appendix A line"
+            )
         # A folded rewording was checked, and its text and quote are in Appendix A.
         if line in row.folded:
             assert row.verdict == "not_a_conflict" and not row.budget_driver
@@ -1018,17 +1030,11 @@ class TestAppendixAMarkers:
         assert set(self._markers(model).values()) == {"No value chosen — see Disagreement 2"}
 
     def test_the_wording_comes_from_the_registry(self) -> None:
-        from rfp_intake.domain.registry import ReportWording
-
-        registry = get_registry().model_copy(update={"report_wording": ReportWording(
-            shown_provisional="Used", not_used="Set aside ({n})", no_value_chosen="Open ({n})",
-            row_shown_provisional="{value} ({n})", row_no_value_chosen="Open ({n})",
-            depends_on="After {n}", derived_status="Worked out", derived_why="Why: {why}",
-            evidence_pages="Pages: {pages}", block_stated="{label}: {value} {quote}{cut} {pages}",
-            block_value="{label}: {value} {pages}", block_disagree="{label} ({n})",
-            block_side="{pages}: {quote}{cut}", block_side_value="{pages}: {value}",
-            block_not_found="{label}: none", scope_kind="{kind}: {name}",
-        )})
+        wording = get_registry().report_wording.model_copy(update={
+            "shown_provisional": "Used", "not_used": "Set aside ({n})",
+            "no_value_chosen": "Open ({n})",
+        })
+        registry = get_registry().model_copy(update={"report_wording": wording})
         model = build_report_model(self._state(resolved_value="0", index=1), registry)
         assert self._markers(model) == {
             "Protocol p.98": "Used", "Protocol p.50": "Used", "RFP p.4": "Set aside (1)",

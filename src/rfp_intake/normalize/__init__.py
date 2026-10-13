@@ -9,7 +9,7 @@ import structlog
 from rfp_intake.domain.registry import Registry, get_registry
 from rfp_intake.domain.schemas import FieldRecord, Replace, RunError, RunState
 from rfp_intake.normalize.duration import normalize_duration
-from rfp_intake.normalize.types import normalize_value
+from rfp_intake.normalize.types import normalize_entry, normalize_value
 
 logger = structlog.get_logger()
 
@@ -49,6 +49,13 @@ def normalize_record(record: FieldRecord, registry: Registry | None = None) -> F
         if duration is not None:
             record.value = duration
             record.unit = duration.get("unit")
+            return record
+
+    # An entry of an object[] field with a schema: one JSON object, key by key.
+    if field_type == "object[]" and field_def.schema_def:
+        entry = normalize_entry(raw, field_def.entry_keys())
+        if entry is not None:
+            record.value = entry
             return record
 
     # Standard type dispatch

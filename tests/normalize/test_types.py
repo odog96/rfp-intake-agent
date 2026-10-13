@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import pytest
 
+from rfp_intake.domain.registry import parse_entry_key
 from rfp_intake.normalize.types import (
     normalize_bool,
+    normalize_entry,
     normalize_enum,
     normalize_int,
     normalize_list_enum,
@@ -155,3 +157,33 @@ class TestNormalizeValue:
     def test_dispatches_list_enum(self) -> None:
         result = normalize_value("tablet, SC", "list[enum]", DRUG_FORM_VALUES)
         assert result == ["oral_tablet", "injection_sc"]
+
+
+# An `object[]` entry, key by key, in `schema` order (fix 1 of the 2026-10-12 brief).
+_ENTRY_KEYS = [
+    parse_entry_key("name", "text"),
+    parse_entry_key("kind", "enum[part, cohort, arm]"),
+    parse_entry_key("n_subjects", "int"),
+]
+
+
+@pytest.mark.parametrize(("raw", "expected"), [
+    ('{"n_subjects": 130, "kind": "arm", "name": "Placebo"}',
+     {"name": "Placebo", "kind": "arm", "n_subjects": 130}),
+    ('{"n_subjects": "130"}', {"n_subjects": 130}),
+    ('{"n_subjects": "20,800"}', {"n_subjects": 20800}),
+    ('{"kind": "Arm"}', {"kind": "arm"}),
+    ('{"name": "  NEOD001\\n plus   SoC "}', {"name": "NEOD001 plus SoC"}),
+    # A key stated empty, null, or as a nested value is left out.
+    ('{"name": "", "kind": null, "n_subjects": [1]}', {}),
+    # A key the schema does not have is not carried; EXTRACT rejects it first.
+    ('{"name": "x", "colour": "red"}', {"name": "x"}),
+    ("{}", {}),
+    ("not json", None),
+    ('["a"]', None),
+])
+def test_normalize_entry(raw: str, expected: dict[str, object] | None) -> None:
+    out = normalize_entry(raw, _ENTRY_KEYS)
+    assert out == expected
+    if out is not None:
+        assert list(out) == [k.name for k in _ENTRY_KEYS if k.name in out]
