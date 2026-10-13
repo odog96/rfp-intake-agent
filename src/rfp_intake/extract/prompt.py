@@ -7,7 +7,7 @@ from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
 
 from rfp_intake.domain.registry import FieldDef, Registry
 from rfp_intake.domain.schemas import Document, ExtractionTask, Section, TableData
-from rfp_intake.extract.validate import _normalize_whitespace
+from rfp_intake.extract.validate import comparable_text
 from rfp_intake.sections import section_page_texts
 
 logger = structlog.get_logger()
@@ -241,12 +241,12 @@ def quote_section(task: ExtractionTask, doc: Document, quote: str, page: int) ->
     finds its section. None for a task with no sections, or a quote no chosen
     section holds on that page.
     """
-    wanted = _normalize_whitespace(quote)
+    wanted = comparable_text(quote)
     if not wanted:
         return None
     for section in _chosen_sections(task, doc):
         text = section_page_texts(doc, section).get(page)
-        if text and wanted in _normalize_whitespace(text):
+        if text and wanted in comparable_text(text):
             return section.heading.strip()
     return None
 

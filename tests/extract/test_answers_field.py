@@ -201,6 +201,14 @@ class TestQuoteSection:
             "6 STUDY DRUG"
         )
 
+    def test_a_straight_apostrophe_finds_the_section_that_prints_a_curly_one(self) -> None:
+        # The section is matched as validate_quote matches (item 5 of 2026-10-13),
+        # so a quote that validated is not left without its heading.
+        doc, task = self._doc_and_task()
+        doc = doc.model_copy(update={"page_texts": {1: _PAGE_1.replace(
+            "humanized", "subject’s humanized")}})
+        assert quote_section(task, doc, "NEOD001 is a subject's humanized", 1) == "1 SYNOPSIS"
+
     def test_a_quote_on_another_page_or_in_no_section_is_none(self) -> None:
         doc, task = self._doc_and_task()
         assert quote_section(task, doc, _ANTIBODY, 2) is None

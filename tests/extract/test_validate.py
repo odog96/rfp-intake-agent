@@ -56,6 +56,62 @@ class TestValidateQuote:
         assert not validate_quote("Hello World", "the hello world is here")
 
 
+# Item 5 of Oliver's 2026-10-13 prompt: curly and straight apostrophes are one
+# character to the quote check, and so are curly and straight quotation marks.
+# Nothing else is loosened. The sentences are Example protocol 2.pdf's own.
+P12 = (
+    "The subject’s health status, as well as details of any hospitalizations "
+    "will be collected"
+)
+P112 = "Conduct a vital status phone call per Section 7"
+
+
+class TestQuoteMarks:
+    def test_a_straight_apostrophe_matches_the_pdfs_curly_one(self) -> None:
+        # p.12 and p.79 print "subject’s"; the model types "subject's".
+        assert validate_quote(
+            "The subject's health status, as well as details of any hospitalizations",
+            P12,
+        )
+
+    def test_a_curly_apostrophe_matches_a_straight_one(self) -> None:
+        assert validate_quote("the subject’s last visit", "from the subject's last visit")
+
+    def test_a_left_single_mark_matches_a_straight_apostrophe(self) -> None:
+        assert validate_quote("the ‘Unblinded’ staff", "the 'Unblinded' staff only")
+
+    def test_straight_quotation_marks_match_curly_ones(self) -> None:
+        assert validate_quote(
+            'labelled "Study Drug" on the kit',
+            "labelled “Study Drug” on the kit",
+        )
+
+    def test_curly_quotation_marks_match_straight_ones(self) -> None:
+        assert validate_quote(
+            "labelled “Study Drug” on the kit",
+            'labelled "Study Drug" on the kit',
+        )
+
+    def test_a_quote_that_dropped_a_word_is_still_rejected(self) -> None:
+        # p.112: the model dropped "a" from the sentence.
+        assert validate_quote(P112, P112)
+        assert not validate_quote("Conduct vital status phone call per Section 7", P112)
+
+    def test_a_quote_that_dropped_a_word_beside_a_curly_mark_is_still_rejected(self) -> None:
+        assert not validate_quote("The subject's status, as well as details", P12)
+
+    def test_an_apostrophe_does_not_match_a_quotation_mark(self) -> None:
+        assert not validate_quote("the 'Study Drug' kit", "the “Study Drug” kit")
+
+    def test_other_marks_are_not_straightened(self) -> None:
+        # A prime and a backtick are not apostrophes.
+        assert not validate_quote("the subject's visit", "the subject′s visit")
+        assert not validate_quote("the subject's visit", "the subject`s visit")
+
+    def test_a_missing_apostrophe_is_still_rejected(self) -> None:
+        assert not validate_quote("the subjects health status", P12)
+
+
 class TestValidatePage:
     def test_in_window(self) -> None:
         assert validate_page(5, (3, 8))

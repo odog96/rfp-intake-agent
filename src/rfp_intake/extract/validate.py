@@ -33,10 +33,24 @@ def _normalize_whitespace(text: str) -> str:
     return re.sub(r"\s+", " ", text).strip()
 
 
+# Curly apostrophes and quotation marks read as their straight forms, and nothing
+# else does (item 5 of Oliver's 2026-10-13 prompt). The protocol prints
+# "subject’s" on p.12 and p.79 where the model types "subject's", and the
+# quote check rejected sentences that were copied word for word.
+_STRAIGHT_MARKS = str.maketrans({"‘": "'", "’": "'", "“": '"', "”": '"'})
+
+
+def comparable_text(text: str) -> str:
+    """Text as the quote check compares it: whitespace collapsed, curly
+    apostrophes and quotation marks straightened."""
+    return _normalize_whitespace(text).translate(_STRAIGHT_MARKS)
+
+
 def validate_quote(quote: str, excerpt: str) -> bool:
-    """Check that quote is a substring of the excerpt (normalized whitespace)."""
-    norm_quote = _normalize_whitespace(quote)
-    norm_excerpt = _normalize_whitespace(excerpt)
+    """Check that quote is a substring of the excerpt, compared as
+    `comparable_text` writes both."""
+    norm_quote = comparable_text(quote)
+    norm_excerpt = comparable_text(excerpt)
     if not norm_quote:
         return False
     return norm_quote in norm_excerpt
