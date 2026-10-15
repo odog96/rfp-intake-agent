@@ -36,6 +36,15 @@
 #                  whose value says every listed word
 #   coverage       at least this many registry fields have a value
 #
+# A fact can name a known intermittent failure, approved by Oliver on
+# 2026-10-15: one row of a `rows_say` fact may carry `known`, and a `coverage`
+# fact may list `known_missing` fields. Where only that named part is missing,
+# the check prints KNOWN, not PASS or FAIL, and KNOWN does not fail the run. Each
+# entry names the open item in CLAUDE.md it waits on. Nothing else in the fact
+# is loosened: any other row missing, or any other field without a value, still
+# fails, and a `coverage` fact lowers its threshold by one only for each listed
+# field that is actually missing.
+#
 # A side or row matches a value in one of two ways. `value` is the normalised
 # value exactly (0, "phase_3", "not_matching_stated"). `says` is a list of words
 # that must each appear, as whole words, case ignored, in the value written out
@@ -105,7 +114,15 @@ facts:
     name: The five monitoring-visit rows hold the RFP's figures
     kind: rows_say
     rows:
-      - {field: ops.visits_site_selection, from: rfp, says: ["80", "visits"]}
+      - field: ops.visits_site_selection
+        from: rfp
+        says: ["80", "visits"]
+        # RFP p.3 prints this value in a two-column table, with the label
+        # "Time on Site" between its lines, so the model's quote is sometimes
+        # not word for word in the page text and is rejected
+        # (quote_not_found_in_excerpt). Missing in r-20261013-prompt-c, found
+        # in r-20261012-angus2.
+        known: "CLAUDE.md open item 1, the two-column table on RFP p.3"
       - {field: ops.visits_site_initiation, from: rfp, says: ["75", "visits"]}
       - {field: ops.visits_interim_monitoring, from: rfp, says: ["750", "visits"]}
       - {field: ops.visits_close_out, from: rfp, says: ["75", "visits"]}
@@ -115,3 +132,7 @@ facts:
     name: At least 40 of the registry's fields have a value
     kind: coverage
     at_least: 40
+    # The same known failure as fact 8: when this field has no value the
+    # threshold is 39, never lower.
+    known_missing:
+      - {field: ops.visits_site_selection, known: "CLAUDE.md open item 1, the two-column table on RFP p.3"}

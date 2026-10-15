@@ -7,9 +7,11 @@ knows how to read each `kind` of fact. It reads the run's extraction.json, not
 report.pdf: the question is whether the pipeline produced the answer, and a
 report that drew a wrong answer correctly would pass a report check.
 
-Prints one line per fact, PASS or FAIL with what the run holds, and exits 1 if
-any fact fails, 2 if the run is missing or was not made from the two sample
-documents.
+Prints one line per fact, PASS, KNOWN or FAIL with what the run holds, and
+exits 1 if any fact fails, 2 if the run is missing or was not made from the two
+sample documents. KNOWN means the only part missing is one the facts file names
+as a known intermittent failure (`known` on a row, `known_missing` on a
+coverage fact), tied to an open item in CLAUDE.md; it does not fail the run.
 
 Reads only. Writes nothing, and makes no model calls.
 """
@@ -34,7 +36,10 @@ FIELDS_PATH = PROJECT_ROOT / "config" / "fields.yaml"
 # row and a record are plain dicts here.
 Fact = dict[str, Any]
 Row = dict[str, Any]
-Result = tuple[bool, str]
+# A fact's verdict, and what the run holds.
+Result = tuple[str, str]
+
+PASS, KNOWN, FAIL = "PASS", "KNOWN", "FAIL"
 
 # The statuses of a row that gives an answer; a disagreement row is
 # needs_review with no value of its own, and still answers.
@@ -86,6 +91,10 @@ def _where(prov: dict[str, Any]) -> str:
     return f"{prov.get('doc_kind')} p.{prov.get('page')}"
 
 
+def _verdict(ok: bool) -> str:
+    return PASS if ok else FAIL
+
+
 # --------------------------------------------------------------------------- #
 # The kinds of fact
 # --------------------------------------------------------------------------- #
@@ -120,7 +129,7 @@ def one_row(run: Run, fact: Fact) -> Result:
     rows = run.rows_of(fact["field"])
     ok = (len(rows) == 1 and rows[0].get("status") == fact["status"]
           and _matches(rows[0].get("value"), fact))
-    return ok, f"{len(rows)} row(s): {_describe_rows(rows)}"
+    return _verdict(ok), f"{len(rows)} row(s): {_describe_rows(rows)}"
 
 
 def value_row(run: Run, fact: Fact) -> Result:
@@ -128,7 +137,7 @@ def value_row(run: Run, fact: Fact) -> Result:
             if _scope(r) == fact["scope"] and r.get("status") in ANSWERED]
     right = [r for r in rows if _matches(r.get("value"), fact)]
     ok = bool(right) and len(right) == len(rows)
-    return ok, f"scope {fact['scope']}: {_describe_rows(rows)}"
+    return _verdict(ok), f"scope {fact['scope']}: {_describe_rows(rows)}"
 
 
 def arms(run: Run, fact: Fact) -> Result:
@@ -148,7 +157,7 @@ def arms(run: Run, fact: Fact) -> Result:
     if len(rows) != len(fact["arms"]):
         problems.append(f"{len(rows)} arm rows in all")
     detail = f"{len(rows)} arm row(s); " + "; ".join(found)
-    return not problems, detail + (f" — {', '.join(problems)}" if problems else "")
+    return _verdict(not problems), detail + (f" — {', '.join(problems)}" if problems else "")
 
 
 def disagreement(run: Run, fact: Fact) -> Result:
@@ -160,7 +169,7 @@ def disagreement(run: Run, fact: Fact) -> Result:
         rows = run.rows_of(fact["field"])
         if "scope" in fact:
             rows = [r for r in rows if _scope(r) == fact["scope"]]
-        return False, f"no disagreement; {_describe_rows(rows)}"
+        return FAIL, f"no disagreement; {_describe_rows(rows)}"
     for c in conflicts:
         records = [r for r in c.get("records", [])
                    if "scope" not in fact or _scope(r) == fact["scope"]]
@@ -174,39 +183,58 @@ def disagreement(run: Run, fact: Fact) -> Result:
         shown = "; ".join(f"{_where(r['provenance'])}: {_short(r.get('value'), 40)}"
                           for r in records)
         if all(sides):
-            return True, shown
-    return False, f"disagreement without every side: {shown}"
+            return PASS, shown
+    return FAIL, f"disagreement without every side: {shown}"
 
 
 def removed(run: Run, fact: Fact) -> Result:
     headings = [(p.get("heading") or "").strip() for p in run.data.get("removed_passages", [])]
     ok = fact["heading"].lower() in (h.lower() for h in headings)
-    return ok, f"removed: {headings or 'nothing'}"
+    return _verdict(ok), f"removed: {headings or 'nothing'}"
 
 
 def rows_say(run: Run, fact: Fact) -> Result:
+    """Every row must say its words; a row marked `known` that does not is KNOWN."""
     found: list[str] = []
-    ok = True
+    strict_missing = known_missing = False
     for want in fact["rows"]:
         rows = [r for r in run.rows_of(want["field"])
                 if r.get("status") in ANSWERED
                 and any(s.get("doc_kind") == want["from"] for s in r.get("sources", []))]
         hit = any(_matches(r.get("value"), want) for r in rows)
-        ok = ok and hit
         value = _short(rows[0].get("value"), 45) if rows else "no row"
-        found.append(f"{want['field'].split('.')[-1]}: {'ok' if hit else 'MISSING'} ({value})")
-    return ok, "; ".join(found)
+        if hit:
+            mark = "ok"
+        elif want.get("known"):
+            known_missing = True
+            mark = f"KNOWN MISSING, {want['known']}"
+        else:
+            strict_missing = True
+            mark = "MISSING"
+        found.append(f"{want['field'].split('.')[-1]}: {mark} ({value})")
+    verdict = FAIL if strict_missing else KNOWN if known_missing else PASS
+    return verdict, "; ".join(found)
 
 
 def coverage(run: Run, fact: Fact) -> Result:
+    """At least `at_least` fields answered. Each `known_missing` field that is in
+    fact missing lowers the bar by one, and a pass that needs it is KNOWN."""
     registry = yaml.safe_load(FIELDS_PATH.read_text())
     field_ids = [f["id"] for f in registry["fields"]]
     answered = {r.get("field_id") for r in run.rows if r.get("status") in ANSWERED}
     have = [f for f in field_ids if f in answered]
     missing = [f for f in field_ids if f not in answered]
-    return len(have) >= fact["at_least"], (
-        f"{len(have)} of {len(field_ids)} have a value; none: {', '.join(missing) or '—'}"
-    )
+    known = [k for k in fact.get("known_missing", []) if k["field"] in missing]
+    if len(have) >= fact["at_least"]:
+        verdict = PASS
+    elif known and len(have) >= fact["at_least"] - len(known):
+        verdict = KNOWN
+    else:
+        verdict = FAIL
+    detail = f"{len(have)} of {len(field_ids)} have a value; none: {', '.join(missing) or '—'}"
+    if verdict == KNOWN:
+        detail += "; known: " + "; ".join(f"{k['field']}, {k['known']}" for k in known)
+    return verdict, detail
 
 
 KINDS: dict[str, Callable[[Run, Fact], Result]] = {
@@ -243,17 +271,20 @@ def main() -> int:
 
     run = Run(json.loads(extraction.read_text()))
     print(f"Run {args.run_id} — facts from {FACTS_PATH.relative_to(PROJECT_ROOT)}")
-    failed = []
+    ids: dict[str, list[int]] = {PASS: [], KNOWN: [], FAIL: []}
     for fact in spec["facts"]:
-        ok, detail = KINDS[fact["kind"]](run, fact)
-        if not ok:
-            failed.append(fact["id"])
-        print(f"{'PASS' if ok else 'FAIL'}  {fact['id']}. {fact['name']}")
+        verdict, detail = KINDS[fact["kind"]](run, fact)
+        ids[verdict].append(fact["id"])
+        print(f"{verdict:<5} {fact['id']}. {fact['name']}")
         print(f"         {detail}")
     print()
-    print(f"{len(spec['facts']) - len(failed)} pass, {len(failed)} fail"
-          + (f" ({', '.join(str(i) for i in failed)})" if failed else ""))
-    return 1 if failed else 0
+
+    def count(verdict: str, word: str) -> str:
+        listed = f" ({', '.join(str(i) for i in ids[verdict])})" if ids[verdict] else ""
+        return f"{len(ids[verdict])} {word}" + (listed if verdict != PASS else "")
+
+    print(", ".join([count(PASS, "pass"), count(KNOWN, "known"), count(FAIL, "fail")]))
+    return 1 if ids[FAIL] else 0
 
 
 if __name__ == "__main__":
