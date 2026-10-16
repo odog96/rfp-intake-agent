@@ -688,8 +688,9 @@ fields:
   # Prompt B item 5 (Angus Gray, 13 October call, 14:28-14:37): the dosing row said
   # "Every 28 days" and never until when. Placed straight after the schedule so the two
   # rows read together. PLAN gives this group amendment p.54 ("until the EOT/Early
-  # Treatment Discontinuation (ETD) Visit"), not section 3.5 on p.47, which ranks ninth
-  # for the group (measured offline on samples/Example protocol 2.pdf on 2026-10-16).
+  # Treatment Discontinuation (ETD) Visit"), not section 3.5 on p.47, which ranks eleventh
+  # for the group after ties are broken by document order, against top_k 3 (measured
+  # offline on samples/Example protocol 2.pdf on 2026-10-16).
   - id: dosing.duration
     group: treatment_dosing
     label: How long patients are dosed

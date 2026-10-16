@@ -51,7 +51,7 @@ from rfp_intake.domain.schemas import (
     RunState,
 )
 from rfp_intake.gate import CONFIDENCE_CONFIRMED, DISMISSED_VERDICTS
-from rfp_intake.normalize.duration import normalize_duration
+from rfp_intake.normalize.duration import amount_count, normalize_duration
 from rfp_intake.normalize.scope import normalize_scope
 from rfp_intake.reconcile.entries import MergedEntry, group_entries, merge_entry, same_key
 
@@ -1698,7 +1698,11 @@ _LEADING_AMOUNT = re.compile(r"\s*(\d+(?:\.\d+)?\s+[^\W\d_]+)\b")
 def _leading_amount(r: FieldRecord) -> tuple[dict[str, Any], str] | None:
     """The amount a record's value is, or its wording starts with, and the words
     to print for it; else None. The words read as an amount only if NORMALIZE's
-    duration reader reads them as one, so "1 visit per site" is no amount."""
+    duration reader reads them as one, so "1 visit per site" is no amount.
+
+    A wording with a second amount is not shortened (Prompt B item 7): "42 months
+    to 48 months" and "3 years 6 months" mean more than their first amount, so
+    they print in full."""
     if isinstance(r.value, dict) and set(r.value) == {"n", "unit"}:
         return r.value, format_value(r.value, None)[0]
     m = _LEADING_AMOUNT.match(r.value) if isinstance(r.value, str) else None
@@ -1706,6 +1710,8 @@ def _leading_amount(r: FieldRecord) -> tuple[dict[str, Any], str] | None:
         return None
     amount = normalize_duration(m.group(1))
     if amount is None or set(amount) != {"n", "unit"}:
+        return None
+    if amount_count(m.string) > 1:
         return None
     return amount, m.group(1)
 

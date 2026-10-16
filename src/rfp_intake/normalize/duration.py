@@ -37,6 +37,16 @@ _EVERY_PATTERN = re.compile(
     re.IGNORECASE,
 )
 
+# Any amount, anywhere in a wording: a number and a unit, "28 days" of "every 28
+# days for 24 months", or hyphenated, "24-month" of "42 months (24-month accrual
+# period + 18-month treatment/follow-up period)". Counted, never read: see
+# amount_count.
+_ANY_AMOUNT_PATTERN = re.compile(
+    r"(?<![\w.])(\d+(?:\.\d+)?|" + "|".join(_WORD_NUMBERS.keys()) + r")(?:\s+|-)"
+    r"(days?|weeks?|months?|years?|hours?|wks?|mos?|yrs?|hrs?)\b",
+    re.IGNORECASE,
+)
+
 # "N units" pattern (e.g., "40 months", "21 days")
 _N_UNITS_PATTERN = re.compile(
     r"^~?\s*(\d+(?:\.\d+)?)\s+"
@@ -120,8 +130,10 @@ def normalize_duration(raw: str) -> dict[str, Any] | None:
         if n_min is not None and n_max is not None:
             return {"n_min": n_min, "n_max": n_max, "unit": unit}
 
-    # "every N units"
-    m = _EVERY_PATTERN.search(raw)
+    # "every N units", only where it is the wording's one amount (Prompt B item
+    # 7): "every 2 weeks for 12 weeks, then every 4 weeks" is not 14 days, so it
+    # is left as written.
+    m = _EVERY_PATTERN.search(raw) if amount_count(raw) == 1 else None
     if m:
         n_val = _parse_number(m.group(1))
         unit = _normalize_unit(m.group(2))
@@ -149,3 +161,11 @@ def normalize_duration(raw: str) -> dict[str, Any] | None:
             return {"n": count, "unit": freq_unit, "per": True}
 
     return None
+
+
+def amount_count(raw: str) -> int:
+    """How many amounts (a number and a unit of time) a wording holds: 1 for
+    "42 months (total study duration)", 2 for "42 months to 48 months" and for
+    "3 years 6 months". A wording is only ever shortened to an amount when it
+    holds one (Prompt B item 7). Nothing is added up."""
+    return len(_ANY_AMOUNT_PATTERN.findall(raw))

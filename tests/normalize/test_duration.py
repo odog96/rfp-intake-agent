@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from rfp_intake.normalize.duration import normalize_duration
+from rfp_intake.normalize.duration import amount_count, normalize_duration
 
 
 class TestQNotation:
@@ -93,3 +93,32 @@ class TestEdgeCases:
 
     def test_complex_unparseable(self) -> None:
         assert normalize_duration("varies by cohort") is None
+
+
+class TestAWordingWithTwoAmountsIsNotShortened:
+    """Prompt B item 7: a wording is read as its amount only when it holds one."""
+
+    @pytest.mark.parametrize("raw", [
+        "every 2 weeks for 12 weeks, then every 4 weeks",
+        "every 28 days for 24 months",
+    ])
+    def test_two_amounts_are_left_as_written(self, raw: str) -> None:
+        assert normalize_duration(raw) is None
+
+    def test_one_amount_with_other_words_is_still_read(self) -> None:
+        raw = "once every 28 days from randomization until the EOT/ETD Visit"
+        assert normalize_duration(raw) == {"n": 28, "unit": "days"}
+
+    @pytest.mark.parametrize("raw,count", [
+        ("42 months (total study duration)", 1),
+        ("42 months to 48 months", 2),
+        ("3 years 6 months", 2),
+        ("every three weeks for six months", 2),
+        # A hyphenated amount is an amount too (plan-conformance reviewer,
+        # 2026-10-16): a real wording in seven saved runs.
+        ("42 months (24-month accrual period + 18-month treatment/follow-up period)", 3),
+        ("every 28-day cycle", 1),
+        ("1 visit per site", 0),
+    ])
+    def test_amounts_are_counted(self, raw: str, count: int) -> None:
+        assert amount_count(raw) == count

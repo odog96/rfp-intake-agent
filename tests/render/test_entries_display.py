@@ -413,6 +413,19 @@ class TestTimeline:
             f"Whole study: approximately 42 months vs 40 months (Disagreement {no})"
         )
 
+    @pytest.mark.parametrize("wording", ["42 months to 48 months", "3 years 6 months"])
+    def test_a_wording_with_two_amounts_is_printed_in_full(self, wording: str) -> None:
+        # Prompt B item 7: only a wording with one amount is cut to it.
+        records = _timeline() + [
+            _rec("timeline.total_duration", wording, "study", AM, 24, wording),
+            _rec("timeline.total_duration", "40 months", "study", RFP, 3, "40 months"),
+        ]
+        _, model = _report(records)
+        [no] = [d.no for d in model.decisions if d.field_id == "timeline.total_duration"]
+        assert _lines(_row(model, "timeline.periods"))[-1] == (
+            f"Whole study: {wording} vs 40 months (Disagreement {no})"
+        )
+
     def test_a_document_with_no_amount_gives_each_of_its_values(self) -> None:
         # Two wordings that read differently are two values; neither is left out.
         records = _timeline() + [
@@ -581,6 +594,8 @@ class TestLeadingAmount:
         ("42 months (total study duration)", "42 months"),
         ("42 months total study duration", "42 months"),
         ("3.5 years from first patient in", "3.5 years"),
+        # One amount, whatever else the wording says: "1 visit" is no amount.
+        ("42 months, with 1 visit per site", "42 months"),
         ({"n": 40, "unit": "months"}, "40 months"),
     ])
     def test_an_amount_is_read(self, value: Any, words: str) -> None:
@@ -596,6 +611,11 @@ class TestLeadingAmount:
         "the study lasts 42 months",
         "1 visit per site",
         "3.5-4 years",
+        # Prompt B item 7: a wording with two amounts stays in full.
+        "42 months to 48 months",
+        "3 years 6 months",
+        "42 months, plus 6 months of follow-up",
+        "42 months (24-month accrual period + 18-month treatment/follow-up period)",
     ])
     def test_anything_else_is_not(self, value: str) -> None:
         from rfp_intake.render.report_model import _leading_amount
