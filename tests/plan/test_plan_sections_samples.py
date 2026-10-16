@@ -18,7 +18,7 @@ from pathlib import Path
 
 import pytest
 
-from rfp_intake.domain.registry import get_registry
+from rfp_intake.domain.registry import Registry, get_registry
 from rfp_intake.domain.schemas import Document, ExtractionTask, RemovedPassage, TextSpan
 from rfp_intake.extract.prompt import build_excerpt, build_extract_prompt
 from rfp_intake.plan import plan_extraction
@@ -316,6 +316,21 @@ class TestProtocol:
             f"{section!r}; {len(tasks)} task(s), windows "
             f"{[t.page_window for t in tasks]}. Has a search hint evicted it, or "
             "has top_k been lowered?"
+        )
+
+    def test_the_until_when_sentence_reaches_the_dosing_group(
+        self, protocol: Document, registry: Registry
+    ) -> None:
+        """dosing.duration (Prompt B item 5) is answered from section 6.5.1 on
+        p.54, which says the study drug is given "until the EOT/Early Treatment
+        Discontinuation (ETD) Visit". A hint added to treatment_dosing could push
+        that section out of the group's top three."""
+        tasks = [
+            t for t in plan_extraction([protocol], registry) if t.group == "treatment_dosing"
+        ]
+        excerpts = [_flat(build_excerpt(task, protocol)) for task in tasks]
+        assert any(
+            _flat("from the time the subject is randomized until the EOT") in e for e in excerpts
         )
 
     def test_a_task_window_can_span_a_gap_but_its_excerpt_does_not(

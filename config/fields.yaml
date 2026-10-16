@@ -685,6 +685,36 @@ fields:
     source_priority: protocol
     budget_driver: true
 
+  # Prompt B item 5 (Angus Gray, 13 October call, 14:28-14:37): the dosing row said
+  # "Every 28 days" and never until when. Placed straight after the schedule so the two
+  # rows read together. PLAN gives this group amendment p.54 ("until the EOT/Early
+  # Treatment Discontinuation (ETD) Visit"), not section 3.5 on p.47, which ranks ninth
+  # for the group (measured offline on samples/Example protocol 2.pdf on 2026-10-16).
+  - id: dosing.duration
+    group: treatment_dosing
+    label: How long patients are dosed
+    type: text
+    scoped: true
+    aliases: ["until the end of treatment", "until disease progression", "treatment duration",
+              "duration of treatment", "number of cycles", "treatment period", "EOT"]
+    hint: >
+      Until when each patient is given the study drug, as the document states it: a fixed
+      length ("for 12 weeks", "6 cycles") or the visit or event dosing runs until ("until the
+      End of Treatment visit", "until disease progression"). Quote the sentence that says it.
+      Where the document says the length differs from patient to patient, for example with
+      when the patient joins the study, say so in the value and quote the sentence that says
+      that. Never work out a number of weeks, months, doses or cycles the passage does not
+      give. If dosing differs by cohort, arm, dose level or part, emit one record per scope,
+      as for the dosing schedule.
+    plain: >
+      How long each patient keeps receiving the study drug: a fixed number of weeks or cycles,
+      or until a visit or an event. Together with how often it is given, it sets how many
+      doses, and so how many dosing visits, each patient has.
+    source_priority: protocol
+    budget_driver: true
+    when_not_found:
+      lines: ["Duration not stated"]
+
   - id: dosing.varies_by_cohort
     group: treatment_dosing
     label: Dosing differs by cohort/arm/part
