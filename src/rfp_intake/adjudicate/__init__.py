@@ -9,8 +9,9 @@ wins a genuine "conflict" is a deterministic code decision — see
 reconcile/precedence.py — not something the model picks, so an analyst can
 trace a resolved value to a named rule instead of a black box.
 
-Every adjudicated candidate produces a ResolvedField (or one per record, for
-not_a_conflict — see _handle_not_a_conflict) with status="needs_review":
+Every adjudicated candidate produces a ResolvedField (or, for most
+not_a_conflict verdicts, one per record — see _handle_not_a_conflict) with
+status="needs_review":
 GATE always sends a field with a live, non-"not_a_conflict" contradiction to
 needs_review regardless of confidence, and even a not_a_conflict verdict
 starts as needs_review here so GATE's ordinary confidence gating is what
@@ -116,17 +117,33 @@ def _adjudicate_one(
     })
 
     if result.verdict == "not_a_conflict":
-        return _handle_not_a_conflict(adjudicated)
+        return _handle_not_a_conflict(adjudicated, field_def, result)
     if result.verdict == "reconcilable":
         return _handle_reconcilable(adjudicated, result)
     return _handle_conflict(adjudicated, field_def)
 
 
+# The field types whose answer is one choice. Prompt B item 2: nine records of
+# "Schedule of activities present", all unscoped, came back "not_a_conflict" in
+# run r-20261013-prompt-c and became nine rows of one answer each.
+_ONE_CHOICE_TYPES = ("enum", "bool")
+
+
 def _handle_not_a_conflict(
-    contradiction: Contradiction,
+    contradiction: Contradiction, field_def: FieldDef, result: AdjudicationResult,
 ) -> tuple[Contradiction, list[ResolvedField]]:
     """Records weren't actually comparable — resolve each on its own rather
-    than force a single merged value RECONCILE's scope grouping got wrong."""
+    than force a single merged value RECONCILE's scope grouping got wrong.
+
+    Except where the field's answer is one choice (`type` in config/fields.yaml
+    is enum or bool) and every record about it has the same scope: one row
+    per record would only repeat one question, so that cluster gets one row,
+    written as a reconcilable one is (_one_row). The other records are in
+    Appendix A. Free-text and number fields keep one row per record.
+    """
+    on_topic = _on_topic(contradiction)
+    if field_def.type in _ONE_CHOICE_TYPES and len({r.scope for r in on_topic}) == 1:
+        return _one_row(contradiction, result, "NOT_A_CONFLICT")
     fields = [
         ResolvedField(
             field_id=r.field_id,
@@ -139,7 +156,7 @@ def _handle_not_a_conflict(
             contradiction=contradiction,
             notes=f"NOT_A_CONFLICT — {contradiction.explanation}",
         )
-        for r in _on_topic(contradiction)
+        for r in on_topic
     ]
     return contradiction, fields
 
@@ -147,6 +164,15 @@ def _handle_not_a_conflict(
 def _handle_reconcilable(
     contradiction: Contradiction, result: AdjudicationResult
 ) -> tuple[Contradiction, list[ResolvedField]]:
+    return _one_row(contradiction, result, "RECONCILABLE")
+
+
+def _one_row(
+    contradiction: Contradiction, result: AdjudicationResult, label: str,
+) -> tuple[Contradiction, list[ResolvedField]]:
+    """One row for the whole cluster: the record ADJUDICATE named, else the most
+    confident, citing every on-topic record's page. `winning_record_index` is
+    what tells the report the row stands for the whole cluster."""
     on_topic = _on_topic(contradiction)
     index = _winning_index(
         contradiction.records, result.winning_record, contradiction.off_topic_record_indexes,
@@ -167,7 +193,7 @@ def _handle_reconcilable(
         quote=winner.quote,
         scope=winner.scope,
         contradiction=contradiction,
-        notes=f"RECONCILABLE — {contradiction.explanation}",
+        notes=f"{label} — {contradiction.explanation}",
     )
     return contradiction, [rf]
 

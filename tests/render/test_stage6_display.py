@@ -121,12 +121,19 @@ def _off_topic(verdict: str) -> Contradiction:
     )
 
 
+def _not_a_conflict(c: Contradiction) -> tuple[Contradiction, list[ResolvedField]]:
+    return _handle_not_a_conflict(
+        c, get_registry().get_field(c.field_id),
+        AdjudicationResult(verdict="not_a_conflict", explanation="x"),
+    )
+
+
 class TestOffTopicRecords:
     def _lab_lines(self, model: ReportModel) -> list[tuple[str, str | None]]:
         return [(e.sources, e.marker) for e in model.evidence if e.quote == _LAB]
 
     def test_not_a_conflict_marks_the_record_in_appendix_a_only(self) -> None:
-        c, fields = _handle_not_a_conflict(_off_topic("not_a_conflict"))
+        c, fields = _not_a_conflict(_off_topic("not_a_conflict"))
         model = _model(fields, [c])
         assert _LAB not in [v.text for v in _row(model, _FIELD).values]
         assert self._lab_lines(model) == [
@@ -146,7 +153,7 @@ class TestOffTopicRecords:
         ]
 
     def test_the_marker_comes_from_the_registry(self) -> None:
-        c, fields = _handle_not_a_conflict(_off_topic("not_a_conflict"))
+        c, fields = _not_a_conflict(_off_topic("not_a_conflict"))
         wording = get_registry().report_wording.model_copy(update={"off_topic": "Set aside"})
         registry = get_registry().model_copy(update={"report_wording": wording})
         state = RunState(run_id="r-1", resolved=fields, contradictions=[c])
@@ -161,7 +168,7 @@ class TestTiedWordings:
             explanation="The same strategy, worded differently.",
             records=[_record(v, 60 + i) for i, v in enumerate(values)],
         )
-        c, fields = _handle_not_a_conflict(c)
+        c, fields = _not_a_conflict(c)
         return _row(_model(fields, [c]), _FIELD)
 
     def test_every_wording_tied_for_the_most_is_shown(self) -> None:

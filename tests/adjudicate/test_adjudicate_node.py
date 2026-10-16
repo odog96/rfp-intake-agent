@@ -44,20 +44,120 @@ def _candidate(records: list[FieldRecord]) -> Contradiction:
     return Contradiction(field_id="ops.sites_total", records=records)
 
 
+def _not_a_conflict(winning_record: int | None = None) -> AdjudicationResult:
+    return AdjudicationResult(
+        verdict="not_a_conflict", explanation="x", winning_record=winning_record,
+    )
+
+
+def _schedule(value: str, doc_kind: DocKind, page: int, confidence: float,
+              scope: str | None = None) -> FieldRecord:
+    r = FieldRecord(
+        field_id="visits.schedule_present", group="visits", raw_value=value,
+        quote=f"quote p.{page}",
+        provenance=Provenance(doc_id=doc_kind, doc_kind=doc_kind, page=page),
+        confidence=confidence, scope=scope,
+    )
+    r.value = value
+    return r
+
+
 class TestHandleNotAConflict:
-    def test_unpacks_one_resolved_field_per_record(self) -> None:
+    def test_unpacks_one_resolved_field_per_record(self, fields_yaml_path: Path) -> None:
+        _use_real_registry(fields_yaml_path)
+        from rfp_intake.domain.registry import get_registry
+
         records = [_record(40, "a"), _record(52, "b")]
         c = _candidate(records).model_copy(update={
             "verdict": "not_a_conflict", "explanation": "different scopes",
         })
 
-        contradiction, fields = _handle_not_a_conflict(c)
+        contradiction, fields = _handle_not_a_conflict(
+            c, get_registry().get_field("ops.sites_total"), _not_a_conflict(),
+        )
 
         assert len(fields) == 2
         assert {f.value for f in fields} == {40, 52}
         assert all(f.status == "needs_review" for f in fields)
         assert all(f.contradiction is contradiction for f in fields)
         assert all("different scopes" in (f.notes or "") for f in fields)
+        assert contradiction.winning_record_index is None
+
+    def _cluster(self) -> Contradiction:
+        """Run r-20261013-prompt-c's nine unscoped schedule records, cut to four."""
+        return Contradiction(field_id="visits.schedule_present", records=[
+            _schedule("yes_body", "amendment", 13, 0.9),
+            _schedule("yes_body", "amendment", 26, 1.0),
+            _schedule("yes_appendix", "amendment", 111, 0.95),
+            _schedule("no", "rfp", 1, 0.95),
+        ]).model_copy(update={"verdict": "not_a_conflict", "explanation": "x"})
+
+    def test_a_one_choice_field_with_one_scope_is_one_row(self, fields_yaml_path: Path) -> None:
+        """Prompt B item 2: nine rows of one answer each became one row."""
+        _use_real_registry(fields_yaml_path)
+        from rfp_intake.domain.registry import get_registry
+
+        field_def = get_registry().get_field("visits.schedule_present")
+        assert field_def.type == "enum"
+        contradiction, fields = _handle_not_a_conflict(
+            self._cluster(), field_def, _not_a_conflict(),
+        )
+
+        [row] = fields
+        # No record named, so the most confident: the Schedule of Events, p.26.
+        assert (row.value, row.quote, row.confidence) == ("yes_body", "quote p.26", 1.0)
+        assert [s.page for s in row.sources] == [13, 26, 111, 1]
+        assert contradiction.winning_record_index == 2
+        assert contradiction.resolved_value == "yes_body"
+        assert (row.notes or "").startswith("NOT_A_CONFLICT")
+
+    def test_the_record_the_model_named_is_shown(self, fields_yaml_path: Path) -> None:
+        _use_real_registry(fields_yaml_path)
+        from rfp_intake.domain.registry import get_registry
+
+        field_def = get_registry().get_field("visits.schedule_present")
+        contradiction, [row] = _handle_not_a_conflict(
+            self._cluster(), field_def, _not_a_conflict(winning_record=3),
+        )
+        assert row.value == "yes_appendix"
+        assert contradiction.winning_record_index == 3
+
+    def test_an_off_topic_record_is_neither_shown_nor_cited(self, fields_yaml_path: Path) -> None:
+        _use_real_registry(fields_yaml_path)
+        from rfp_intake.domain.registry import get_registry
+
+        c = self._cluster().model_copy(update={"off_topic_record_indexes": [4]})
+        _, [row] = _handle_not_a_conflict(
+            c, get_registry().get_field("visits.schedule_present"), _not_a_conflict(4),
+        )
+        assert row.value == "yes_body"
+        assert [s.page for s in row.sources] == [13, 26, 111]
+
+    def test_different_scopes_keep_one_row_each(self, fields_yaml_path: Path) -> None:
+        _use_real_registry(fields_yaml_path)
+        from rfp_intake.domain.registry import get_registry
+
+        c = Contradiction(field_id="visits.schedule_present", records=[
+            _schedule("yes_body", "amendment", 26, 1.0, scope="part A"),
+            _schedule("yes_appendix", "amendment", 111, 0.95, scope="part B"),
+        ]).model_copy(update={"verdict": "not_a_conflict", "explanation": "x"})
+        contradiction, fields = _handle_not_a_conflict(
+            c, get_registry().get_field("visits.schedule_present"), _not_a_conflict(),
+        )
+        assert [f.scope for f in fields] == ["part A", "part B"]
+        assert contradiction.winning_record_index is None
+
+    def test_a_text_field_keeps_one_row_per_record(self, fields_yaml_path: Path) -> None:
+        _use_real_registry(fields_yaml_path)
+        from rfp_intake.domain.registry import get_registry
+
+        text_field = next(f for f in get_registry().fields if f.type == "text")
+        c = Contradiction(field_id=text_field.id, records=[
+            _schedule("one wording", "amendment", 26, 1.0),
+            _schedule("another wording", "rfp", 3, 0.9),
+        ]).model_copy(update={"verdict": "not_a_conflict", "explanation": "x"})
+        _, fields = _handle_not_a_conflict(c, text_field, _not_a_conflict())
+        assert len(fields) == 2
 
 
 class TestHandleReconcilable:

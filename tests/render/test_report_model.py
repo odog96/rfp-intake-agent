@@ -245,9 +245,13 @@ def _own_disagreement_of(rf: ResolvedField) -> Contradiction | None:
     record's page. Written out here rather than imported, so the test does not
     take the rule from the code it is checking."""
     c = rf.contradiction
-    if c is None or c.field_id != rf.field_id or c.verdict not in ("conflict", "reconcilable"):
+    if c is None or c.field_id != rf.field_id:
         return None
-    return c
+    # A not_a_conflict written as one row names its record (Prompt B item 2).
+    one_row = c.verdict in ("conflict", "reconcilable") or (
+        c.verdict == "not_a_conflict" and c.winning_record_index is not None
+    )
+    return c if one_row else None
 
 
 def _stating_pages(
@@ -1069,6 +1073,57 @@ class TestAppendixAMarkers:
         state = RunState(run_id="r-1", resolved=[_rf("ops.sites_total", 75, quote="75 sites")])
         model = build_report_model(state, get_registry())
         assert [e.marker for e in model.evidence] == [None]
+
+
+class TestANotAConflictWrittenAsOneRow:
+    """Prompt B item 2: "Schedule of activities present" was nine rows in run
+    r-20261013-prompt-c. ADJUDICATE now writes one; the report cites only the
+    pages that state its answer and lists every record in Appendix A."""
+
+    def _state(self) -> RunState:
+        c = _contradiction("visits.schedule_present", "not_a_conflict", [
+            ("yes_body", 13, "d-prot"), ("yes_body", 26, "d-prot"),
+            ("yes_appendix", 111, "d-prot"), ("no", 1, "d-rfp"),
+        ], severity="low")
+        c = c.model_copy(update={
+            "resolved_value": "yes_body", "winning_doc_id": "d-prot", "winning_record_index": 2,
+        })
+        rf = _rf("visits.schedule_present", "yes_body", status="needs_review",
+                 contradiction=c, quote="yes_body")
+        rf.sources = [r.provenance for r in c.records]
+        return RunState(run_id="r-1", resolved=[rf], contradictions=[c])
+
+    def test_one_row_citing_only_the_pages_that_state_it(self) -> None:
+        state = self._state()
+        model = build_report_model(state, get_registry())
+        assert_nothing_lost(state, get_registry(), model)
+        [row] = [r for r in model.all_rows() if r.field_id == "visits.schedule_present"]
+        [line] = row.values
+        assert line.sources == "Protocol p.13, 26"
+        assert row.others_in_appendix
+        assert row.decision_no is None
+
+    def test_every_record_is_in_appendix_a(self) -> None:
+        model = build_report_model(self._state(), get_registry())
+        listed = {(e.value, e.sources) for e in model.evidence
+                  if e.field_id == "visits.schedule_present"}
+        assert {sources for _, sources in listed} == {
+            "Protocol p.13", "Protocol p.26", "Protocol p.111", "RFP p.1",
+        }
+
+    def test_a_row_per_record_is_unchanged(self) -> None:
+        state = self._state()
+        c = state.contradictions[0].model_copy(update={
+            "resolved_value": None, "winning_doc_id": None, "winning_record_index": None,
+        })
+        state.contradictions[0] = c
+        state.resolved = [
+            _rf("visits.schedule_present", r.value, status="needs_review", contradiction=c,
+                pages=(r.provenance.page,), doc=r.provenance.doc_id)
+            for r in c.records
+        ]
+        model = build_report_model(state, get_registry())
+        assert not any(r.others_in_appendix for r in model.all_rows())
 
 
 class TestBothSidesOnTheRow:

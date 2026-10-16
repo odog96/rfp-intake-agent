@@ -513,6 +513,11 @@ def _values_cell(r: Row) -> str:
             f'<br/><font size="7" color="#757575">{n} other wording{"s" if n != 1 else ""} '
             "in the documents; checked, not a conflict. Each is quoted in Appendix A.</font>"
         )
+    elif r.others_in_appendix:
+        body += (
+            '<br/><font size="7" color="#757575">'
+            "Other passages checked, not a conflict; each is quoted in Appendix A.</font>"
+        )
     elif r.verdict == "not_a_conflict" and multi:
         body += (
             '<br/><font size="7" color="#757575">'

@@ -940,7 +940,13 @@ severity. Three verdicts:
 
 - `not_a_conflict` — different scope, different unit, different study period. **Expect this to be the most
   common verdict.** A detector that cannot say "these don't actually disagree" floods DSB with noise and
-  gets switched off.
+  gets switched off. Each record about the field gets its own row, **except** (Prompt B item 2,
+  approved by Oliver 2026-10-16) where the field's `type` is `enum` or `bool` and every record about it
+  has the same scope: then one row, written as a `reconcilable` one is — the record the model named,
+  else the most confident — with `winning_record_index` set, which is how the report knows the row
+  stands for the whole cluster. It cites only the pages stating its value, prints "Other passages
+  checked, not a conflict; each is quoted in Appendix A", and Appendix A lists every record. Run
+  `r-20261013-prompt-c` had "Schedule of activities present" as nine rows of one answer each.
 - `reconcilable` — both true, one is a subset or restatement. Explain and pick. **The model picks a
   record, by its number in the prompt's candidate list, not a document** (`winning_record`, recorded as
   `Contradiction.winning_record_index`). Corrected 2026-10-02 with Oliver's approval: picking a document

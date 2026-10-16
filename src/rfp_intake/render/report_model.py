@@ -173,6 +173,10 @@ class Row:
     # Rewordings moved to Appendix B rather than printed in the table. See
     # _fold_rewordings for exactly when that happens.
     folded: list[ValueLine] = field(default_factory=list)
+    # True when the row is one "not_a_conflict" cluster written as one row
+    # (adjudicate/_handle_not_a_conflict, Prompt B item 2): the other passages
+    # are in Appendix A, and the row says so.
+    others_in_appendix: bool = False
     # Set only when this row's disagreement number belongs to ANOTHER variable,
     # through that variable's `follows_conflict_of` in config/fields.yaml: the
     # label of the variable the documents actually disagree about. The report
@@ -815,6 +819,11 @@ def _rows_for(
             decision_no=no,
             reasons=_review_reasons(fd, group, no, borrowed, docs.name_ids),
             follows_label=borrowed,
+            others_in_appendix=any(
+                rf.contradiction is not None and rf.contradiction.verdict == "not_a_conflict"
+                and _own_disagreement(rf) is not None
+                for rf in group
+            ),
         ))
         _add_sides(row, fd, docs, decision_no, wording)
         if row.status == "needs_review" and all(rf.derived_from for rf in group):
@@ -1815,9 +1824,18 @@ def _periods_row(
 # The verdicts on which ADJUDICATE writes ONE row for a whole disagreement:
 # adjudicate/_handle_reconcilable and _handle_conflict give that row the chosen
 # value and quote, but `sources` naming every record's page, whichever value the
-# record held. A "not_a_conflict" verdict gets one row per record instead, each
-# citing only its own page, so its rows need none of what follows.
+# record held. A "not_a_conflict" verdict mostly gets one row per record instead,
+# each citing only its own page, so its rows need none of what follows. Since
+# Prompt B item 2 a "not_a_conflict" on a one-choice field whose records share a
+# scope is written as one row too, and says so by naming a record in
+# `winning_record_index`; that row is treated as these are.
 _ONE_ROW_VERDICTS = ("conflict", "reconcilable")
+
+
+def _is_one_row(c: Contradiction) -> bool:
+    return c.verdict in _ONE_ROW_VERDICTS or (
+        c.verdict == "not_a_conflict" and c.winning_record_index is not None
+    )
 
 
 def _own_disagreement(rf: ResolvedField) -> Contradiction | None:
@@ -1826,7 +1844,7 @@ def _own_disagreement(rf: ResolvedField) -> Contradiction | None:
     (interim.timing carries interim.count's): those records are about another
     variable, so they say nothing about which pages state this one's value."""
     c = rf.contradiction
-    if c is None or c.field_id != rf.field_id or c.verdict not in _ONE_ROW_VERDICTS:
+    if c is None or c.field_id != rf.field_id or not _is_one_row(c):
         return None
     return c
 
