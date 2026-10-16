@@ -21,7 +21,8 @@ GATE gates it the ordinary way.
 
 Known limitation, deliberate: the rule reads the trigger field from RECONCILE's
 own output, so it cannot fire when the documents disagree about the trigger —
-a contradiction carries no resolved value until ADJUDICATE has judged it. With
+a contradiction carries no resolved value until ADJUDICATE has judged it — nor
+when two of the trigger field's entries give different answers. With
 the study phase in dispute the pipeline falls back to extracting the answer, and
 a reviewer sees the phase disagreement either way.
 """
@@ -36,7 +37,7 @@ from rfp_intake.domain.schemas import Contradiction, ResolvedField
 logger = structlog.get_logger()
 
 # A rule never fires off one of these: the trigger field has no answer to read.
-_NO_ANSWER = ("not_found", "not_specified")
+_NO_ANSWER = ("not_found", "not_specified", "not_applicable")
 
 
 def apply_resolution_rules(
@@ -71,17 +72,19 @@ def apply_resolution_rules(
 
 
 def _trigger(resolved: list[ResolvedField], rule: ResolutionRule) -> ResolvedField | None:
-    """The entry for the rule's trigger field whose value the rule names."""
-    return next(
-        (
-            rf
-            for rf in resolved
-            if rf.field_id == rule.when_field
-            and rf.status not in _NO_ANSWER
-            and _token(rf.value) in rule.when_value_in
-        ),
-        None,
-    )
+    """The entry for the rule's trigger field whose value the rule names, when
+    every answered entry for that field names one of the rule's values.
+
+    One entry saying otherwise stops the rule: healthy volunteers "No" for one
+    part and "Yes" for another must not turn an extracted cohort into N/A (gate
+    reviewer, Prompt B item 4).
+    """
+    answered = [
+        rf for rf in resolved if rf.field_id == rule.when_field and rf.status not in _NO_ANSWER
+    ]
+    if not answered or any(_token(rf.value) not in rule.when_value_in for rf in answered):
+        return None
+    return answered[0]
 
 
 def _token(value: object) -> str:
@@ -102,7 +105,10 @@ def _answer(
     return ResolvedField(
         field_id=field_def.id,
         value=rule.value,
-        status="needs_review",  # GATE decides confirmed vs needs_review, as ever
+        # GATE decides confirmed vs needs_review, as ever. A rule saying the
+        # question does not arise (`status: not_applicable`) gives no value, and
+        # GATE leaves that status as it is.
+        status=rule.status or "needs_review",
         confidence=rule.confidence,
         sources=list(source.sources),
         quote=source.quote,

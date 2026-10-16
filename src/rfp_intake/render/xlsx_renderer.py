@@ -17,7 +17,7 @@ from openpyxl import Workbook
 from openpyxl.styles import Font, PatternFill
 from openpyxl.worksheet.worksheet import Worksheet
 
-from rfp_intake.domain.registry import FieldDef, Registry
+from rfp_intake.domain.registry import FieldDef, Registry, ReportWording
 from rfp_intake.domain.schemas import ResolvedField, RunState
 
 _HEADERS = [
@@ -40,7 +40,7 @@ def _row_fill(rf: ResolvedField) -> PatternFill:
         return _FILL_CONFIRMED
     if rf.status == "needs_review":
         return _FILL_NEEDS_REVIEW
-    return _FILL_NOT_FOUND  # not_found, not_specified
+    return _FILL_NOT_FOUND  # not_found, not_specified, not_applicable
 
 
 def _excel_safe(value: Any) -> Any:
@@ -66,7 +66,9 @@ def _excel_safe(value: Any) -> Any:
     return str(value)
 
 
-def _row_values(rf: ResolvedField, field_def: FieldDef | None) -> list[Any]:
+def _row_values(
+    rf: ResolvedField, field_def: FieldDef | None, wording: ReportWording
+) -> list[Any]:
     label = field_def.label if field_def else rf.field_id
     group = field_def.group if field_def else ""
     source = rf.sources[0] if rf.sources else None
@@ -79,7 +81,8 @@ def _row_values(rf: ResolvedField, field_def: FieldDef | None) -> list[Any]:
     return [
         group,
         f"{label} [{rf.scope}]" if rf.scope else label,
-        _excel_safe(rf.value),
+        # A question a rule says does not arise reads as the PDF reads it ("N/A").
+        wording.not_applicable if rf.status == "not_applicable" else _excel_safe(rf.value),
         rf.status,
         round(rf.confidence, 2),
         source.doc_id if source else "",
@@ -89,13 +92,17 @@ def _row_values(rf: ResolvedField, field_def: FieldDef | None) -> list[Any]:
     ]
 
 
-def _write_sheet(ws: Worksheet, rows: list[tuple[ResolvedField, FieldDef | None]]) -> None:
+def _write_sheet(
+    ws: Worksheet,
+    rows: list[tuple[ResolvedField, FieldDef | None]],
+    wording: ReportWording,
+) -> None:
     ws.append(_HEADERS)
     for cell in ws[1]:
         cell.font = Font(bold=True)
 
     for rf, field_def in rows:
-        ws.append(_row_values(rf, field_def))
+        ws.append(_row_values(rf, field_def, wording))
         fill = _row_fill(rf)
         for cell in ws[ws.max_row]:
             cell.fill = fill
@@ -115,14 +122,15 @@ def build_report_xlsx(state: RunState, registry: Registry) -> bytes:
     wb = Workbook()
     fields_ws = wb.active
     fields_ws.title = "Fields"
-    _write_sheet(fields_ws, all_rows)
+    _write_sheet(fields_ws, all_rows, registry.report_wording)
 
     review_rows = sorted(
-        (row for row in all_rows if row[0].status != "confirmed"),
+        # A question a rule says does not arise is settled, not waiting for review.
+        (row for row in all_rows if row[0].status not in ("confirmed", "not_applicable")),
         key=lambda row: row[0].field_id not in budget_drivers,  # False (budget driver) sorts first
     )
     review_ws = wb.create_sheet("Review Queue")
-    _write_sheet(review_ws, review_rows)
+    _write_sheet(review_ws, review_rows, registry.report_wording)
 
     buf = io.BytesIO()
     wb.save(buf)

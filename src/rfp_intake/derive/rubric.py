@@ -101,10 +101,10 @@ class RubricResult:
 
 
 def _usable(rows: list[ResolvedField]) -> list[ResolvedField]:
-    """The rows that carry an answer. A `not_found` or `not_specified` row is
-    treated as absent, because a rubric reading a missing answer as a real one
-    is how an inference becomes a fact."""
-    return [r for r in rows if r.status not in ("not_found", "not_specified")]
+    """The rows that carry an answer. A `not_found`, `not_specified` or
+    `not_applicable` row is treated as absent, because a rubric reading a
+    missing answer as a real one is how an inference becomes a fact."""
+    return [r for r in rows if r.status not in ("not_found", "not_specified", "not_applicable")]
 
 
 def _sources_of(rows: list[ResolvedField]) -> list[Provenance]:

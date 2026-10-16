@@ -76,7 +76,9 @@ DECISION_VALUE_CHARS = 110
 
 # Most attention first. A row takes the status of its most-attention entry, so
 # merging can only ever make a row look less certain, never more.
-_STATUS_RANK = {"needs_review": 0, "not_found": 1, "not_specified": 2, "confirmed": 3}
+_STATUS_RANK = {
+    "needs_review": 0, "not_found": 1, "not_specified": 2, "not_applicable": 3, "confirmed": 4,
+}
 # A value that answers "the document does not say", as reconcile/__init__.py's
 # _SAYS_NOTHING reads it.
 _NOT_SPECIFIED = frozenset({"not_specified", "not specified"})
@@ -753,6 +755,17 @@ def _shorten(text: str, limit: int) -> str:
     return flat if len(flat) <= limit else flat[: limit - 1].rstrip() + "…"
 
 
+def _items(rf: ResolvedField, fd: FieldDef | None, wording: ReportWording) -> list[str]:
+    """A resolved entry's value as the items an analyst reads. A question a
+    rule in config/fields.yaml says does not arise has no value, and reads as
+    `report_wording.not_applicable` ("N/A", Prompt B item 4)."""
+    if rf.status == "not_found":
+        return ["—"]
+    if rf.status == "not_applicable":
+        return [wording.not_applicable]
+    return format_value(rf.value, fd)
+
+
 def _rows_for(
     fd: FieldDef,
     entries: list[ResolvedField],
@@ -781,7 +794,7 @@ def _rows_for(
     for scope_key, group in sorted(by_scope.items(), key=lambda kv: kv[0] is not None):
         values: dict[str, ValueLine] = {}
         for rf in group:
-            items = format_value(rf.value, fd) if rf.status not in ("not_found",) else ["—"]
+            items = _items(rf, fd, wording)
             key = _same_key(items)
             line = values.get(key)
             if line is None:
@@ -1561,7 +1574,7 @@ def _breakdown_row(
         return next((rf.scope for v in row.values for rf in v.entries), None)
 
     def plain(row: Row) -> bool:
-        return row.status not in ("not_found", "not_specified") and not (
+        return row.status not in ("not_found", "not_specified", "not_applicable") and not (
             row.sides and row.decision_no is not None
         )
 
@@ -2153,7 +2166,7 @@ def _evidence(
     for rf in sorted(state.resolved, key=lambda r: order.get(r.field_id, len(order))):
         fd = field_by_id.get(rf.field_id)
         label = _label(field_by_id, rf.field_id)
-        value = "; ".join(format_value(rf.value, fd))
+        value = "; ".join(_items(rf, fd, wording))
         c = _own_disagreement(rf)
         marker = _marker(c, fd, decision_no, wording)
         shown: set[tuple[str, str]] = set()

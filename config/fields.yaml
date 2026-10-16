@@ -154,6 +154,9 @@ report_wording:
   others_checked: >-
     Other passages, including any giving another answer, were checked and judged not a
     conflict; each is quoted in Appendix A.
+  # The value of a question a resolution rule says does not arise (`status: not_applicable`;
+  # Prompt B item 4, Angus Gray's 13 October call).
+  not_applicable: N/A
   # Appendix A's marker on a passage the adjudicating reviewer said is not about the
   # variable (fix 5); the reviewer's reason is printed in Appendix B.
   off_topic: "Not about this variable — see Appendix B"
@@ -409,7 +412,7 @@ fields:
     # SoC"). A dose, schedule or start two documents both state must read the same.
     may_word_differently: [name, document_label, description]
     # One block of lines per arm, its keys merged across the documents
-    # (reconcile/entries.py), and under them what the documents agree on.
+    # (reconcile/entries.py); notes on them go in the Where column (Prompt B item 3).
     display:
       kind: entries
       title: ["{kind} {n} — {name}", "{n} — {name}", "{kind} {n}"]
@@ -500,6 +503,15 @@ fields:
     type: text
     hint: Only populate if design.healthy_volunteers is yes and the document names the cohort or part.
     source_priority: protocol
+    # Prompt B item 4 (Angus Gray, 13 October call, 11:30-11:55): with no healthy volunteers
+    # the question does not arise, so the row reads N/A, Not applicable, not Not found.
+    resolution_rules:
+      - when_field: design.healthy_volunteers
+        when_value_in: [no]
+        status: not_applicable
+        because: >
+          No healthy volunteers take part, so no cohort or part includes them. Read from
+          whether healthy volunteers are included, not from a passage about this question.
 
 # --- Group 2: Study Phase and Population ------------------------------------
   - id: study.phase

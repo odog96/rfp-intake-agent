@@ -14,7 +14,7 @@ class GoldenField(BaseModel):
     """Expected answer for a single field in a document."""
 
     expected_value: str | float | int | bool | None = None
-    expected_status: Literal["found", "not_specified", "not_found"] = "found"
+    expected_status: Literal["found", "not_specified", "not_found", "not_applicable"] = "found"
     expected_page: int | None = None
     expected_quote: str | None = None
     notes: str | None = None

@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Annotated, Any, Literal
 
 import yaml
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from rfp_intake.config.settings import get_settings
 
@@ -102,9 +102,20 @@ class ResolutionRule(BaseModel):
 
     when_field: str
     when_value_in: list[str]
-    value: str
+    # The answer, or, with `status: not_applicable`, none: the question does not
+    # arise. Prompt B item 4 (Angus Gray, 13 October call): with no healthy
+    # volunteers, "Which cohort/part includes healthy volunteers" reads N/A, not
+    # Not found. Exactly one of the two is given.
+    value: str | None = None
+    status: Literal["not_applicable"] | None = None
     confidence: float = Field(default=1.0, ge=0.0, le=1.0)
     because: str | None = None
+
+    @model_validator(mode="after")
+    def _value_or_status(self) -> ResolutionRule:
+        if (self.value is None) == (self.status is None):
+            raise ValueError("a resolution rule gives exactly one of `value` and `status`")
+        return self
 
     @field_validator("when_value_in", mode="before")
     @classmethod
@@ -116,7 +127,7 @@ class ResolutionRule(BaseModel):
     @field_validator("value", mode="before")
     @classmethod
     def _coerce_value(cls, v: Any) -> Any:
-        return _as_value_token(v)
+        return _as_value_token(v) if v is not None else None
 
     @field_validator("because", mode="before")
     @classmethod
@@ -593,6 +604,9 @@ class ReportWording(BaseModel):
     entries_differ_value: str = Field(min_length=1)
     other_wordings: str = Field(min_length=1)
     others_checked: str = Field(min_length=1)
+    # The value printed for a question a resolution rule says does not arise
+    # (`status: not_applicable`, Prompt B item 4).
+    not_applicable: str = Field(min_length=1)
     # Appendix A's marker on a passage ADJUDICATE said is not about the
     # variable (fix 5 of the 2026-10-12 brief); its reason is in Appendix B.
     off_topic: str = Field(min_length=1)
@@ -1012,7 +1026,7 @@ def _validate_registry(groups: list[GroupDef], fields: list[FieldDef]) -> None:
                     )
             if rule.when_field == f.id:
                 errors.append(f"Field {f.id} has a resolution rule on itself")
-            if f.values and rule.value not in f.values:
+            if f.values and rule.value is not None and rule.value not in f.values:
                 errors.append(
                     f"Field {f.id} has a resolution rule setting a value it does not "
                     f"allow: {rule.value}"

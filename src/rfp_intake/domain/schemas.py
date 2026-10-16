@@ -91,7 +91,11 @@ class Contradiction(BaseModel):
 class ResolvedField(BaseModel):
     field_id: str
     value: Any | None = None
-    status: Literal["confirmed", "needs_review", "not_found", "not_specified"]
+    # "not_applicable": a rule in config/fields.yaml says the question does not
+    # arise, because of another field's answer (reconcile/rules.py). A fourth
+    # terminal state, kept apart from not_found and not_specified (rule 3):
+    # the documents were not silent, the question simply has no answer.
+    status: Literal["confirmed", "needs_review", "not_found", "not_specified", "not_applicable"]
     confidence: float = Field(ge=0.0, le=1.0)
     sources: list[Provenance] = []
     quote: str | None = None

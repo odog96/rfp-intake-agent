@@ -89,6 +89,7 @@ _STATUS_WORDS = {
     "needs_review": ("Review", _AMBER),
     "not_specified": ("Not specified", _GREY),
     "not_found": ("Not found", _GREY),
+    "not_applicable": ("Not applicable", _GREY),
 }
 
 _MARGIN = 0.6 * inch

@@ -293,6 +293,7 @@ _WORDING = {
     "entries_differ_value": "{value} ({pages})",
     "other_wordings": "Other wordings in Appendix A.",
     "others_checked": "Other passages in Appendix A.",
+    "not_applicable": "N/A",
     "off_topic": "Not about this variable — see Appendix B",
 }
 

@@ -60,15 +60,16 @@ class DocumentScore:
 
     @property
     def status_accuracy(self) -> float:
-        """How often we got the terminal state right (found/not_specified/not_found)."""
+        """How often we got the terminal state right (found/not_specified/not_found/
+        not_applicable)."""
         if not self.field_scores:
             return 0.0
         correct = sum(1 for s in self.field_scores if s.status_correct)
         return correct / len(self.field_scores)
 
     def confusion_matrix(self) -> dict[str, dict[str, int]]:
-        """3x3 matrix over found/not_specified/not_found."""
-        states = ["found", "not_specified", "not_found"]
+        """4x4 matrix over found/not_specified/not_found/not_applicable."""
+        states = ["found", "not_specified", "not_found", "not_applicable"]
         matrix: dict[str, dict[str, int]] = {s: {t: 0 for t in states} for s in states}
         for s in self.field_scores:
             expected = s.expected_status

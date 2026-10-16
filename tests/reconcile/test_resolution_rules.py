@@ -128,3 +128,93 @@ class TestThroughReconcileAndGate:
         gated = gate_node(state)["resolved"]
         [answer] = [rf for rf in gated if rf.field_id == FIH]
         assert (answer.value, answer.status, answer.confidence) == ("false", "confirmed", 1.0)
+
+
+HV = "design.healthy_volunteers"
+HV_SCOPE = "design.healthy_volunteer_scope"
+
+
+class TestAQuestionThatDoesNotArise:
+    """Prompt B item 4 (Angus Gray, 13 October call, 11:30-11:55): with no healthy
+    volunteers, which cohort includes them reads N/A, Not applicable, not Not found."""
+
+    def test_the_dependency_is_in_configuration(self) -> None:
+        [rule] = get_registry().get_field(HV_SCOPE).resolution_rules
+        assert (rule.when_field, rule.when_value_in) == (HV, ["false"])
+        assert (rule.value, rule.status) == (None, "not_applicable")
+
+    def test_no_healthy_volunteers_makes_the_cohort_not_applicable(self) -> None:
+        state = RunState(run_id="t", records=[
+            _record(HV, "study_design", "false", 12),
+        ])
+        state = state.model_copy(update=reconcile_node(state))
+        gated = gate_node(state)["resolved"]
+        [answer] = [rf for rf in gated if rf.field_id == HV_SCOPE]
+        assert (answer.value, answer.status) == (None, "not_applicable")
+        assert [p.page for p in answer.sources] == [12], "the healthy-volunteer passage"
+        assert answer.notes and "healthy volunteers" in answer.notes
+
+    def test_healthy_volunteers_leave_the_cohort_to_extraction(self) -> None:
+        state = RunState(run_id="t", records=[
+            _record(HV, "study_design", "true", 12),
+            _record(HV_SCOPE, "study_design", "Part A", 14),
+        ])
+        state = state.model_copy(update=reconcile_node(state))
+        [answer] = [rf for rf in state.resolved if rf.field_id == HV_SCOPE]
+        assert answer.value == "Part A"
+
+    def test_the_report_reads_n_a_not_applicable(self) -> None:
+        from rfp_intake.render.pdf_renderer import build_report_pdf
+        from rfp_intake.render.report_model import build_report_model
+
+        state = RunState(run_id="t", records=[_record(HV, "study_design", "false", 12)])
+        state = state.model_copy(update=reconcile_node(state))
+        state = state.model_copy(update=gate_node(state))
+        model = build_report_model(state, get_registry())
+        [row] = [r for r in model.all_rows() if r.field_id == HV_SCOPE]
+        assert (row.status, [v.text for v in row.values]) == ("not_applicable", ["N/A"])
+        [e] = [e for e in model.evidence if e.field_id == HV_SCOPE]
+        assert e.value == "N/A"
+        pdf = build_report_pdf(state, get_registry(), generated_at="2026-10-16")
+        import pymupdf
+        text = " ".join(pymupdf.open(stream=pdf, filetype="pdf")[0].get_text().split())  # type: ignore[no-untyped-call]
+        assert "Which cohort/part includes healthy volunteers N/A Not applicable" in text
+
+    def test_a_rule_gives_a_value_or_a_status_not_both(self) -> None:
+        from pydantic import ValidationError
+
+        from rfp_intake.domain.registry import ResolutionRule
+
+        with pytest.raises(ValidationError):
+            ResolutionRule(when_field=HV, when_value_in=["no"])
+        with pytest.raises(ValidationError):
+            ResolutionRule(
+                when_field=HV, when_value_in=["no"], value="x", status="not_applicable",
+            )
+
+    def test_one_part_with_healthy_volunteers_keeps_the_cohort(self) -> None:
+        """A "No" for one part and a "Yes" for another must not hide the
+        extracted cohort behind N/A (gate reviewer on item 4)."""
+        cohort = _resolved(HV_SCOPE, "Part A", 14)
+        resolved, _ = apply_resolution_rules(
+            get_registry(),
+            [_resolved(HV, "false", 12), _resolved(HV, "true", 13), cohort],
+            [],
+        )
+        assert [rf for rf in resolved if rf.field_id == HV_SCOPE] == [cohort]
+
+    def test_the_workbook_reads_n_a_and_leaves_it_out_of_the_review_queue(self) -> None:
+        import io
+
+        from openpyxl import load_workbook
+
+        from rfp_intake.render.xlsx_renderer import build_report_xlsx
+
+        state = RunState(run_id="t", records=[_record(HV, "study_design", "false", 12)])
+        state = state.model_copy(update=reconcile_node(state))
+        state = state.model_copy(update=gate_node(state))
+        wb = load_workbook(io.BytesIO(build_report_xlsx(state, get_registry())))
+        label = get_registry().get_field(HV_SCOPE).label
+        [row] = [r for r in wb["Fields"].iter_rows(values_only=True) if r[1] == label]
+        assert (row[2], row[3]) == ("N/A", "not_applicable")
+        assert all(r[1] != label for r in wb["Review Queue"].iter_rows(values_only=True))

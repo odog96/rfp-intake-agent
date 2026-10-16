@@ -12,7 +12,7 @@ Pure Python, no LLM. See ARCHITECTURE.md §4.9.
 |   … unless `one_answer_when_documents_agree` and the documents agree  | (rule skipped) |
 | row RECONCILE wrote a `review_note` on                                | needs_review   |
 | conf < CONFIDENCE_CONFIRMED                                           | needs_review   |
-| already not_specified / not_found                                     | unchanged      |
+| already not_specified / not_found / not_applicable                    | unchanged      |
 
 The budget_driver row is what ARCHITECTURE.md §4.9 means by "budget_driver
 with any disagreement": any means any adjudicated verdict, `not_a_conflict`
@@ -47,7 +47,7 @@ logger = structlog.get_logger()
 
 CONFIDENCE_CONFIRMED = 0.80
 
-_TERMINAL_STATUSES = {"not_specified", "not_found"}
+_TERMINAL_STATUSES = {"not_specified", "not_found", "not_applicable"}
 
 # Verdicts in which ADJUDICATE said the records do not really disagree, so the
 # field is not a disagreement a reviewer has to settle.

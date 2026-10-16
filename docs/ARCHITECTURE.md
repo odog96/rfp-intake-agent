@@ -302,7 +302,7 @@ class Contradiction(BaseModel):
 class ResolvedField(BaseModel):
     field_id: str
     value: object | None
-    status: Literal["confirmed", "needs_review", "not_found", "not_specified"]
+    status: Literal["confirmed", "needs_review", "not_found", "not_specified", "not_applicable"]
     confidence: float
     sources: list[Provenance]
     quote: str | None
@@ -867,6 +867,12 @@ field is resolved to the rule's value at the stated confidence, carrying the **t
 and quote as its evidence. It names no field in Python — the only field ids are in the registry, and
 `domain/registry.py` validates that the trigger field, its listed values and the rule's own value all
 exist in `config/fields.yaml`. The rule in use makes First-in-human "No" for a Phase 2, 3 or 4 study.
+A rule may give `status: not_applicable` instead of a value (Prompt B item 4, Angus Gray's 13 October
+call): the question does not arise, so the field gets no value and the fourth terminal status,
+`not_applicable`, which GATE leaves alone and the report prints as "N/A" (`report_wording.not_applicable`)
+and "Not applicable". It is kept apart from `not_found` and `not_specified`, as rule 3 keeps those apart:
+the documents answered the question the field depends on. The one in use makes "Which cohort/part
+includes healthy volunteers" not applicable where healthy volunteers are not included.
 
 **Scopes matched across documents by what they name, added 2026-10-12.** Run `r-20261009-225414`
 listed four arms for a two-arm study, because the protocol amendment scoped its arms by treatment
