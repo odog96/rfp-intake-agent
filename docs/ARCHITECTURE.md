@@ -333,6 +333,8 @@ class RunState(BaseModel):
     contradictions: list[Contradiction] = []
     resolved: list[ResolvedField] = []
     set_aside: list[SetAsideSection] = []
+    removed_passages: list[RemovedPassage] = []
+    dropped: list[DroppedRecord] = []      # records set aside on purpose; not failures
     report_paths: dict[str, str] = {}
     errors: Annotated[list[RunError], operator.add] = []
 ```
@@ -853,10 +855,14 @@ cited in the Disagreements positions. That second part is a loss of evidence and
 **A record whose status is `not_specified` is dropped, and written down, where the field has a found
 record, added 2026-10-13** (item 3 of Oliver's 2026-10-13 prompt). Unlike the records above, whose
 status is `found` and whose value is the word not_specified, these never reach a group: `_reconcile_field`
-keeps only found records once any exists. Each one is now a `RunError` in the run's errors, with
-`node="RECONCILE"`, `kind="validation"` (the model call worked), the text "Dropped: not_specified,
-because another record gives this field a value", and the record's value, quote and page
-(`reconcile/__init__.py:_dropped_not_specified`). Run `r-20261012-angus2` confirmed RFP p.4's one
+keeps only found records once any exists. Each one is written down as a `DroppedRecord`, with
+`node="RECONCILE"`, the reason "Dropped: not_specified, because another record gives this field a
+value", and the record's value, quote and page (`reconcile/__init__.py:_dropped_not_specified`). Until
+Prompt B item 6 (2026-10-16) these were `RunError`s in the run's errors, so the Cloudera AI
+Application's banner ("N field(s) failed during the run") counted them as failures; they now go to
+`RunState.dropped` and `extraction.json`'s `dropped_records`, and `errors` holds only real failures.
+`scripts/check_review_2026_10_07.py` and `scripts/check_run_acceptance.py` skip the old-style entries
+when counting a run made before the change. Run `r-20261012-angus2` confirmed RFP p.4's one
 interim analysis, and whether the amendment's "No interim analyses are planned" was read at all could
 not be told. The same item added the EXTRACT rule that a hint's answer for a stated none is `found`.
 

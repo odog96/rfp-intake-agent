@@ -6,10 +6,12 @@ import os
 
 from rfp_intake.domain.schemas import (
     Contradiction,
+    DroppedRecord,
     FieldRecord,
     Provenance,
     RemovedPassage,
     ResolvedField,
+    RunError,
     RunState,
     SetAsideSection,
     TextSpan,
@@ -200,3 +202,27 @@ class TestBuildExtractionDocument:
         assert doc["resolved_fields"] == []
         assert doc["contradictions"] == []
         assert doc["errors"] == []
+        assert doc["dropped_records"] == []
+
+    def test_dropped_records_have_their_own_list_apart_from_errors(self, fields_yaml_path) -> None:  # type: ignore[no-untyped-def]
+        # Prompt B item 6: the Cloudera AI Application's banner counts `errors`,
+        # so a record RECONCILE set aside on purpose must not be in it.
+        _use_real_registry(fields_yaml_path)
+        from rfp_intake.domain.registry import get_registry
+
+        dropped = DroppedRecord(
+            node="RECONCILE",
+            task_id="doc-protocol:interim_analyses:analysis.interim_count",
+            reason="Dropped: not_specified, because another record gives this field a value",
+            value="not_specified",
+            quote="No interim analyses are planned.",
+            page=62,
+        )
+        failed = RunError(node="EXTRACT", task_id="t", error="call failed")
+        state = RunState(run_id="r-1", dropped=[dropped], errors=[failed])
+        doc = build_extraction_document(state, get_registry())
+
+        [entry] = doc["dropped_records"]
+        assert entry["quote"] == "No interim analyses are planned."
+        assert entry["page"] == 62
+        assert [e["node"] for e in doc["errors"]] == ["EXTRACT"]

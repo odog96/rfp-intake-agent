@@ -756,8 +756,15 @@ def check_9(report: Report, baseline: Report | None) -> Result:
 
 
 def _errors(run_path: Path) -> int:
+    """Real failures only. Runs made before Prompt B item 6 kept RECONCILE's
+    "Dropped: not_specified" entries in `errors`; those are logging, so they are
+    not counted, and a run before the change compares fairly with one after."""
     data = json.loads((run_path / "extraction.json").read_text())
-    return len(data.get("errors") or [])
+    return sum(1 for e in data.get("errors") or [] if not _is_a_drop(e))
+
+
+def _is_a_drop(error: dict) -> bool:  # type: ignore[type-arg]
+    return error.get("node") == "RECONCILE" and str(error.get("error", "")).startswith("Dropped:")
 
 
 def main() -> int:

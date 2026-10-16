@@ -319,6 +319,24 @@ class RunError(BaseModel):
     timestamp: datetime = Field(default_factory=datetime.now)
 
 
+class DroppedRecord(BaseModel):
+    """A record a node set aside on purpose, written down so it can be read.
+
+    Not a RunError: nothing failed. Prompt B item 6 — RECONCILE's not_specified
+    drops were RunErrors from 2026-10-13, so the Cloudera AI Application's banner
+    ("N field(s) failed during the run") and the check scripts counted them as
+    failures. They are logging, and extraction.json keeps them in their own list.
+    """
+
+    node: str
+    task_id: str
+    reason: str
+    value: str | None = None
+    quote: str | None = None
+    page: int | None = None
+    timestamp: datetime = Field(default_factory=datetime.now)
+
+
 class Replace(list):  # type: ignore[type-arg]
     """Marker list telling append_or_replace to overwrite rather than append.
 
@@ -361,5 +379,9 @@ class RunState(BaseModel):
     # Document, where they do the removing; this list is the report's view of
     # them. No reducer, for the same reason as `set_aside` above.
     removed_passages: list[RemovedPassage] = Field(default_factory=list)
+    # Records RECONCILE set aside on purpose (see DroppedRecord), for
+    # extraction.json's `dropped_records`. No reducer: RECONCILE alone writes it,
+    # once, as with `set_aside` above.
+    dropped: list[DroppedRecord] = Field(default_factory=list)
     report_paths: dict[str, str] = Field(default_factory=dict)
     errors: Annotated[list[RunError], operator.add] = Field(default_factory=list)

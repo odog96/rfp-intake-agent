@@ -30,6 +30,7 @@ import structlog
 from rfp_intake.domain.registry import FieldDef, get_registry
 from rfp_intake.domain.schemas import (
     Contradiction,
+    DroppedRecord,
     FieldRecord,
     ResolvedField,
     RunError,
@@ -64,6 +65,7 @@ def reconcile_node(state: RunState) -> dict[str, Any]:
     """RECONCILE graph node. Reads state.records, writes state.resolved / contradictions."""
     registry = get_registry()
     errors: list[RunError] = []
+    dropped: list[DroppedRecord] = []
     resolved: list[ResolvedField] = []
     contradictions: list[Contradiction] = []
 
@@ -74,7 +76,7 @@ def reconcile_node(state: RunState) -> dict[str, Any]:
     non_derived_fields = [f for f in registry.fields if not f.derived]
 
     for field_def in non_derived_fields:
-        errors.extend(_dropped_not_specified(field_def, records_by_field.get(field_def.id, [])))
+        dropped.extend(_dropped_not_specified(field_def, records_by_field.get(field_def.id, [])))
         try:
             field_resolved, field_contradictions = _reconcile_field(
                 field_def, records_by_field.get(field_def.id, [])
@@ -100,32 +102,37 @@ def reconcile_node(state: RunState) -> dict[str, Any]:
         contradictions=len(contradictions),
     )
 
-    return {"resolved": resolved, "contradictions": contradictions, "errors": errors}
+    return {
+        "resolved": resolved,
+        "contradictions": contradictions,
+        "dropped": dropped,
+        "errors": errors,
+    }
 
 
 def _dropped_not_specified(
     field_def: FieldDef, records: list[FieldRecord]
-) -> list[RunError]:
-    """One run error for each not_specified record `_reconcile_field` drops.
+) -> list[DroppedRecord]:
+    """One entry for each not_specified record `_reconcile_field` drops.
 
     A field with a found record anywhere keeps no not_specified record, so a
     document's "none" vanished without a trace. Item 3 of Oliver's 2026-10-13
     prompt: run r-20261012-angus2 confirmed RFP p.4's one interim analysis, and
     whether the amendment's "No interim analyses are planned" was read at all
     could not be told. The record is still dropped; it is now written down with
-    its page and quote. kind="validation", because the model call worked.
+    its page and quote — in `dropped_records`, not the run's errors, because
+    nothing failed (Prompt B item 6).
     """
     if not any(r.status == "found" for r in records):
         return []
     return [
-        RunError(
+        DroppedRecord(
             node="RECONCILE",
             task_id=f"{r.provenance.doc_id}:{r.group}:{field_def.id}",
-            error="Dropped: not_specified, because another record gives this field a value",
-            kind="validation",
-            rejected_value=r.raw_value,
-            rejected_quote=r.quote,
-            rejected_page=r.provenance.page,
+            reason="Dropped: not_specified, because another record gives this field a value",
+            value=r.raw_value,
+            quote=r.quote,
+            page=r.provenance.page,
         )
         for r in records
         if r.status == "not_specified"

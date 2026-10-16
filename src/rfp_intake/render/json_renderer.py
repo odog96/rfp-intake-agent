@@ -62,5 +62,9 @@ def build_extraction_document(state: RunState, registry: Registry) -> dict[str, 
         # a different study is a judgement someone may want to overturn, and the
         # removed text itself is here so they can read what went.
         "removed_passages": [p.model_dump(mode="json") for p in state.removed_passages],
+        # Records a node set aside on purpose (Prompt B item 6). Kept apart
+        # from `errors` so that list holds only real failures, which is what
+        # the Cloudera AI Application's banner and the check scripts count.
+        "dropped_records": [d.model_dump(mode="json") for d in state.dropped],
         "errors": [e.model_dump(mode="json") for e in state.errors],
     }

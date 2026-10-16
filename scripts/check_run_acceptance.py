@@ -75,7 +75,14 @@ def main(run_id: str, floor: int) -> int:
         if any(row["status"] == "confirmed" for row in rows.get(f.id, []))
     )
     print(f"confirmed among the original {len(original)}: {len(confirmed)} (floor {floor})")
-    print(f"errors recorded in the run: {len(data.get('errors') or [])}")
+    # Runs made before Prompt B item 6 kept RECONCILE's "Dropped:" entries in
+    # `errors`; they are logging, not failures, so they are not counted.
+    failures = [
+        e for e in data.get("errors") or []
+        if not (e.get("node") == "RECONCILE" and str(e.get("error", "")).startswith("Dropped:"))
+    ]
+    print(f"errors recorded in the run: {len(failures)}")
+    print(f"records set aside on purpose: {len(data.get('dropped_records') or [])}")
     print(f"contradictions: {len(data.get('contradictions') or [])}")
 
     if len(confirmed) < floor:
