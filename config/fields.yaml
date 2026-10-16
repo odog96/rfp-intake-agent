@@ -90,8 +90,18 @@ report_wording:
   # On every passage, where precedence could not choose and the report shows no value:
   no_value_chosen: "No value chosen — see Disagreement {n}"
   # All variables, under the two sides of a disagreement on the variable's own row
-  # (fix 2 of the 2026-10-12 brief). Where precedence chose a value:
-  row_shown_provisional: "Shown provisionally: {value} (the {doc} normally takes precedence). See Disagreement {n}."
+  # (fix 2 of the 2026-10-12 brief). Where precedence chose a value, `{why}` is
+  # the rule that chose it, from `precedence_why` below:
+  row_shown_provisional: "Shown provisionally: {value} ({why}). See Disagreement {n}."
+  # Why that value, one per rule in config/precedence.yaml that can choose one
+  # (item 1 of Prompt B, 2026-10-16: the row used to say the amendment "normally
+  # takes precedence" when the highest confidence had chosen it). `default` is for
+  # a run made before the rule was recorded. `{doc}` is the chosen document.
+  precedence_why:
+    recency: "the {doc} is the newer document"
+    domain_authority: "this variable is normally taken from the {doc}"
+    specificity: "the {doc}'s passage had the highest confidence"
+    default: "the {doc} normally takes precedence"
   # Where it did not:
   row_no_value_chosen: "No value chosen. See Disagreement {n}."
   # The status of a row that follows another variable's disagreement (follows_conflict_of):

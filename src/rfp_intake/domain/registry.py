@@ -567,6 +567,8 @@ class ReportWording(BaseModel):
     not_used: str = Field(min_length=1)
     no_value_chosen: str = Field(min_length=1)
     row_shown_provisional: str = Field(min_length=1)
+    # Keyed by the precedence rule that chose the value, plus `default`.
+    precedence_why: dict[str, str]
     row_no_value_chosen: str = Field(min_length=1)
     depends_on: str = Field(min_length=1)
     derived_status: str = Field(min_length=1)
@@ -638,8 +640,17 @@ class ReportWording(BaseModel):
     @field_validator("row_shown_provisional")
     @classmethod
     def _says_the_value(cls, v: str) -> str:
-        if "{value}" not in v:
-            raise ValueError("must contain {value}, the value shown")
+        if "{value}" not in v or "{why}" not in v:
+            raise ValueError("must contain {value}, the value shown, and {why}, the rule")
+        return v
+
+    @field_validator("precedence_why")
+    @classmethod
+    def _covers_every_rule(cls, v: dict[str, str]) -> dict[str, str]:
+        # The rules that can choose a value (reconcile/precedence.py).
+        missing = {"recency", "domain_authority", "specificity", "default"} - set(v)
+        if missing:
+            raise ValueError(f"has no wording for {sorted(missing)}")
         return v
 
     @field_validator("derived_why")

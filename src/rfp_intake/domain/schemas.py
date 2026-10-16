@@ -73,6 +73,11 @@ class Contradiction(BaseModel):
     # None for a candidate not yet judged, and for a `conflict` precedence could
     # not decide.
     winning_record_index: int | None = None
+    # For a `conflict`, the precedence rule that chose the value, or
+    # "no_silent_resolution" where none did (reconcile/precedence.py). The
+    # report says which rule it was. None for any other verdict, and in runs
+    # made before 2026-10-16.
+    precedence_rule: str | None = None
     severity: Literal["high", "medium", "low"] | None = None
     # 1-based positions in `records`, numbered as `winning_record_index` is, of
     # the records ADJUDICATE said are not about this field at all (fix 5 of the

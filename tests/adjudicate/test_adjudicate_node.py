@@ -162,6 +162,8 @@ class TestHandleConflict:
         assert fields[0].value == 75  # rfp wins domain authority for this field
         assert "precedence: domain_authority" in (fields[0].notes or "")
         assert contradiction.winning_doc_id == "rfp1"
+        # Recorded for the report's "Shown provisionally" line (Prompt B item 1).
+        assert contradiction.precedence_rule == "domain_authority"
 
     def test_no_value_when_precedence_undecided(self, fields_yaml_path) -> None:  # type: ignore[no-untyped-def]
         _use_real_registry(fields_yaml_path)
@@ -180,6 +182,7 @@ class TestHandleConflict:
 
         assert fields[0].value is None  # no_silent_resolution — do not guess
         assert fields[0].status == "needs_review"
+        assert contradiction.precedence_rule == "no_silent_resolution"
 
     def test_value_and_quote_come_from_the_record_precedence_chose(
         self, fields_yaml_path: Path,

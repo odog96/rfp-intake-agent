@@ -100,8 +100,15 @@ def _domain_authority_winner(field_def: FieldDef, records: list[FieldRecord]) ->
 def _specificity_winner(records: list[FieldRecord]) -> FieldRecord | None:
     """Extraction confidence as a proxy for "explicit value vs. implied by prose" —
     the closest signal already on hand; not a literal parse of source phrasing.
-    Decisive only if the highest confidence is unique.
+    Decisive only if every record with the highest confidence comes from one
+    document; then the first of them wins.
+
+    A tie inside one document is still that document's answer: run
+    r-20261013-prompt-c gave two amendment records of 42 months 0.97 each, and
+    the whole-study duration was left with no value although only one document
+    stood against the RFP (item 1 of Oliver's Prompt B, 2026-10-16). A tie
+    between documents is not decisive.
     """
     max_conf = max(r.confidence for r in records)
     top = [r for r in records if r.confidence == max_conf]
-    return top[0] if len(top) == 1 else None
+    return top[0] if len({r.provenance.doc_id for r in top}) == 1 else None

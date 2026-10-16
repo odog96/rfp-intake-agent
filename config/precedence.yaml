@@ -24,7 +24,9 @@ rules:
     order: 3
     description: >
       An explicit stated value beats a value implied by prose. A value with a scope beats an
-      unscoped value when the question is scoped.
+      unscoped value when the question is scoped. In code, the highest extraction confidence
+      wins; a tie is decisive only when every tied record comes from one document, and then
+      the first of them wins (Prompt B item 1, 2026-10-16).
     applies_to: all_fields
 
   - id: no_silent_resolution

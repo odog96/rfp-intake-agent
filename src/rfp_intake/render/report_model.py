@@ -1087,13 +1087,16 @@ def _add_sides(
     if own.resolved_value is None:
         row.decision_line = ReportWording.fill(wording.row_no_value_chosen, n)
     else:
+        # A run made before precedence recorded its winner has no document
+        # to name, and one made before 2026-10-16 no rule.
+        doc = (_doc_word(docs.code(own.winning_doc_id))
+               if own.winning_doc_id else "first-ranked document")
+        why = wording.precedence_why.get(own.precedence_rule or "",
+                                         wording.precedence_why["default"])
         row.decision_line = ReportWording.fill(
             wording.row_shown_provisional, n,
             value="; ".join(format_value(own.resolved_value, fd)),
-            # A run made before precedence recorded its winner has no document
-            # to name.
-            doc=_doc_word(docs.code(own.winning_doc_id))
-            if own.winning_doc_id else "first-ranked document",
+            why=ReportWording.fill(why, doc=doc),
         )
 
 

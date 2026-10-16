@@ -1106,6 +1106,20 @@ class TestBothSidesOnTheRow:
         )
         assert [v.on_sides for v in row.values] == [True]
 
+    def test_the_line_names_the_rule_that_chose_the_value(self) -> None:
+        # Item 1 of Prompt B, 2026-10-16: the line said the document "normally
+        # takes precedence" when the highest confidence had chosen it.
+        state = self._state(
+            resolved_value="0", records=[("0", 98, "d-prot"), ("1", 4, "d-rfp")],
+        )
+        c = state.contradictions[0].model_copy(update={"precedence_rule": "specificity"})
+        state.contradictions[0] = c
+        state.resolved[0].contradiction = c
+        assert self._row(state).decision_line == (
+            "Shown provisionally: 0 (the protocol's passage had the highest confidence). "
+            "See Disagreement 1."
+        )
+
     def test_no_value_chosen_says_so(self) -> None:
         row = self._row(self._state(
             resolved_value=None, records=[("0", 98, "d-prot"), ("1", 4, "d-rfp")],

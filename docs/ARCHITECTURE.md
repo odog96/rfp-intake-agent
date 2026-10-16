@@ -291,6 +291,10 @@ class Contradiction(BaseModel):
     # of several records from the same document. For a `conflict`, the record
     # precedence chose (2026-10-12); None when precedence could not decide.
     winning_record_index: int | None = None
+    # For a `conflict`, the precedence rule that decided (`recency`, `domain_authority`,
+    # `specificity`, `no_silent_resolution`), so the report can say why a value is
+    # shown provisionally (Prompt B item 1, 2026-10-16). None on runs made before it.
+    precedence_rule: str | None = None
     severity: Literal["high", "medium", "low"] | None = None   # high = changes the budget
     # 1-based positions of records ADJUDICATE called not about the field (§4.7, 2026-10-12).
     off_topic_record_indexes: list[int] = []
@@ -917,7 +921,14 @@ Precedence policy (`config/precedence.yaml`), applied only after adjudication:
 2. **Domain authority** — Protocol wins on scientific/design facts (phase, design, dosing, interim analyses,
    blinding). RFP wins on commercial/operational scope (site counts, enrolment targets, monitoring
    frequency asked of the CRO, CRF pages).
-3. **Specificity** — an explicit number beats prose that implies one.
+3. **Specificity** — an explicit number beats prose that implies one. In code
+   (`reconcile/precedence.py:_specificity_winner`) this is the highest extraction confidence, decisive
+   when every record at that confidence comes from one document; the first of them wins. A tie between
+   documents is not decisive (item 1 of Prompt B, 2026-10-16).
+
+The rule that chose a value is stored on the disagreement as `precedence_rule`, and the row's "Shown
+provisionally" line says which it was, in `report_wording.precedence_why` (`config/fields.yaml`), not
+that the document "normally takes precedence".
 
 Angus flagged that interim analyses can appear in *either* document — rule 2 is precisely why the policy is
 per-field in YAML rather than a blanket "protocol always wins."

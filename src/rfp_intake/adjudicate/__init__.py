@@ -187,6 +187,7 @@ def _handle_conflict(
         "resolved_value": winner.value if winner else None,
         "winning_doc_id": winner.provenance.doc_id if winner else None,
         "winning_record_index": index + 1 if index is not None else None,
+        "precedence_rule": precedence.rule_applied,
     })
 
     # Value, quote and confidence all come from the one record precedence chose,

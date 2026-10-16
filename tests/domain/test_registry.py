@@ -270,7 +270,9 @@ _WORDING = {
     "shown_provisional": "Shown",
     "not_used": "Not used, see {n}",
     "no_value_chosen": "None chosen, see {n}",
-    "row_shown_provisional": "Shown {value} from the {doc}, see {n}",
+    "row_shown_provisional": "Shown {value} ({why}), see {n}",
+    "precedence_why": {"recency": "newer {doc}", "domain_authority": "the {doc}'s variable",
+                       "specificity": "clearest {doc}", "default": "the {doc} first"},
     "row_no_value_chosen": "None chosen, see {n}",
     "depends_on": "Depends on {n}",
     "derived_status": "Worked out",
@@ -623,6 +625,32 @@ class TestTheDisplayKeysOfThe20261012Brief:
         p = tmp_path / "fields.yaml"
         p.write_text(yaml.dump(data))
         with pytest.raises(RegistryValidationError, match="must contain"):
+            load_registry(p)
+
+    def test_the_provisional_row_line_says_why(self, tmp_path: Path) -> None:
+        data = {
+            "version": 1,
+            "groups": [{"id": "g1", "label": "Group 1"}],
+            "fields": [{"id": "g1.a", "group": "g1", "label": "A", "type": "int"}],
+            "report_wording": dict(_WORDING, row_shown_provisional="Shown {value}, see {n}"),
+        }
+        p = tmp_path / "fields.yaml"
+        p.write_text(yaml.dump(data))
+        with pytest.raises(RegistryValidationError, match="must contain"):
+            load_registry(p)
+
+    def test_every_precedence_rule_has_its_reason(self, tmp_path: Path) -> None:
+        # Item 1 of Prompt B, 2026-10-16.
+        why = {"recency": "newer", "domain_authority": "owner", "default": "first"}
+        data = {
+            "version": 1,
+            "groups": [{"id": "g1", "label": "Group 1"}],
+            "fields": [{"id": "g1.a", "group": "g1", "label": "A", "type": "int"}],
+            "report_wording": dict(_WORDING, precedence_why=why),
+        }
+        p = tmp_path / "fields.yaml"
+        p.write_text(yaml.dump(data))
+        with pytest.raises(RegistryValidationError, match="specificity"):
             load_registry(p)
 
     @pytest.mark.parametrize(("key", "phrase"), [
