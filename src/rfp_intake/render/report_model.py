@@ -173,10 +173,13 @@ class Row:
     # Rewordings moved to Appendix B rather than printed in the table. See
     # _fold_rewordings for exactly when that happens.
     folded: list[ValueLine] = field(default_factory=list)
-    # True when the row is one "not_a_conflict" cluster written as one row
-    # (adjudicate/_handle_not_a_conflict, Prompt B item 2): the other passages
-    # are in Appendix A, and the row says so.
-    others_in_appendix: bool = False
+    # Notes printed in grey under the Where cell's page references, each one
+    # report_wording sentence from config/fields.yaml (Prompt B item 3, Angus
+    # Gray, 2026-10-13): what one document alone states, that other wordings
+    # are in Appendix A, and that a "not_a_conflict" cluster written as one row
+    # (adjudicate/_handle_not_a_conflict, Prompt B item 2) has its other
+    # passages there.
+    where_notes: list[str] = field(default_factory=list)
     # Set only when this row's disagreement number belongs to ANOTHER variable,
     # through that variable's `follows_conflict_of` in config/fields.yaml: the
     # label of the variable the documents actually disagree about. The report
@@ -221,10 +224,16 @@ class Row:
 
 @dataclass
 class BlockText:
-    """One line of a block, and how far it is indented under the line above."""
+    """One line of a block, and how far it is indented under the line above.
+
+    `keep`: the line is a list of short items, and the PDF breaks it only
+    between items (after ", " or around " — "), never inside one where the
+    item fits the column (Prompt B item 3: an arm's lines).
+    """
 
     text: str
     indent: int = 0
+    keep: bool = False
 
 
 @dataclass
@@ -819,11 +828,11 @@ def _rows_for(
             decision_no=no,
             reasons=_review_reasons(fd, group, no, borrowed, docs.name_ids),
             follows_label=borrowed,
-            others_in_appendix=any(
+            where_notes=[wording.others_checked] if any(
                 rf.contradiction is not None and rf.contradiction.verdict == "not_a_conflict"
                 and _own_disagreement(rf) is not None
                 for rf in group
-            ),
+            ) else [],
         ))
         _add_sides(row, fd, docs, decision_no, wording)
         if row.status == "needs_review" and all(rf.derived_from for rf in group):
@@ -1358,9 +1367,11 @@ def _leftovers(entries: list[ResolvedField], fd: FieldDef) -> list[BlockText]:
 
 def _display_row(
     fd: FieldDef, members: list[Row], head: str, sources: str, lines: list[BlockText],
+    where_notes: list[str],
 ) -> Row:
     """The one row of an `entries` or `periods` display. Its status is its
-    most-attention member's, and its figure the lowest member's, as a block's."""
+    most-attention member's, and its figure the lowest member's, as a block's.
+    `where_notes` are printed under the Where cell's pages."""
     scored = [
         v.confidence for m in members for v in m.values if v.status != "not_found"
     ]
@@ -1377,6 +1388,7 @@ def _display_row(
         decision_no=next((m.decision_no for m in members if m.decision_no is not None), None),
         members=members,
         block_lines=lines,
+        where_notes=where_notes,
     )
 
 
@@ -1411,8 +1423,9 @@ def _entries_row(
     docs: _Docs,
     wording: ReportWording,
 ) -> Row:
-    """An `entries` display: a block of lines per part, then what the documents
-    agree on and what only one of them states (fix 1 of the 2026-10-12 brief).
+    """An `entries` display: a block of lines per part (fix 1 of the 2026-10-12
+    brief), and under the Where cell's pages what only one document states and
+    whether other wordings are in Appendix A (Prompt B item 3).
 
     A part's lines are its keys' shown values, in the display's wordings; a
     key the documents give different values for (`MergedEntry.differing`: a
@@ -1435,11 +1448,11 @@ def _entries_row(
     titles = [title for _, title in _titled_parts(fd, display, entries, wording)]
     for rf, entry, unsettled, title in zip(parts, merged, differing, titles, strict=True):
         words = _entry_words(entry, display.kind_key, wording, set(unsettled))
-        lines.append(BlockText(title))
+        lines.append(BlockText(title, keep=True))
         for alternatives in display.lines:
             line = _pick(alternatives, words)
             if line is not None:
-                lines.append(BlockText(_capital(line), 1))
+                lines.append(BlockText(_capital(line), 1, keep=True))
         lines += _differ_lines(
             entry, unsettled, rf.statements, display.key_words, docs, wording, indent=1,
         )
@@ -1450,7 +1463,7 @@ def _entries_row(
                         continue
                     lines.append(BlockText(fill(
                         display.label_line, doc=docs.code(doc), value=str(value).strip(),
-                    ), 1))
+                    ), 1, keep=True))
         if rf.review_note:
             lines.append(BlockText(docs.name_ids(rf.review_note), 1))
 
@@ -1468,32 +1481,11 @@ def _entries_row(
         kinds_word = display.count.get(kind or "", display.count.get("mixed", ""))
     count = fill(wording.entries_count, len(merged), kinds=kinds_word).strip()
 
-    # What every document listing a part agrees on: the count when each lists
-    # every part, and each counted key every document states the same in each.
+    # The line saying what the documents agree on was taken out by Prompt B
+    # item 3 (Angus Gray, 2026-10-13): the row's status, Confirmed at its
+    # confidence, already says it.
     listing = list(dict.fromkeys(d for e in merged for d in e.docs))
-    if len(listing) > 1 and all(set(e.docs) == set(listing) for e in merged):
-        agreed = [count]
-        # "per arm" needs one kind of part to name.
-        for name, word in display.key_words.items() if one_kind else ():
-            kms = [km for e in merged if (km := e.keys.get(name)) is not None]
-            if len(kms) < len(merged) or not all(
-                km.key.type != "text" and km.agreed and set(km.stated_by) == set(listing)
-                for km in kms
-            ):
-                continue
-            if len({same_key(km.value) for km in kms}) == 1:
-                agreed.append(fill(
-                    wording.entries_same_each, what=word, kind=one_kind or "",
-                    value=_key_text(kms[0].key, kms[0].value, False, wording),
-                ))
-            else:
-                agreed.append(fill(wording.entries_each, what=word, kind=one_kind or ""))
-        who = wording.entries_two_docs if len(listing) == 2 else fill(
-            wording.entries_all_docs, len(listing),
-        )
-        lines.append(BlockText(fill(
-            wording.entries_agree, docs=who, what=_join_list(agreed, wording),
-        )))
+    notes: list[str] = []
 
     # Keys one document alone states, wherever any document states them.
     if len(listing) > 1:
@@ -1504,12 +1496,12 @@ def _entries_row(
                 alone.setdefault(next(iter(stating)), []).append(word)
         for doc, words_of in alone.items():
             what = _join_list(words_of, wording)
-            lines.append(BlockText(fill(
+            notes.append(fill(
                 wording.entries_only_one if len(words_of) == 1 else wording.entries_only_many,
                 what=what[:1].upper() + what[1:], doc=_doc_word(docs.code(doc)),
-            )))
+            ))
     if any(_reworded(e, label | set(d)) for e, d in zip(merged, differing, strict=True)):
-        lines.append(BlockText(wording.other_wordings))
+        notes.append(wording.other_wordings)
     lines += _leftovers(entries, fd)
 
     # The headline: the count, then each headline variable's value.
@@ -1529,7 +1521,7 @@ def _entries_row(
         + [p for h in display.headline_fields for r in rows_by_field.get(h.field, [])
            for v in r.values for e in v.entries for p in _stating(e, field_by_id[h.field])]
     )
-    return _display_row(fd, members, ", ".join(head), sources, lines)
+    return _display_row(fd, members, ", ".join(head), sources, lines, notes)
 
 
 def _breakdown_row(
@@ -1676,7 +1668,7 @@ def _breakdown_row(
            for r in rows_by_field.get(h.field, [])
            for v in r.values for e in v.entries for p in _stating(e, field_by_id[h.field])]
     )
-    return _display_row(fd, rows, head, sources, lines)
+    return _display_row(fd, rows, head, sources, lines, [])
 
 
 def _word_key(text: str) -> str:
@@ -1812,12 +1804,12 @@ def _periods_row(
             )))
         else:
             lines.append(BlockText(fill(see.wording, label=other.label)))
-    if reworded:
-        lines.append(BlockText(wording.other_wordings))
     lines += _leftovers(entries, fd)
     pages = docs.pages([r.provenance for rf in entries for r in rf.statements])
+    # Under the Where cell's pages, as on an `entries` display (Prompt B item 3).
     return _display_row(
         fd, list(rows_by_field.get(fd.id, [])), f"({pages})" if pages else "", "", lines,
+        [wording.other_wordings] if reworded else [],
     )
 
 
@@ -2167,8 +2159,8 @@ def _evidence(
         shown: set[tuple[str, str]] = set()
         # Records ADJUDICATE said are not about this variable: no row, but a
         # line here each, marked, for whichever verdict (fix 5 of the
-        # 2026-10-12 brief). A `not_a_conflict` row has no own disagreement, so
-        # these are read from the row's contradiction itself.
+        # 2026-10-12 brief). A `not_a_conflict` row written one per record has no
+        # own disagreement, so these are read from the row's contradiction itself.
         about = rf.contradiction if (
             rf.contradiction is not None and rf.contradiction.field_id == rf.field_id
         ) else None

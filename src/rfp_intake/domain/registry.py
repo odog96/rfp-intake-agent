@@ -558,9 +558,12 @@ class ReportWording(BaseModel):
     (fix 11): "cohort:NEOD001 arm" as "Cohort: NEOD001 arm". A prefix not listed
     is printed as stored.
 
-    The `entries_` phrases and `other_wordings` are the summary lines under an
-    `entries` or `periods` display's parts (fixes 1, 3 and 7): what the
-    documents agree on, what only one states, and where they differ.
+    The `entries_` phrases and `other_wordings` are the summary lines of an
+    `entries` or `periods` display (fixes 1, 3 and 7): how many parts, what
+    only one document states, and where they differ. What only one document
+    states and `other_wordings` are printed under the Where cell's pages
+    (Prompt B item 3), as is `others_checked`, on a "not a conflict" cluster
+    written as one row (Prompt B item 2).
     """
 
     shown_provisional: str = Field(min_length=1)
@@ -583,30 +586,25 @@ class ReportWording(BaseModel):
     scope_kind: str = Field(min_length=1)
     scope_kinds: dict[str, str] = Field(default_factory=dict)
     entries_count: str = Field(min_length=1)
-    entries_agree: str = Field(min_length=1)
-    entries_two_docs: str = Field(min_length=1)
-    entries_all_docs: str = Field(min_length=1)
-    entries_same_each: str = Field(min_length=1)
-    entries_each: str = Field(min_length=1)
     entries_only_one: str = Field(min_length=1)
     entries_only_many: str = Field(min_length=1)
     entries_and: str = Field(min_length=1)
     entries_differ: str = Field(min_length=1)
     entries_differ_value: str = Field(min_length=1)
     other_wordings: str = Field(min_length=1)
+    others_checked: str = Field(min_length=1)
     # Appendix A's marker on a passage ADJUDICATE said is not about the
     # variable (fix 5 of the 2026-10-12 brief); its reason is in Appendix B.
     off_topic: str = Field(min_length=1)
 
-    @field_validator("entries_count", "entries_all_docs")
+    @field_validator("entries_count")
     @classmethod
     def _says_how_many(cls, v: str) -> str:
         if "{n}" not in v:
             raise ValueError("must contain {n}, how many")
         return v
 
-    @field_validator("entries_agree", "entries_same_each", "entries_each", "entries_only_one",
-                     "entries_only_many")
+    @field_validator("entries_only_one", "entries_only_many")
     @classmethod
     def _says_what(cls, v: str) -> str:
         if "{what}" not in v:

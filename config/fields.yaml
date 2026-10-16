@@ -132,16 +132,13 @@ report_wording:
     arm: Arm
     dose_level: Dose level
     treatment_group: Treatment group
-  # The summary lines under an `entries` or `periods` display (fixes 1, 3 and 7 of the
+  # The summary lines of an `entries` or `periods` display (fixes 1, 3 and 7 of the
   # 2026-10-12 brief). How many parts, `{kinds}` the display's `count` word:
   entries_count: "{n} {kinds}"
-  # What every document listing the parts agrees on; `{docs}` is one of the next two:
-  entries_agree: "{docs} agree on {what}."
-  entries_two_docs: "Both documents"
-  entries_all_docs: "All {n} documents"
-  # A counted key with one value in every part, then one whose value differs by part:
-  entries_same_each: "{value} {what} per {kind}"
-  entries_each: "the {what} in each {kind}"
+  # The line "Both documents agree on 2 arms and 130 subjects per arm" was taken out by
+  # Prompt B item 3 (Angus Gray, 2026-10-13): the row's status, Confirmed at its
+  # confidence, already says it. The two notes that follow, and `other_wordings`, are
+  # printed in grey under the Where cell's pages, not in the Value cell.
   # Keys only one document states, one key and then several:
   entries_only_one: "{what} is stated in the {doc} only."
   entries_only_many: "{what} are stated in the {doc} only."
@@ -152,6 +149,11 @@ report_wording:
   entries_differ_value: "{value} ({pages})"
   # Where the documents word a text key differently:
   other_wordings: "Other wordings are quoted in Appendix A."
+  # Under the pages of a "not a conflict" cluster of a one-choice variable written as one
+  # row (Prompt B item 2, 2026-10-16). The other passages can give another answer:
+  others_checked: >-
+    Other passages, including any giving another answer, were checked and judged not a
+    conflict; each is quoted in Appendix A.
   # Appendix A's marker on a passage the adjudicating reviewer said is not about the
   # variable (fix 5); the reviewer's reason is printed in Appendix B.
   off_topic: "Not about this variable — see Appendix B"

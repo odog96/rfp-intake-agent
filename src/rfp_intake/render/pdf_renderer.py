@@ -35,12 +35,14 @@ no value, no confidence and no reason.
 from __future__ import annotations
 
 import io
+import re
 from xml.sax.saxutils import escape
 
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import LETTER
 from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.lib.units import inch
+from reportlab.pdfbase.pdfmetrics import stringWidth
 from reportlab.platypus import (
     PageBreak,
     Paragraph,
@@ -379,11 +381,19 @@ def _schedules(model: ReportModel, styles: dict) -> list:  # type: ignore[type-a
 def _row_cells(r: Row, styles: dict, *, scope_only: bool) -> list[object]:  # type: ignore[type-arg]
     return [
         Paragraph(_first_cell(r, scope_only), styles["cell"]),
-        Paragraph(_value_cell(r), styles["cell"]),
+        _block_cell(r, styles) if r.block_lines else Paragraph(_value_cell(r), styles["cell"]),
         Paragraph(_status_cell(r), styles["cell"]),
         Paragraph(_confidence_cell(r), styles["cell"]),
-        Paragraph(_where_cell(r), styles["cell_small"]),
+        Paragraph(_where_cell(r) + _where_notes(r), styles["cell_small"]),
     ]
+
+
+def _where_notes(r: Row) -> str:
+    """The row's notes, in grey under its pages (Prompt B item 3, Angus Gray,
+    2026-10-13). Each is a report_wording sentence from config/fields.yaml."""
+    return "".join(
+        f'<br/><font size="7" color="#757575">{escape(note)}</font>' for note in r.where_notes
+    )
 
 
 def _first_cell(r: Row, scope_only: bool) -> str:
@@ -401,8 +411,7 @@ def _first_cell(r: Row, scope_only: bool) -> str:
 
 
 def _value_cell(r: Row) -> str:
-    if r.block_lines:
-        return _block_cell(r)
+    # A row with block lines is drawn by _block_cell instead.
     if r.parts:
         return "<br/>".join(_part_block(p) for p in r.parts)
     if r.follow_lines:
@@ -422,13 +431,42 @@ def _value_cell(r: Row) -> str:
     return body
 
 
-def _block_cell(r: Row) -> str:
+# One step of a block's indent: the width of the three spaces it used to be.
+_INDENT = stringWidth("\xa0" * 3, "Helvetica", 8.5)
+# Where a `keep` line may break: after a comma, or after the dash of "Arm 1 —".
+_ITEM_BREAK = re.compile(r"(?<=,) |(?<= —) ")
+
+
+def _block_cell(r: Row, styles: dict) -> list[Paragraph]:  # type: ignore[type-arg]
     """A group's block (fix 9 of the 2026-10-12 brief): the headline value, then
-    each line, indented as the report model says."""
-    indent = "&nbsp;&nbsp;&nbsp;"
+    each line, indented as the report model says.
+
+    One paragraph per line, each indented by its own left margin, so a line
+    too long for the column carries on under its own first word rather than
+    at the column's edge (Prompt B item 3, Angus Gray, 2026-10-13).
+    """
+    cell = styles["cell"]
     head = "; ".join(_value_text(v) for v in r.values)
-    lines = [indent * (1 + t.indent) + escape(t.text) for t in r.block_lines]
-    return "<br/>".join([head, *lines])
+    out = [Paragraph(head, cell)]
+    for t in r.block_lines:
+        indent = _INDENT * (1 + t.indent)
+        style = ParagraphStyle(f"block{t.indent}", parent=cell, leftIndent=indent)
+        width = _MAIN_COLS[1] - 8 - indent  # less the cell's 4-point padding each side
+        text = _kept(t.text, width, cell) if t.keep else escape(t.text)
+        out.append(Paragraph(text, style))
+    return out
+
+
+def _kept(text: str, width: float, style: ParagraphStyle) -> str:
+    """`text` with its items joined by non-breaking spaces, so the line breaks
+    only between items: each item that fits `width` stays on one line.
+    An item longer than the column still wraps, as it must."""
+    items = _ITEM_BREAK.split(text)
+    return " ".join(
+        escape(item).replace(" ", "&nbsp;")
+        if stringWidth(item, style.fontName, style.fontSize) <= width else escape(item)
+        for item in items
+    )
 
 
 def _part_block(p: Row) -> str:
@@ -512,11 +550,6 @@ def _values_cell(r: Row) -> str:
         body += (
             f'<br/><font size="7" color="#757575">{n} other wording{"s" if n != 1 else ""} '
             "in the documents; checked, not a conflict. Each is quoted in Appendix A.</font>"
-        )
-    elif r.others_in_appendix:
-        body += (
-            '<br/><font size="7" color="#757575">'
-            "Other passages checked, not a conflict; each is quoted in Appendix A.</font>"
         )
     elif r.verdict == "not_a_conflict" and multi:
         body += (

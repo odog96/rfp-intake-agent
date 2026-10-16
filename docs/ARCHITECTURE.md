@@ -1122,9 +1122,13 @@ wordings whose keys are stated, then each of `lines` (the first alternative whos
 the document's own name for it (`label_key`, "RFP calls it: Group 1"), a line for each counted key the
 documents give different values for, with each value's pages (`MergedEntry.differing`, the keys GATE's
 exception reads: a counted key, or a text key two documents state that `may_word_differently` does not
-name, so "Dose: documents differ — …" where GATE reviews a dose), and under the blocks what the documents
-agree on, which keys only one document states, and "Other wordings are quoted in Appendix A." when a
-text key is worded differently. Its headline counts the entries ("2 arms", from `count`) and adds each
+name, so "Dose: documents differ — …" where GATE reviews a dose). Which keys only one document states,
+and "Other wordings are quoted in Appendix A." when a text key is worded differently, are notes printed
+in grey in the Where cell under the page references (`Row.where_notes`), and the line saying what the
+documents agree on is gone, since the status and confidence already say it (item 3 of Oliver's Prompt B,
+after Angus Gray's 2026-10-13 call). Each block is indented under the headline, a line that wraps hangs
+under its own first word, and a line drawn from a `lines` wording breaks only after ", " or " — " where
+each item fits the column (`pdf_renderer._block_cell`). Its headline counts the entries ("2 arms", from `count`) and adds each
 `headline_fields` variable's value through its wording ("randomized 1:1", from `design.allocation_ratio`,
 a field added on 2026-10-12 by Oliver's decision for exactly this); a headline variable has no
 row of its own, and its rows stay members of the row and in Appendix A. `periods`
@@ -1142,10 +1146,10 @@ document with a record NORMALIZE read as an amount, or whose wording starts with
 ("42 months (total study duration)", read by NORMALIZE's duration reader), gives only those amounts,
 and any other document gives each of its values as its side on the variable's own row words it; where
 every document gives amounts in one unit, the unit is printed once (`_disputed_values`). Nothing is
-converted or added up, and the disagreement's own row and Appendix A keep every wording. The phrases are the `entries_` phrases and `other_wordings` in
+converted or added up, and the disagreement's own row and Appendix A keep every wording. The phrases are the `entries_` phrases, `other_wordings` and `others_checked` in
 `report_wording`. Appendix A gives each statement its own line, value, page and quote, so every
 document's wording is there. A period's other records are only there, the line giving, for each key,
-the wording document precedence and then confidence choose, and "Other wordings are quoted in Appendix A." under the row. A record
+the wording document precedence and then confidence choose, and "Other wordings are quoted in Appendix A." in the Where cell. A record
 saved before 2026-10-12 holds text, not an entry, so its row keeps the default layout.
 
 **A fourth display kind, `breakdown`, added 2026-10-12** (stage 5 of that day's plan: fix 10 and the

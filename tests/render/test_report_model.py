@@ -1100,7 +1100,7 @@ class TestANotAConflictWrittenAsOneRow:
         [row] = [r for r in model.all_rows() if r.field_id == "visits.schedule_present"]
         [line] = row.values
         assert line.sources == "Protocol p.13, 26"
-        assert row.others_in_appendix
+        assert row.where_notes == [get_registry().report_wording.others_checked]
         assert row.decision_no is None
 
     def test_every_record_is_in_appendix_a(self) -> None:
@@ -1123,7 +1123,7 @@ class TestANotAConflictWrittenAsOneRow:
             for r in c.records
         ]
         model = build_report_model(state, get_registry())
-        assert not any(r.others_in_appendix for r in model.all_rows())
+        assert not any(r.where_notes for r in model.all_rows())
 
 
 class TestBothSidesOnTheRow:

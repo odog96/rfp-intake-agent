@@ -286,17 +286,13 @@ _WORDING = {
     "block_not_found": "{label}: none",
     "scope_kind": "{kind}: {name}",
     "entries_count": "{n} {kinds}",
-    "entries_agree": "{docs} agree on {what}.",
-    "entries_two_docs": "Both",
-    "entries_all_docs": "All {n}",
-    "entries_same_each": "{value} {what} per {kind}",
-    "entries_each": "the {what} in each {kind}",
     "entries_only_one": "{what} is in the {doc} only.",
     "entries_only_many": "{what} are in the {doc} only.",
     "entries_and": " and ",
     "entries_differ": "{label}: differ — {values}",
     "entries_differ_value": "{value} ({pages})",
     "other_wordings": "Other wordings in Appendix A.",
+    "others_checked": "Other passages in Appendix A.",
     "off_topic": "Not about this variable — see Appendix B",
 }
 
@@ -885,10 +881,6 @@ class TestEntryKeysAndTheirDisplays:
 
     @pytest.mark.parametrize(("key", "phrase"), [
         ("entries_count", "{kinds}"),
-        ("entries_all_docs", "All documents"),
-        ("entries_agree", "{docs} agree."),
-        ("entries_same_each", "{value} per {kind}"),
-        ("entries_each", "each {kind}"),
         ("entries_only_one", "in the {doc} only."),
         ("entries_only_many", "in the {doc} only."),
         ("entries_differ", "{label}: documents differ"),

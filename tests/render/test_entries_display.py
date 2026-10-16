@@ -162,7 +162,7 @@ def _lines(row: Row) -> list[str]:
 
 
 class TestArms:
-    """Fix 1: one block per arm, and what the documents agree on under them."""
+    """Fix 1: one block per arm; the notes on them in the Where column (Prompt B item 3)."""
 
     def test_the_approved_layout(self) -> None:
         _, model = _report(_arms())
@@ -177,7 +177,10 @@ class TestArms:
             "  Dose: normal saline IV infusion, every 28 days",
             "  Subjects: 130",
             "  RFP calls it: Group 2",
-            "Both documents agree on 2 arms and 130 subjects per arm.",
+        ]
+        # Prompt B item 3 (Angus Gray, 2026-10-13): no line saying what the
+        # documents agree on, and the two notes under the Where cell's pages.
+        assert row.where_notes == [
             "Dose and schedule are stated in the amendment only.",
             "Other wordings are quoted in Appendix A.",
         ]
@@ -234,7 +237,6 @@ class TestArms:
         row = _row(model, "design.parts")
         lines = _lines(row)
         assert "  Listed only in Amendment, not in RFP." in lines
-        assert not any(line.startswith("Both documents agree") for line in lines)
         assert row.status == "needs_review"
 
     def test_text_entries_from_an_older_run_keep_the_default_rows(self) -> None:
@@ -285,11 +287,13 @@ class TestVisitFrequency:
         ]
         records[-2].confidence = records[-1].confidence = 0.8
         _, model = _report(records)
-        lines = _lines(_row(model, "visits.frequency_by_period"))
+        row = _row(model, "visits.frequency_by_period")
+        lines = _lines(row)
         assert [line for line in lines if line.startswith("Later treatment")] == [
             "Later treatment (Month 4 onwards): monthly, Day 1 (every 28 days)",
         ]
-        assert "Other wordings are quoted in Appendix A." in lines
+        assert "Other wordings are quoted in Appendix A." not in lines
+        assert row.where_notes == ["Other wordings are quoted in Appendix A."]
         quotes = {e.quote for e in model.evidence if e.field_id == "visits.frequency_by_period"}
         assert {"Day 1 of all other months", "Every 28 days"} <= quotes
 
@@ -453,10 +457,10 @@ class TestTimeline:
             None, RFP, 3, "Enrolment 20 months",
         )]
         _, model = _report(records)
-        lines = _lines(_row(model, "timeline.periods"))
+        row = _row(model, "timeline.periods")
         # `duration` is text: two wordings, not a disagreement, both in Appendix A.
-        assert lines[0] == "Enrolment: 24 months"
-        assert "Other wordings are quoted in Appendix A." in lines
+        assert _lines(row)[0] == "Enrolment: 24 months"
+        assert row.where_notes == ["Other wordings are quoted in Appendix A."]
 
 
 def test_extraction_json_keeps_the_statements_so_a_rerender_prints_the_same_rows() -> None:
@@ -562,7 +566,7 @@ def test_the_pdf_prints_the_three_rows() -> None:
         "2 arms, randomized 1:1",
         "Arm 1 — NEOD001 plus standard of care",
         "RFP calls it: Group 2",
-        "Both documents agree on 2 arms and 130 subjects per arm.",
+        "Dose and schedule are stated in the amendment only.",
         "Stopped early: every 3 months after the early-discontinuation visit "
         "(budgeted separately)",
         "Whole study: 42 vs 40 months (Disagreement",
@@ -599,3 +603,32 @@ class TestLeadingAmount:
         record = _rec("timeline.total_duration", value, "study", AM, 24, "q")
         record.value = value
         assert _leading_amount(record) is None
+
+
+def test_an_arm_line_breaks_only_between_items_and_under_its_own_start() -> None:
+    # Prompt B item 3 (Angus Gray, 2026-10-13): run r-20261013-prompt-c broke
+    # "once every 28 days" after "every" and carried it on at the column's edge.
+    from rfp_intake.render.pdf_renderer import _MAIN_COLS, build_report_pdf
+
+    records = _arms()
+    for r in records[:2]:
+        entry = json.loads(str(r.raw_value))
+        r.raw_value = json.dumps(dict(entry, schedule="once every 28 days"))
+    state, _ = _report(records)
+    pdf = build_report_pdf(state, get_registry(), generated_at="2026-10-16")
+    doc = pymupdf.open(stream=pdf, filetype="pdf")  # type: ignore[no-untyped-call]
+    [page] = [p for p in doc if "Arm 1" in p.get_text()]  # type: ignore[attr-defined]
+    words = page.get_text("words")
+    lines: dict[tuple[int, int], list[tuple[float, str]]] = {}
+    for x0, _, _, _, word, block, line, _ in words:
+        lines.setdefault((block, line), []).append((x0, word))
+    texts = {" ".join(w for _, w in ws): ws[0][0] for ws in lines.values()}
+    # Each arm's dose is one item, and the schedule the next, under it.
+    dose = next(t for t in texts if t.startswith("Dose: 24"))
+    assert dose == "Dose: 24 mg/kg IV infusion,"
+    assert "once every 28 days" in texts
+    assert abs(texts["once every 28 days"] - texts[dose]) < 0.5
+    # The notes are in the Where column, the line on what the documents agree on gone.
+    where = next(x for t, x in texts.items() if t.startswith("Dose and schedule"))
+    assert where > page.rect.width - 72 * 0.6 - (sum(_MAIN_COLS) - sum(_MAIN_COLS[:4])) - 1
+    assert not any("agree on" in t for t in texts)
