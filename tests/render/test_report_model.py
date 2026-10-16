@@ -178,12 +178,21 @@ def assert_nothing_lost(state: RunState, registry: Registry, model: ReportModel)
                     == {codes[r.provenance.doc_id]: {r.provenance.page}}
                     for e in model.evidence
                 ), f"{rf.field_id}: off-topic record p.{r.provenance.page} not in Appendix A"
-        # Its quote is in Appendix A.
+        # Its quote is in Appendix A: beside its value; or, for a list printed
+        # once, as one of the passages under it; or, for a row of statements,
+        # as the statement it is (Prompt B item 8(d)).
         if rf.quote:
-            assert any(
-                e.field_id == rf.field_id and e.quote == rf.quote and e.value == want
-                for e in model.evidence
-            ), f"quote for {rf.field_id} missing from the evidence appendix"
+            lines = [e for e in model.evidence if e.field_id == rf.field_id]
+            beside = any(e.quote == rf.quote and e.value == want for e in lines)
+            under = any(e.value == want and e.quote is None for e in lines) and any(
+                e.value == "" and e.quote == rf.quote for e in lines
+            )
+            on_statement = any(r.quote == rf.quote for r in rf.statements) and any(
+                e.quote == rf.quote for e in lines
+            )
+            assert beside or under or on_statement, (
+                f"quote for {rf.field_id} missing from the evidence appendix"
+            )
 
     # A row's sides show every value of its disagreement, and a side's pages are
     # pages that state its value (pipeline-rules-reviewer, 2026-10-12).
@@ -839,6 +848,13 @@ class TestValueWords:
         assert format_value(20800, None) == ["20,800"]
         assert format_value(False, None) == ["No"]
         assert format_value({"n": 28, "unit": "days"}, reg["dosing.frequency"]) == ["Every 28 days"]
+        # Prompt B item 8: "Every" comes from `amount_wording`, not the field id.
+        assert format_value({"n": 8, "unit": "weeks"}, reg["monitoring.frequency_spec"]) == [
+            "Every 8 weeks"
+        ]
+        assert format_value({"n": 42, "unit": "months"}, reg["timeline.total_duration"]) == [
+            "42 months"
+        ]
         assert format_value(["infusion_iv"], reg["ip.form"]) == ["IV infusion"]
         assert format_value(["a", "b"], None) == ["a", "b"]
         assert format_value(None, None) == ["—"]

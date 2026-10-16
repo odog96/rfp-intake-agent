@@ -160,6 +160,12 @@ report_wording:
   # Appendix A's marker on a passage the adjudicating reviewer said is not about the
   # variable (fix 5); the reviewer's reason is printed in Appendix B.
   off_topic: "Not about this variable — see Appendix B"
+  # Words a label the documents worded may start with that are never given a capital
+  # letter, because they are units and "Mg" is not "mg" (Prompt B item 8). The report
+  # capitalises the first word of such a label only when it is all lower case, so "mL"
+  # and "eCRF" need no entry here.
+  never_capitalised: [mg, mcg, µg, ug, ng, g, kg, ml, mmol, µmol, umol, mol, mm, cm, km, iu,
+                      hr, hrs, min, mo]
 
 groups:
   - id: study_design
@@ -684,6 +690,9 @@ fields:
       or merge differing regimens into one answer.
     source_priority: protocol
     budget_driver: true
+    # How the report prints a schedule read as an amount ({n, unit}): "Every 28 days"
+    # (Prompt B item 8; the report used to look for "frequency" in the field id).
+    amount_wording: "Every {amount}"
 
   # Prompt B item 5 (Angus Gray, 13 October call, 14:28-14:37): the dosing row said
   # "Every 28 days" and never until when. Placed straight after the schedule so the two
@@ -1428,6 +1437,8 @@ fields:
       emit one record per scope.
     source_priority: rfp
     budget_driver: true
+    # As dosing.frequency: "every 8 weeks" read as an amount prints "Every 8 weeks".
+    amount_wording: "Every {amount}"
 
   - id: monitoring.frequency_basis
     group: clinical_monitoring

@@ -194,6 +194,20 @@ def test_validates_duplicate_ids(tmp_path: Path) -> None:
         load_registry(p)
 
 
+def test_amount_wording_defaults_to_the_amount_alone() -> None:
+    # Prompt B item 8: "Every" is a field's own amount_wording, not its id.
+    from rfp_intake.domain.registry import FieldDef
+
+    assert FieldDef(id="g1.a", group="g1", label="A", type="text").amount_wording == "{amount}"
+
+
+def test_amount_wording_must_name_the_amount() -> None:
+    from rfp_intake.domain.registry import FieldDef
+
+    with pytest.raises(ValidationError, match="must contain {amount}"):
+        FieldDef(id="g1.a", group="g1", label="A", type="text", amount_wording="Every time")
+
+
 def test_validates_group_refs(tmp_path: Path) -> None:
     data = {
         "version": 1,

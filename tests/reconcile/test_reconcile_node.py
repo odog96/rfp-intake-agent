@@ -109,6 +109,33 @@ class TestReconcileNode:
         assert rf.status == "not_specified"
         assert rf.value is None
 
+    def test_a_reason_for_no_value_is_stored_not_found(self, fields_yaml_path) -> None:  # type: ignore[no-untyped-def]
+        # Prompt B item 8: the report shows visits.total_count as Not found, so
+        # the record is stored that way, with the passage kept as the reason.
+        _use_real_registry(fields_yaml_path)
+        from rfp_intake.reconcile import reconcile_node
+
+        record = _record("visits.total_count", None, 0.9, scope="why no total",
+                         status="not_specified")
+        result = reconcile_node(RunState(run_id="t", records=[record]))
+
+        rf = next(r for r in result["resolved"] if r.field_id == "visits.total_count")
+        assert rf.status == "not_found"
+        assert rf.value is None
+        assert rf.quote == record.quote
+        assert rf.scope == "why no total"
+        assert [s.page for s in rf.sources] == [1]
+
+    def test_another_not_specified_stays_not_specified(self, fields_yaml_path) -> None:  # type: ignore[no-untyped-def]
+        _use_real_registry(fields_yaml_path)
+        from rfp_intake.reconcile import reconcile_node
+
+        record = _record("visits.total_count", None, 0.9, status="not_specified")
+        result = reconcile_node(RunState(run_id="t", records=[record]))
+
+        rf = next(r for r in result["resolved"] if r.field_id == "visits.total_count")
+        assert rf.status == "not_specified"
+
     def test_found_beats_not_specified_from_another_document(self, fields_yaml_path) -> None:  # type: ignore[no-untyped-def]
         _use_real_registry(fields_yaml_path)
         from rfp_intake.reconcile import reconcile_node

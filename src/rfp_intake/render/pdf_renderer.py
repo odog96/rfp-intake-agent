@@ -785,7 +785,13 @@ def _evidence_appendix(model: ReportModel, styles: dict) -> list:  # type: ignor
         head = escape(e.value)
         if e.scope:
             head = f"[{escape(e.scope)}] " + head
-        line = f"• {head} <font color=\"#757575\">— {escape(e.sources)}, {e.confidence:.0%}</font>"
+        # A passage under a list printed once just above has no value of its
+        # own, so no dash leads to its pages (Prompt B item 8(d)).
+        cited = f"{escape(e.sources)}, {e.confidence:.0%}"
+        if e.value:
+            cited = "— " + cited
+        head = head.strip()
+        line = f"• {head + ' ' if head else ''}<font color=\"#757575\">{cited}</font>"
         if e.quote:
             line += f': <i>"{escape(e.quote)}"</i>'
         if e.derived_from:

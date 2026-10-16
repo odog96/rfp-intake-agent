@@ -529,8 +529,20 @@ class FieldDef(BaseModel):
     prefer_sections: list[str] = Field(default_factory=list)
     # What the row says when no document gives a value. See NotFoundNote.
     when_not_found: NotFoundNote | None = None
+    # How report.pdf prints an amount this variable's value is ({n, unit}),
+    # `{amount}` standing for "28 days": "Every {amount}" for a schedule.
+    # Before Prompt B item 8 the report chose "Every" by finding "frequency" in
+    # the field id (rule 4).
+    amount_wording: str = "{amount}"
 
     model_config = {"populate_by_name": True}
+
+    @field_validator("amount_wording")
+    @classmethod
+    def _states_the_amount(cls, v: str) -> str:
+        if "{amount}" not in v:
+            raise ValueError("must contain {amount}, the amount itself")
+        return v
 
     @field_validator("schema_def")
     @classmethod
@@ -610,6 +622,10 @@ class ReportWording(BaseModel):
     # Appendix A's marker on a passage ADJUDICATE said is not about the
     # variable (fix 5 of the 2026-10-12 brief); its reason is in Appendix B.
     off_topic: str = Field(min_length=1)
+    # Words a label's first word may be that are never capitalised: units,
+    # "mg" not "Mg" (Prompt B item 8). Matched exactly; see
+    # render/report_model.py:_capital.
+    never_capitalised: list[str] = Field(default_factory=list)
 
     @field_validator("entries_count")
     @classmethod

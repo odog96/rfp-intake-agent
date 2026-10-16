@@ -489,10 +489,12 @@ def check_4(report: Report) -> Result:
         row = timing[0]
         if row.cell("Status") == "Confirmed":
             problems.append(f"{L_INTERIM_TIMING} is still marked Confirmed")
-        if count_no is not None and f"Disagreement {count_no}" not in row.cell("Value"):
+        # Since feaeb39 the report puts "Depends on Disagreement N" in the Status
+        # column, not the Value column (Prompt B item 8).
+        if count_no is not None and f"Disagreement {count_no}" not in row.cell("Status"):
             problems.append(
                 f"{L_INTERIM_TIMING} does not point to Disagreement {count_no} "
-                f"(value cell: {row.cell('Value')[:60]!r})"
+                f"(status cell: {row.cell('Status')[:60]!r})"
             )
     if problems:
         return Result(4, title, "FAIL", "; ".join(problems))

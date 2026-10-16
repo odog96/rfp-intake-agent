@@ -135,7 +135,7 @@ one row of several was item 1 until it was fixed on 2026-10-11; see `docs/JOURNA
    the 2026-10-11 entry in `docs/JOURNAL.md`. The parsing-side second attempt was proposed on
    2026-10-12 and Oliver deferred it; it is item 8.
 2. **Pages where a document said "not specified" are cited beside an agreed value.** RECONCILE adds
-   the silent records' pages to an agreed row's sources (`reconcile/__init__.py:176`), which breaks the
+   the silent records' pages to an agreed row's sources (`reconcile/__init__.py:236`, in `_reconcile_field`), which breaks the
    rule fix 2 enforces (a page beside a value must state it). `extraction.json` keeps only the
    provenance on the row, so the report cannot tell those pages apart; the fix belongs in RECONCILE.
    Separately, where a real conflict remains, the "not specified" page is no longer cited in the

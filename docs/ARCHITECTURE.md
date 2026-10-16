@@ -1160,7 +1160,7 @@ and any other document gives each of its values as its side on the variable's ow
 every document gives amounts in one unit, the unit is printed once (`_disputed_values`). Nothing is
 converted or added up, and the disagreement's own row and Appendix A keep every wording. The phrases are the `entries_` phrases, `other_wordings` and `others_checked` in
 `report_wording`. Appendix A gives each statement its own line, value, page and quote, so every
-document's wording is there. A period's other records are only there, the line giving, for each key,
+document's wording is there; the row's own value is not also printed joined into one long line. A period's other records are only there, the line giving, for each key,
 the wording document precedence and then confidence choose, and "Other wordings are quoted in Appendix A." in the Where cell. A record
 saved before 2026-10-12 holds text, not an entry, so its row keeps the default layout.
 
@@ -1254,11 +1254,17 @@ is what makes the whole pipeline testable without a filesystem.
   `when_not_found` in `config/fields.yaml` (only `visits.total_count`): when no record gives a value,
   the row reads the declared note ("No document gives a total."), then the document's own sentence
   saying why, quoted from a valueless record with a scope the note names, then where to look instead;
-  the row's status is Not found and such a variable is not counted as found. A label the documents
+  the row's status is Not found and such a variable is not counted as found. Since Prompt B item 8
+  RECONCILE stores that valueless record as `not_found` too, so the stored status and the report agree
+  (rule 3); the passage stays on the row as the reason. A label the documents
   worded (a scope, an entry or period label) starts with a capital when the letters it starts with are
-  all lower case (`_capital`), so "mL" and "eCRF" stay; Appendix A prints the stored scope with that
+  all lower case (`_capital`), so "mL" and "eCRF" stay, and a leading word listed in
+  `report_wording.never_capitalised` (units: "mg", "kg") is never capitalised; Appendix A prints the stored scope with that
   capital, and the Disagreements and Appendix B print it as the variable table does. A tie between
-  wordings in `_fold_rewordings` shows every tied wording.
+  wordings in `_fold_rewordings` shows every tied wording. An `{n, unit}` amount prints through the
+  field's `amount_wording` (default `"{amount}"`; `"Every {amount}"` on the two frequency fields), not a
+  check on the field id. In Appendix A a list with one passage per page prints the list once, then each
+  passage on its own valueless line (Prompt B item 8).
 - **`report.xlsx` (renderer)** — a renderer alongside the two above, not the primary path. One row per field:
   `Group | Variable | Value | Status | Confidence | Source Doc | Page | Quote | Contradiction`.
   Conditional formatting: red = conflict, amber = needs_review, green = confirmed, grey = not found.

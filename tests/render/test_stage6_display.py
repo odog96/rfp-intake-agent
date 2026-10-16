@@ -50,14 +50,17 @@ def _row(model: ReportModel, field_id: str) -> Row:
 _WHY = "Visits will continue until disease progression or withdrawal."
 
 
-def _why_no_total() -> ResolvedField:
-    return _rf("visits.total_count", None, status="not_specified", scope="why no total",
+def _why_no_total(status: str = "not_found") -> ResolvedField:
+    # RECONCILE stores the passage saying why as not_found since Prompt B item 8;
+    # runs made before then stored it as not_specified.
+    return _rf("visits.total_count", None, status=status, scope="why no total",
                pages=(42,), quote=_WHY)
 
 
 class TestNoDocumentGivesATotal:
-    def test_the_note_the_reason_and_where_to_look(self) -> None:
-        row = _row(_model([_why_no_total()]), "visits.total_count")
+    @pytest.mark.parametrize("status", ["not_found", "not_specified"])
+    def test_the_note_the_reason_and_where_to_look(self, status: str) -> None:
+        row = _row(_model([_why_no_total(status)]), "visits.total_count")
         assert row.status == "not_found"
         assert [v.text for v in row.values] == ["No document gives a total."]
         assert [b.text for b in row.block_lines] == [
@@ -240,9 +243,15 @@ class TestEachPageItsOwnQuote:
     ("eCRF pages", "eCRF pages"),
     ("12 weeks", "12 weeks"),
     ("", ""),
+    # Prompt B item 8: capitalising a label must not change a value.
+    ("mg per dose", "mg per dose"),
+    ("mg/kg every 28 days", "mg/kg every 28 days"),
+    ("kg body weight", "kg body weight"),
+    # Only the listed word itself, not a word that starts with it.
+    ("mgmt review", "Mgmt review"),
 ])
 def test_capital(text: str, want: str) -> None:
-    assert _capital(text) == want
+    assert _capital(text, get_registry().report_wording) == want
 
 
 def test_a_scope_the_documents_worded_is_printed_with_a_capital() -> None:

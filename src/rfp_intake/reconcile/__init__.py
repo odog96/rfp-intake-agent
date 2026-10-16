@@ -27,7 +27,7 @@ from typing import Any
 
 import structlog
 
-from rfp_intake.domain.registry import FieldDef, get_registry
+from rfp_intake.domain.registry import FieldDef, get_registry, scope_has_phrase
 from rfp_intake.domain.schemas import (
     Contradiction,
     DroppedRecord,
@@ -154,10 +154,19 @@ def _reconcile_field(
     if not found:
         if not_specified:
             best = max(not_specified, key=lambda r: r.confidence)
+            # A passage saying why there is no value, as the field's
+            # `when_not_found` names it (a scope "why no total"), is stored as
+            # not_found, which is what the report shows: no document gives the
+            # value (Prompt B item 8; rule 3). The passage stays on the row, so
+            # the report still quotes it as the reason.
+            note = field_def.when_not_found
+            explains_no_value = note is not None and scope_has_phrase(
+                best.scope, note.because_scopes
+            )
             return [ResolvedField(
                 field_id=field_def.id,
                 value=None,
-                status="not_specified",
+                status="not_found" if explains_no_value else "not_specified",
                 confidence=best.confidence,
                 sources=[best.provenance],
                 quote=best.quote,
