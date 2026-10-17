@@ -28,6 +28,19 @@ Python and calls no model. It shows what a DERIVE change does to a run already
 on disk — the visit-intensity fix of 2026-10-11 was checked this way. Without
 it, the derived rows are the ones the run wrote.
 
+The visit table (Prompt C) is read from extraction.json's `schedules`. A run
+made before READ_SCHEDULE existed has no such key, so its schedules are read
+again from the PDFs in runs/<run_id>/inputs/, in code, exactly as READ_SCHEDULE
+would: the first-rung parser, FIND_SECTIONS, SET_ASIDE_SECTIONS, and the run's
+own MARK_OTHER_STUDY removals from extraction.json. No model is called. Each
+file is matched to the run's document id by the quotes the run cites from it.
+Two limits follow. The sections come from today's config and today's
+FIND_SECTIONS on rung 1's text, so a run whose PDFs needed rung 2 or 3, or whose
+config has changed since, can get different sections from the live run's, and
+the saved removals are matched to them by section id only. And two input files
+can be given the same document id if the run's quotes are found in both; the
+re-render does not check for that.
+
 `generated_at` is taken from the saved extraction.json rather than stamped with
 today's date, so re-rendering the same run twice produces the same bytes.
 """
@@ -36,7 +49,9 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
+from collections import Counter
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
@@ -45,9 +60,11 @@ from rfp_intake.derive import derive_node  # noqa: E402
 from rfp_intake.domain.registry import get_registry  # noqa: E402
 from rfp_intake.domain.schemas import (  # noqa: E402
     Contradiction,
+    Document,
     RemovedPassage,
     ResolvedField,
     RunState,
+    Schedule,
 )
 from rfp_intake.render import build_report_pdf  # noqa: E402
 
@@ -69,7 +86,62 @@ def load_run_state(run_path: Path) -> tuple[RunState, str]:
             RemovedPassage.model_validate(r) for r in doc.get("removed_passages", [])
         ],
     )
+    if "schedules" in doc:
+        state.schedules = [Schedule.model_validate(s) for s in doc["schedules"]]
+    else:
+        state.schedules = read_schedules_from_inputs(run_path, state)
     return state, str(doc.get("generated_at", "unknown"))
+
+
+def read_schedules_from_inputs(run_path: Path, state: RunState) -> list[Schedule]:
+    """READ_SCHEDULE again, on the run's own input PDFs, for a run made before
+    the node existed. Code only; see the module docstring."""
+    from rfp_intake.domain.section_policy import get_sections_policy
+    from rfp_intake.ingest.page_labels import read_page_labels
+    from rfp_intake.ingest.parsers.rung1 import Rung1Parser
+    from rfp_intake.schedule import read_schedules
+    from rfp_intake.sections import find_sections
+    from rfp_intake.sections.set_aside import set_aside_sections
+
+    config = get_registry().schedule_table
+    inputs = run_path / "inputs"
+    if config is None or not inputs.is_dir():
+        return []
+    schedules: list[Schedule] = []
+    for pdf in sorted(inputs.glob("*.pdf")):
+        # The first rung only: it is in-process and downloads nothing.
+        doc = Rung1Parser().parse(pdf).to_document("doc-unmatched")
+        doc_id = _doc_id_for(doc, state)
+        if doc_id is None:
+            print(f"  {pdf.name}: no quote of this run is on its pages; schedule not read")
+            continue
+        doc = doc.model_copy(update={"id": doc_id})
+        doc.page_labels = read_page_labels(pdf, doc.page_texts)
+        doc.sections, doc.section_source = find_sections(doc)
+        doc.sections, _set_aside = set_aside_sections(doc, get_sections_policy())
+        doc.removed = [p for p in state.removed_passages if p.doc_id == doc_id]
+        found = read_schedules(doc, config)
+        print(f"  {pdf.name} is {doc_id}: {len(found)} schedule(s) read from the PDF")
+        schedules.extend(found)
+    return schedules
+
+
+def _flat(text: str) -> str:
+    return re.sub(r"\s+", " ", text).strip().lower()
+
+
+def _doc_id_for(doc: Document, state: RunState) -> str | None:
+    """The run's document id whose cited quotes are on this file's pages."""
+    pages = {n: _flat(t) for n, t in doc.page_texts.items()}
+    votes: Counter[str] = Counter()
+    for rf in state.resolved:
+        # `source_quotes` is in the order of `sources` when RECONCILE filled it.
+        quotes = rf.source_quotes if len(rf.source_quotes) == len(rf.sources) else []
+        for i, src in enumerate(rf.sources):
+            quote = quotes[i] if quotes else rf.quote
+            if quote and _flat(quote) in pages.get(src.page, ""):
+                votes[src.doc_id] += 1
+    return votes.most_common(1)[0][0] if votes else None
 
 
 def rederive(state: RunState) -> RunState:

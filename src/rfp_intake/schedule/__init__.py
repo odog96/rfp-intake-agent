@@ -33,9 +33,11 @@ from typing import Any
 import pdfplumber
 import structlog
 
-from rfp_intake.domain.registry import ScheduleTable, scope_has_phrase
+from rfp_intake.domain.registry import ScheduleTable, get_registry, scope_has_phrase
 from rfp_intake.domain.schemas import (
     Document,
+    RunError,
+    RunState,
     Schedule,
     ScheduleColumn,
     ScheduleRow,
@@ -111,6 +113,42 @@ class _Grid:
     unplaced: list[str]
 
 
+def read_schedule_node(state: RunState) -> dict[str, Any]:
+    """READ_SCHEDULE graph node. Pure Python — no model call; reads each PDF again.
+
+    Runs after MARK_OTHER_STUDY, so a schedule in a section an analyst skips, or
+    in text about another study, is never read. A document that cannot be read
+    is recorded as an error and the run goes on; the report then falls back to
+    the extracted "Visit frequency by study period" text.
+    """
+    config = get_registry().schedule_table
+    if config is None:
+        return {"schedules": []}
+    schedules: list[Schedule] = []
+    errors: list[RunError] = []
+    for doc in state.documents:
+        try:
+            found = read_schedules(doc, config)
+        except Exception as e:  # noqa: BLE001 - one bad document must not end the run
+            logger.error("read_schedule_failed", run_id=state.run_id, doc_id=doc.id, error=str(e))
+            errors.append(RunError(
+                node="READ_SCHEDULE",
+                task_id=doc.id,
+                error=f"Could not read the schedule table in {doc.id}: {e}",
+                kind="validation",
+            ))
+            continue
+        logger.info(
+            "schedules_read",
+            run_id=state.run_id,
+            doc_id=doc.id,
+            schedules=len(found),
+            counted=sum(s.counted for s in found),
+        )
+        schedules.extend(found)
+    return {"schedules": schedules, "errors": errors}
+
+
 def read_schedules(doc: Document, config: ScheduleTable) -> list[Schedule]:
     """Every Schedule of Events in `doc`, read from its PDF in page order.
 
@@ -157,7 +195,6 @@ def read_schedules(doc: Document, config: ScheduleTable) -> list[Schedule]:
                 continue
             for run in _join(grids):
                 schedules.append(_schedule(doc, section, run, counted, config))
-    logger.info("schedules_read", doc_id=doc.id, schedules=len(schedules))
     return schedules
 
 

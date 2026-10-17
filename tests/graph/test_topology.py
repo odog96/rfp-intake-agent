@@ -22,6 +22,7 @@ EXPECTED_ORDER = [
     "find_sections",
     "set_aside_sections",
     "mark_other_study",
+    "read_schedule",
     "plan",
     "extract",
     "normalize",
@@ -72,8 +73,18 @@ class TestTopology:
         """
         edges = _edges(build_graph())
         assert ("set_aside_sections", "mark_other_study") in edges
-        assert ("mark_other_study", "plan") in edges
+        assert ("mark_other_study", "read_schedule") in edges
         assert ("set_aside_sections", "plan") not in edges
+
+    def test_read_schedule_sits_between_mark_other_study_and_plan(self) -> None:
+        """Prompt C. After MARK_OTHER_STUDY, so a schedule in a section it
+        removed whole is never counted; and the old edge must be gone, or
+        READ_SCHEDULE might never run and the report would quietly print the
+        extracted text instead of the counted table."""
+        edges = _edges(build_graph())
+        assert ("mark_other_study", "read_schedule") in edges
+        assert ("read_schedule", "plan") in edges
+        assert ("mark_other_study", "plan") not in edges
 
     def test_the_entry_point_is_ingest(self) -> None:
         edges = _edges(build_graph())

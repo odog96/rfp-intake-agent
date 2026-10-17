@@ -122,6 +122,7 @@ _STEPS = (
     ("FIND_SECTIONS", "Finding sections"),
     ("SET_ASIDE_SECTIONS", "Setting aside sections not needed"),
     ("MARK_OTHER_STUDY", "Removing text about other studies"),
+    ("READ_SCHEDULE", "Counting the schedule of events"),
     ("PLAN", "Planning the extraction"),
     ("EXTRACT", "Pulling out study details"),
     ("NORMALIZE", "Standardising values"),

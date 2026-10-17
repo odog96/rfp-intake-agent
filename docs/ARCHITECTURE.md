@@ -173,6 +173,10 @@ free-form model search cannot guarantee.
                         └──────┬───────┘
                                │
                         ┌──────▼───────┐
+                        │READ_SCHEDULE │  read each schedule-of-events table with pdfplumber and
+                        └──────┬───────┘  count its marks per visit column  (pure Python)
+                               │
+                        ┌──────▼───────┐
                         │    PLAN      │  build extraction tasks = doc × field_group,
                         └──────┬───────┘  select candidate page windows per task
                                │
@@ -223,9 +227,15 @@ than `Document.outline` entries, and the excerpt EXTRACT sends holds only the ch
 skips entirely come off `Document.sections` before PLAN scores them. **Stage 4, 2026-10-02, added
 MARK_OTHER_STUDY** (§4.2c): the one node of the four that calls a model, which labels passages that
 describe an *earlier or completed* study so that code can cut their text out before PLAN scores
-anything. All four nodes of `docs/PLAN_2026-10-02.md` between CLASSIFY and PLAN are now built.
+anything. All four nodes of `docs/PLAN_2026-10-02.md` between CLASSIFY and PLAN are now built; a
+fifth node, READ_SCHEDULE, was added there later (below).
 Text about a study being run **alongside** this one is kept, which change 6 of the 2026-10-07 review
 narrowed this node to on 2026-10-08; see §4.2c.
+**READ_SCHEDULE was added on 2026-10-17**, stage 2 of Prompt C (`docs/PROMPT_C_LOG.md`). It calls no
+model: it reads each document's schedule-of-events table again from the PDF with pdfplumber, in
+process, and counts the marks in each visit column in code. It sits after MARK_OTHER_STUDY so that a
+section set aside or removed whole is never read, and writes `RunState.schedules`, which RENDER
+prints; see §4.2d.
 
 **Every edge is a static Python edge or a `Send`.** There are no LLM-chosen routes and no agent delegation.
 In MVP there is exactly one conditional edge: `ADJUDICATE` is skipped when the candidate set is empty.
@@ -335,6 +345,7 @@ class RunState(BaseModel):
     set_aside: list[SetAsideSection] = []
     removed_passages: list[RemovedPassage] = []
     dropped: list[DroppedRecord] = []      # records set aside on purpose; not failures
+    schedules: list[Schedule] = []         # READ_SCHEDULE's tables, counted in code (§4.2d)
     report_paths: dict[str, str] = {}
     errors: Annotated[list[RunError], operator.add] = []
 ```
@@ -692,6 +703,24 @@ and the first 300 characters of the text. Skipping the references is housekeepin
 passage describes a different study is a judgement a reviewer may want to overturn, and nobody can
 overturn what they cannot see. `extraction.json` carries the whole text and the offsets under
 `removed_passages`.
+
+### 4.2d READ_SCHEDULE
+**Added 2026-10-17, Prompt C** (`docs/PROMPT_C_LOG.md`). Pure Python, no model call. For each document
+it finds every kept section whose heading matches `schedule_table.headings` in `config/fields.yaml`,
+opens the PDF at `Document.path` again with pdfplumber (because `Document.tables` keeps no cell
+positions or letter sizes), reads each ruled table printed under that heading, joins a table that runs
+over several pages, and counts the marks in each visit column. Which column is in which stage, which
+rows are key considerations and which are not assessments all come from wording lists in
+`schedule_table`. A section SET_ASIDE_SECTIONS set aside, or MARK_OTHER_STUDY removed whole, is never
+read; a sentence MARK_OTHER_STUDY removed from inside a section is not taken out of the table, because
+the table is read from the PDF, but a header footnote is looked for only in the section's kept text.
+A heading matching `schedule_table.not_counted_headings` gives a schedule with `counted: false`.
+
+It returns `schedules` (no reducer; this is the only writer) and `errors`. A schedule section whose
+pages hold no ruled table with marks gives a schedule with `problem` set and no columns, so the report
+can say a schedule was found but not read. An unexpected failure while reading a document gives a
+`kind="validation"` `RunError` and no schedule for that document, and the run goes on.
+`extraction.json` stores the schedules under `schedules`.
 
 ### 4.3 PLAN
 **Rewritten on 2026-10-02 by stage 2 of `docs/PLAN_2026-10-02.md`.** PLAN chooses sections, not pages.

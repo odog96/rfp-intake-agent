@@ -66,5 +66,9 @@ def build_extraction_document(state: RunState, registry: Registry) -> dict[str, 
         # from `errors` so that list holds only real failures, which is what
         # the Cloudera AI Application's banner and the check scripts count.
         "dropped_records": [d.model_dump(mode="json") for d in state.dropped],
+        # READ_SCHEDULE's tables (Prompt C), counted in code from the PDF. Kept
+        # here so a re-render prints the same visit table without reading the
+        # PDF again.
+        "schedules": [s.model_dump(mode="json") for s in state.schedules],
         "errors": [e.model_dump(mode="json") for e in state.errors],
     }

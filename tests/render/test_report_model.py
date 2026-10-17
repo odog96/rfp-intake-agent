@@ -23,6 +23,7 @@ from rfp_intake.domain.schemas import (
     RemovedPassage,
     ResolvedField,
     RunState,
+    Schedule,
 )
 from rfp_intake.normalize.scope import normalize_scope
 from rfp_intake.render.report_model import (
@@ -898,6 +899,7 @@ def load_run_state(run: Path) -> RunState:
         removed_passages=[
             RemovedPassage.model_validate(r) for r in d.get("removed_passages", [])
         ],
+        schedules=[Schedule.model_validate(s) for s in d.get("schedules", [])],
     )
 
 

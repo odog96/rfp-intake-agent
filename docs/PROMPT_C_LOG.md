@@ -132,7 +132,76 @@ Checks:
   word matcher beside `scope_has_phrase`, kept because of `{nth}`; the header words and footnote
   are joined text, not quotes, and must be shown as the table's header, never validated as quotes.
 
-Commit: the stage 1 commit (see `git log`).
+Commit: `5b72739`. A test-only commit before it, `902f53f`, fixed the pre-existing failure above.
+
+### Stage 2 — the READ_SCHEDULE node, saved in `extraction.json`
+
+What it adds:
+- `read_schedule_node` in `src/rfp_intake/schedule/__init__.py`: the READ_SCHEDULE graph node. It
+  calls `read_schedules` on every document and writes `RunState.schedules` (a new field in
+  `src/rfp_intake/domain/schemas.py`, written once, no reducer). No model call.
+- Static edges in `src/rfp_intake/graph/__init__.py`: MARK_OTHER_STUDY → READ_SCHEDULE → PLAN; the
+  old MARK_OTHER_STUDY → PLAN edge is gone. READ_SCHEDULE sits after MARK_OTHER_STUDY so that a
+  footnote is looked for only in kept text.
+- `extraction.json` gets a `schedules` key (`src/rfp_intake/render/json_renderer.py`), an empty list
+  when no schedule was found.
+- The step list in `app.py` and `app_v2.py` gets READ_SCHEDULE, "Counting the schedule of events".
+- `scripts/rerender_report.py` loads the saved schedules, or, for a run made before this node,
+  reads them again from the run's own `inputs/` PDFs.
+- The topology diagram in `docs/ARCHITECTURE.md` §2 shows READ_SCHEDULE. The topology line in
+  `CLAUDE.md` "Current status" is not changed; that section is Oliver's status record.
+- Tests: `tests/schedule/test_read_schedule_node.py`, and the topology tests in
+  `tests/graph/test_topology.py`.
+
+Decisions taken for Oliver in stage 2:
+
+8. **A failure in READ_SCHEDULE is a `validation` error on that document, and the run goes on.**
+   Alternative: `call_failed`, or letting the exception end the run. Reason: no model is called, so
+   `call_failed` would be wrong; SET_ASIDE_SECTIONS uses `validation` for its own code-only failures;
+   and one unreadable table must not lose every other field. The report's fallback (stage 3) then says
+   the table could not be read.
+9. **A re-render of a run made before READ_SCHEDULE reads the schedule again from the run's inputs
+   with the cheapest parser only** (rung 1, PyMuPDF), so a re-render never reaches Docling and never
+   downloads a model (CLAUDE.md open item 9). Alternative: the full parser ladder, as INGEST uses.
+   Reason: the reader needs only the PDF and the section boundaries, and the stage 1 tests already
+   read Table 1 from rung 1's text. A run whose PDFs needed rung 2 or 3 would re-render with a
+   different text from the live run's; `extraction.json` does not record which rung a document used,
+   so this cannot be checked from a saved run.
+10. **The re-render finds each input's document id by the cited quotes** (document ids are random per
+    run, so the file name does not give it): each saved row's quote is looked for on its cited page of
+    each input, and the input takes the id with the most hits. Alternative: match by file name order.
+    Reason: input order is not recorded in `extraction.json`. On `r-20261016-prompt-b`: "Example
+    protocol 2.pdf is doc-94d4c6c8", "Synthetic_RFP_NEOD001.pdf is doc-d906eabd".
+
+Result: on `r-20261016-prompt-b`, the re-render reads 2 schedules from the protocol (Table 1, counted;
+Appendix 3 p.111, not counted) and none from the synthetic RFP, with the eleven counts unchanged.
+
+Checks:
+- pytest, full offline suite: 1535 passed, 1 skipped.
+- `ruff check .`: clean. mypy on `schedule/__init__.py`, `graph/__init__.py`,
+  `render/json_renderer.py`, `domain/schemas.py`, `tests/schedule` and `tests/graph/test_topology.py`:
+  clean.
+- Gate reviewers, first pass. The pipeline-rules reviewer found no violation of the ten rules. It
+  raised, and these were fixed: `docs/ARCHITECTURE.md` lacked the `RunState.schedules` line and the
+  node's contract (now §3 and a new §4.2d); §2 still said "All four nodes"; the `graph/__init__.py`
+  docstring and a test docstring said a schedule in another study's text is never read, when only a
+  section MARK_OTHER_STUDY removed whole is skipped; §4.2d said an unreadable table gives a
+  `RunError`, when a schedule section with no readable table gives a schedule with `problem` set
+  (an unexpected failure gives the `RunError`); and the re-render's limits were not written down
+  (now in the `scripts/rerender_report.py` docstring: today's config and FIND_SECTIONS on rung 1's
+  text, removals matched by section id only, and two inputs could be given the same document id).
+  The plan-conformance reviewer found stage 2 conforms, and noted that the `RunError.kind` comment
+  said "validation" means a model answer was rejected; it now says code-only steps use it too. Both
+  also noted that a `validation` error from READ_SCHEDULE is counted in `extraction.json`'s errors
+  and in `scripts/check_review_2026_10_07.py`'s error count; this matters when comparing runs.
+- Gate reviewers, second pass after the fixes: the pipeline-rules reviewer found no violation, and
+  the plan-conformance reviewer found stage 2 conforms, with the eleven counts holding. Recorded,
+  not changed: a re-render of a pre-node run with no `inputs/` folder, or whose quotes match no
+  file, gets no schedule and falls back to the old text, with only a line on stdout to say so; and
+  nothing yet runs the whole compiled graph with the new node offline, so the first proof that
+  `schedules` survives into the final state is the live run.
+- Also in this stage: a comment-only edit in `config/fields.yaml` (`repeating` now says "period or
+  timing", as the code matches both).
 
 ## Gaps on the other two protocols (reported, not fixed, as Oliver instructed)
 

@@ -197,7 +197,7 @@ schedule_table:
   # ("Days 8, 15, 22" is 3; "Day -28 to Day -1" is 1). A bracketed visit window is
   # left out first.
   visit_separators: [",", and]
-  # A column whose period says one of these repeats; it shows `says` instead of a
+  # A column whose period or timing says one of these repeats; it shows `says` instead of a
   # number of visits. `{nth}` stands for an ordinal such as "3rd".
   repeating:
     - wording: "every {nth} month"

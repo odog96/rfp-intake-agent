@@ -271,6 +271,7 @@ class ScheduleRow(BaseModel):
 
     label: str
     page: int
+    # Counted from 1: column 1 is `Schedule.columns[0]`, the first visit column.
     columns: list[int] = Field(default_factory=list)
     considerations: list[str] = Field(default_factory=list)
 
@@ -360,6 +361,8 @@ class RunError(BaseModel):
     error: str
     # "validation" means the model answered and the answer was rejected — the
     # call itself worked. "call_failed" means the step never got an answer.
+    # A code-only step that fails (SET_ASIDE_SECTIONS, READ_SCHEDULE) also uses
+    # "validation", because no model call failed.
     # job/__init__.py uses the distinction to tell a run that extracted nothing
     # because the documents were silent from one that extracted nothing because
     # every LLM call failed.
@@ -442,5 +445,9 @@ class RunState(BaseModel):
     # extraction.json's `dropped_records`. No reducer: RECONCILE alone writes it,
     # once, as with `set_aside` above.
     dropped: list[DroppedRecord] = Field(default_factory=list)
+    # Schedules of Events READ_SCHEDULE counted in code (Prompt C), for
+    # extraction.json and the visit rows of the report. No reducer: READ_SCHEDULE
+    # alone writes it, once, as with `set_aside` above.
+    schedules: list[Schedule] = Field(default_factory=list)
     report_paths: dict[str, str] = Field(default_factory=dict)
     errors: Annotated[list[RunError], operator.add] = Field(default_factory=list)
