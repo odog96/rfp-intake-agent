@@ -75,7 +75,15 @@ def assert_nothing_lost(state: RunState, registry: Registry, model: ReportModel)
 
     for rf in state.resolved:
         fd = field_by_id.get(rf.field_id)
-        want = "; ".join(format_value(rf.value, fd)) if rf.status != "not_found" else "—"
+        if rf.status == "not_found":
+            want = "—"
+        elif rf.status == "not_applicable":
+            # Prompt B item 4: a question a config rule says does not arise reads
+            # as `report_wording.not_applicable`. Run r-20261016-prompt-b is the
+            # first saved run with such a row.
+            want = registry.report_wording.not_applicable
+        else:
+            want = "; ".join(format_value(rf.value, fd))
         homes = [
             (row, line)
             for row in rows
