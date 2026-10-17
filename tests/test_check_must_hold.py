@@ -1,8 +1,12 @@
-"""The must-hold check's KNOWN verdict, approved by Oliver on 2026-10-15.
+"""The must-hold check's KNOWN verdict, approved by Oliver on 2026-10-15, and its
+`amount` match, asked for by Oliver on 2026-10-17.
 
 A row of a `rows_say` fact may carry `known`, and a `coverage` fact may list
 `known_missing` fields. Where only that named part is missing the fact is KNOWN,
 which does not fail the run; anything else missing still fails.
+
+An `amount` side or row is checked by its number and unit, whatever words
+surround them, so "40 month study duration" and "40 months" both state 40 months.
 """
 
 from __future__ import annotations
@@ -35,8 +39,9 @@ def _row(field_id: str, value: Any, doc_kind: str = "rfp") -> dict[str, Any]:
 ROWS_FACT = {
     "kind": "rows_say",
     "rows": [
-        {"field": "ops.a", "from": "rfp", "says": ["80", "visits"], "known": "open item 1"},
-        {"field": "ops.b", "from": "rfp", "says": ["75", "visits"]},
+        {"field": "ops.a", "from": "rfp", "amount": {"n": 80, "unit": ["visit", "visits"]},
+         "known": "open item 1"},
+        {"field": "ops.b", "from": "rfp", "amount": {"n": 75, "unit": ["visit", "visits"]}},
     ],
 }
 
@@ -108,3 +113,82 @@ def test_the_facts_file_marks_only_site_selection_visits_as_known() -> None:
                     for k in f.get("known_missing", [])]
     assert known_rows == [(8, "ops.visits_site_selection")]
     assert known_fields == [(9, "ops.visits_site_selection")]
+
+
+# --------------------------------------------------------------------------- #
+# `amount`: a number and its unit, whatever words surround them
+# --------------------------------------------------------------------------- #
+
+FORTY_MONTHS = {"amount": {"n": 40, "unit": ["month", "months"]}}
+
+
+@pytest.mark.parametrize("value", [
+    "40 month study duration",
+    "40 months",
+    "40-month study",
+    "a 40 Months study",
+    {"n": 40, "unit": "months"},
+    {"n": 40.0, "unit": "months"},
+    "40 month study duration; enrollment over approximately 24 months",
+])
+def test_an_amount_matches_whatever_surrounds_it(check: ModuleType, value: Any) -> None:
+    assert check._matches(value, FORTY_MONTHS)
+
+
+@pytest.mark.parametrize("value", [
+    "140 months",
+    "40.5 months",
+    "4,040 months",
+    "40 weeks",
+    "40 monthly visits",
+    "42 months",
+    "40",
+    "months 40",
+    None,
+])
+def test_an_amount_needs_that_number_directly_before_that_unit(
+    check: ModuleType, value: Any
+) -> None:
+    assert not check._matches(value, FORTY_MONTHS)
+
+
+def _record(value: Any, doc_kind: str, page: int) -> dict[str, Any]:
+    return {"value": value, "scope": "study",
+            "provenance": {"doc_kind": doc_kind, "page": page}}
+
+
+def _duration_run(check: ModuleType, rfp_value: Any) -> Any:
+    return check.Run({"resolved_fields": [], "contradictions": [{
+        "field_id": "timeline.total_duration", "verdict": "conflict",
+        "records": [_record("42 months (total study duration)", "amendment", 24),
+                    _record(rfp_value, "rfp", 3)],
+    }]})
+
+
+def _fact_5() -> dict[str, Any]:
+    import yaml
+
+    facts = yaml.safe_load((ROOT / "eval" / "golden" / "sample_pair_must_hold.yaml").read_text())
+    return next(f for f in facts["facts"] if f["id"] == 5)
+
+
+@pytest.mark.parametrize("rfp_value", ["40 month study duration", "40 months"])
+def test_fact_5_passes_on_either_wording_of_the_rfps_40_months(
+    check: ModuleType, rfp_value: str
+) -> None:
+    # r-20261016-prompt-b's RFP record read "40 month study duration";
+    # r-20261013-prompt-c's read "40 months".
+    assert check.disagreement(_duration_run(check, rfp_value), _fact_5())[0] == "PASS"
+
+
+def test_fact_5_still_fails_on_another_number(check: ModuleType) -> None:
+    assert check.disagreement(_duration_run(check, "48 month study duration"),
+                              _fact_5())[0] == "FAIL"
+
+
+def test_no_fact_matches_a_number_and_unit_by_exact_words() -> None:
+    import yaml
+
+    facts = yaml.safe_load((ROOT / "eval" / "golden" / "sample_pair_must_hold.yaml").read_text())
+    specs = [s for f in facts["facts"] for s in [f, *f.get("sides", []), *f.get("rows", [])]]
+    assert [s["says"] for s in specs if any(str(w).isdigit() for w in s.get("says", []))] == []

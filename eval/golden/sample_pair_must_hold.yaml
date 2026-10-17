@@ -33,7 +33,7 @@
 #   removed        a passage with this heading is among MARK_OTHER_STUDY's
 #                  removals (Appendix C of the report)
 #   rows_say       each listed field has a row read from that kind of document
-#                  whose value says every listed word
+#                  whose value states the listed amount (or says every listed word)
 #   coverage       at least this many registry fields have a value
 #
 # A fact can name a known intermittent failure, approved by Oliver on
@@ -45,11 +45,15 @@
 # fails, and a `coverage` fact lowers its threshold by one only for each listed
 # field that is actually missing.
 #
-# A side or row matches a value in one of two ways. `value` is the normalised
-# value exactly (0, "phase_3", "not_matching_stated"). `says` is a list of words
-# that must each appear, as whole words, case ignored, in the value written out
-# as text ({"n": 42, "unit": "months"} reads "42 months"), for values the model
-# words freely.
+# A side or row matches a value in one of three ways. `value` is the normalised
+# value exactly (0, "phase_3", "not_matching_stated"). `amount` is a number and
+# its unit, for values the model words freely: the value written out as text
+# ({"n": 42, "unit": "months"} reads "42 months") must state the number directly
+# followed by one of the listed units, whatever words surround them, so
+# {n: 40, unit: [month, months]} matches "40 month study duration" and
+# "40 months" alike, and not "140 months" (Oliver, 2026-10-17, after fact 5
+# failed on r-20261016-prompt-b only because the RFP side read "40 month").
+# `says` is a list of words that must each appear, as whole words, case ignored.
 
 documents:
   - Example protocol 2.pdf
@@ -94,8 +98,8 @@ facts:
     field: timeline.total_duration
     scope: study
     sides:
-      - {from: amendment, says: ["42", "months"]}
-      - {from: rfp, says: ["40", "months"]}
+      - {from: amendment, amount: {n: 42, unit: [month, months]}}
+      - {from: rfp, amount: {n: 40, unit: [month, months]}}
 
   - id: 6
     name: Placebo matches the study drug is a disagreement, not matching (amendment p.53) against matching (RFP p.3)
@@ -116,17 +120,17 @@ facts:
     rows:
       - field: ops.visits_site_selection
         from: rfp
-        says: ["80", "visits"]
+        amount: {n: 80, unit: [visit, visits]}
         # RFP p.3 prints this value in a two-column table, with the label
         # "Time on Site" between its lines, so the model's quote is sometimes
         # not word for word in the page text and is rejected
         # (quote_not_found_in_excerpt). Missing in r-20261013-prompt-c, found
         # in r-20261012-angus2.
         known: "CLAUDE.md open item 1, the two-column table on RFP p.3"
-      - {field: ops.visits_site_initiation, from: rfp, says: ["75", "visits"]}
-      - {field: ops.visits_interim_monitoring, from: rfp, says: ["750", "visits"]}
-      - {field: ops.visits_close_out, from: rfp, says: ["75", "visits"]}
-      - {field: ops.visits_pharmacy_monitoring, from: rfp, says: ["300", "visits"]}
+      - {field: ops.visits_site_initiation, from: rfp, amount: {n: 75, unit: [visit, visits]}}
+      - {field: ops.visits_interim_monitoring, from: rfp, amount: {n: 750, unit: [visit, visits]}}
+      - {field: ops.visits_close_out, from: rfp, amount: {n: 75, unit: [visit, visits]}}
+      - {field: ops.visits_pharmacy_monitoring, from: rfp, amount: {n: 300, unit: [visit, visits]}}
 
   - id: 9
     name: At least 40 of the registry's fields have a value

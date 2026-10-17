@@ -70,10 +70,22 @@ def _same(found: Any, want: Any) -> bool:
     return bool(found == want)
 
 
+def _states_amount(text: str, amount: dict[str, Any]) -> bool:
+    """`text` states the number `n` directly followed by one of `unit`, whatever
+    words surround the two: {n: 40, unit: [month, months]} matches "40 month
+    study duration", "40 months" and "40-month", not "140 months" or "40.5 months"."""
+    number = re.escape(str(amount["n"]))
+    units = "|".join(re.escape(str(u).lower()) for u in amount["unit"])
+    return re.search(rf"(?<![\d.,]){number}(?:\.0+)?(?![\d,]|\.\d)(?:\s+|-)(?:{units})(?!\w)",
+                     text) is not None
+
+
 def _matches(value: Any, spec: dict[str, Any]) -> bool:
     if "value" in spec:
         return _same(value, spec["value"])
     text = _text(value).lower()
+    if "amount" in spec and not _states_amount(text, spec["amount"]):
+        return False
     return all(re.search(rf"(?<!\w){re.escape(str(w).lower())}(?!\w)", text)
                for w in spec.get("says", []))
 
