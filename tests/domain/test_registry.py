@@ -194,6 +194,27 @@ def test_validates_duplicate_ids(tmp_path: Path) -> None:
         load_registry(p)
 
 
+def test_schedule_table_is_optional(fields_yaml_path: Path, tmp_path: Path) -> None:
+    data = yaml.safe_load(fields_yaml_path.read_text())
+    del data["schedule_table"]
+    p = tmp_path / "fields.yaml"
+    p.write_text(yaml.dump(data, allow_unicode=True))
+    assert load_registry(p).schedule_table is None
+
+
+def test_schedule_table_considerations_need_their_own_ids(
+    fields_yaml_path: Path, tmp_path: Path
+) -> None:
+    # Prompt C: a consideration's id is what the report and the must-hold check name.
+    data = yaml.safe_load(fields_yaml_path.read_text())
+    considerations = data["schedule_table"]["considerations"]
+    considerations.append(dict(considerations[0], label="Consent again"))
+    p = tmp_path / "fields.yaml"
+    p.write_text(yaml.dump(data, allow_unicode=True))
+    with pytest.raises(RegistryValidationError, match="two considerations share an id"):
+        load_registry(p)
+
+
 def test_amount_wording_defaults_to_the_amount_alone() -> None:
     # Prompt B item 8: "Every" is a field's own amount_wording, not its id.
     from rfp_intake.domain.registry import FieldDef

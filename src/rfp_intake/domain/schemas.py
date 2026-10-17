@@ -238,6 +238,65 @@ class RemovedPassage(BaseModel):
     spans: list[TextSpan] = Field(default_factory=list)
 
 
+class ScheduleColumn(BaseModel):
+    """One visit column of a Schedule of Events, as READ_SCHEDULE read it (Prompt C).
+
+    `period` and `timing` are the header's own words, footnote marks removed.
+    Both mark counts are kept whatever `schedule_table.count_non_assessments`
+    says, so either setting can be checked from one run. Each is the marks of one
+    visit: a column of three visits ("Days 8, 15, 22") has that many each time.
+    """
+
+    period: str
+    timing: str = ""
+    # From the header's own footnote, only when the header gives no timing
+    # (decision B of Prompt C): "EOT/ETD Visit to occur 28-35 days after ...".
+    timing_footnote: str | None = None
+    timing_footnote_page: int | None = None
+    # None for a repeating column, whose `visits_says` is printed instead.
+    visits: int | None = 1
+    visits_says: str | None = None
+    # The `schedule_table.stages` label this column is counted in; None when no
+    # stage's wording matches its period, which the report says.
+    stage: str | None = None
+    marks_all: int = 0
+    marks_assessments: int = 0
+    # `schedule_table.considerations` ids with a mark in this column, in config order.
+    considerations: list[str] = Field(default_factory=list)
+    pages: list[int] = Field(default_factory=list)
+
+
+class ScheduleRow(BaseModel):
+    """One row of a Schedule of Events: its label and the columns it has a mark in."""
+
+    label: str
+    page: int
+    columns: list[int] = Field(default_factory=list)
+    considerations: list[str] = Field(default_factory=list)
+
+
+class Schedule(BaseModel):
+    """A Schedule of Events READ_SCHEDULE found, joined across the pages it runs over.
+
+    `counted` is False for a schedule under a `not_counted_headings` heading — the
+    follow-up for patients who stop early — which the report names in one line
+    and never adds to the main table. `problem` is set, and `columns` empty, when
+    a schedule section was found but its table could not be read. `unplaced`
+    lists, in plain words, every mark READ_SCHEDULE could not give a row or a
+    column; those marks are still in the column counts where a column was found.
+    """
+
+    doc_id: str
+    heading: str
+    pages: list[int] = Field(default_factory=list)
+    printed_pages: list[str | None] = Field(default_factory=list)
+    counted: bool = True
+    columns: list[ScheduleColumn] = Field(default_factory=list)
+    rows: list[ScheduleRow] = Field(default_factory=list)
+    unplaced: list[str] = Field(default_factory=list)
+    problem: str | None = None
+
+
 class Document(BaseModel):
     id: str
     path: str

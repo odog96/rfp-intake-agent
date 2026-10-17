@@ -750,12 +750,65 @@ class ReportWording(BaseModel):
         return text
 
 
+class RepeatingVisit(BaseModel):
+    """A schedule column that repeats rather than naming its visits: "every 3rd
+    month" shows "1 every 3rd month". `{nth}` stands for an ordinal in both."""
+
+    wording: str
+    says: str
+
+
+class ScheduleStage(BaseModel):
+    """One stage of "Total number of subject visits". `says` is printed instead of
+    a sum for a stage that repeats until the study ends."""
+
+    label: str
+    periods: list[str]
+    says: str | None = None
+
+
+class Consideration(BaseModel):
+    """What a schedule row is for, matched on its label by `wording`. A row whose
+    consideration has `assessment: false` is not an assessment (randomization,
+    dosing), so its marks are left out of the Assessments count by default."""
+
+    id: str
+    label: str
+    wording: list[str]
+    assessment: bool = True
+
+
+class ScheduleTable(BaseModel):
+    """`schedule_table` in config/fields.yaml: how READ_SCHEDULE reads a protocol's
+    Schedule of Events (Prompt C). See the comments there for each key."""
+
+    headings: list[str]
+    not_counted_headings: list[str] = Field(default_factory=list)
+    marks: list[str]
+    timing_starts: list[str]
+    visit_separators: list[str]
+    repeating: list[RepeatingVisit] = Field(default_factory=list)
+    stages: list[ScheduleStage] = Field(default_factory=list)
+    count_non_assessments: bool = False
+    considerations: list[Consideration] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def _unique_considerations(self) -> ScheduleTable:
+        ids = [c.id for c in self.considerations]
+        if len(ids) != len(set(ids)):
+            raise ValueError("two considerations share an id")
+        return self
+
+
 class Registry(BaseModel):
     version: int
     groups: list[GroupDef]
     fields: list[FieldDef]
     registry_version: str
     report_wording: ReportWording
+    # None when config/fields.yaml has no `schedule_table` block: READ_SCHEDULE
+    # then reads nothing and the visit rows are the extracted text as before.
+    schedule_table: ScheduleTable | None = None
 
     def get_group(self, group_id: str) -> GroupDef:
         for g in self.groups:
@@ -1114,6 +1167,12 @@ def load_registry(path: Path | None = None) -> Registry:
         report_wording = ReportWording.model_validate(data["report_wording"])
     except ValueError as e:
         raise RegistryValidationError(f"report_wording in {path}: {e}") from e
+    schedule_table = None
+    if "schedule_table" in data:
+        try:
+            schedule_table = ScheduleTable.model_validate(data["schedule_table"])
+        except ValueError as e:
+            raise RegistryValidationError(f"schedule_table in {path}: {e}") from e
 
     registry_version = f"v{version}:{content_hash}"
 
@@ -1123,6 +1182,7 @@ def load_registry(path: Path | None = None) -> Registry:
         fields=fields,
         registry_version=registry_version,
         report_wording=report_wording,
+        schedule_table=schedule_table,
     )
 
 
