@@ -30,7 +30,7 @@ from rfp_intake.derive.rubric import (
     compute_visit_intensity,
 )
 from rfp_intake.domain.registry import Registry, ScopeLeftOut, get_registry, scope_has_phrase
-from rfp_intake.domain.schemas import ResolvedField, RunError, RunState
+from rfp_intake.domain.schemas import Provenance, ResolvedField, RunError, RunState
 
 logger = structlog.get_logger()
 
@@ -111,9 +111,83 @@ def derive_node(state: RunState) -> dict[str, Any]:
                 derived_from=field_def.derived_from or [],
             ))
 
+    # After the rubrics, so visit intensity reads only what the documents state.
+    # Caught like a rubric, so a schedule it cannot add up loses no other field.
+    try:
+        computed += stage_totals(state, registry)
+    except Exception as e:
+        logger.error("stage_totals_failed", error=str(e))
+        target = next((f for f in registry.fields if f.from_schedule == "stage_totals"), None)
+        errors.append(RunError(
+            node="DERIVE",
+            task_id=target.id if target else None,
+            error=f"Stage totals failed: {e}",
+        ))
+
     logger.info("derive_complete", run_id=state.run_id, computed=len(computed))
 
     return {"resolved": state.resolved + computed, "errors": errors}
+
+
+def stage_totals(state: RunState, registry: Registry) -> list[ResolvedField]:
+    """The visits of each `schedule_table.stages` stage, added up from the
+    columns READ_SCHEDULE counted, as rows of the field config/fields.yaml marks
+    `from_schedule: stage_totals` (Prompt C).
+
+    A sum is the one calculation here, approved by Oliver on 2026-10-17
+    (exception A of Prompt C): `notes` keeps its parts, "1 + 3 + 1 + 3 + 1 + 3",
+    so the report can print the sum beside them. A stage with `says`, or with a
+    column whose visits repeat, has no number: its row has the words in `notes`
+    instead ("1 + 1 a month" where a stage mixes both). Every row is
+    needs_review, and GATE keeps it so, because each has `derived_from`.
+    """
+    config = registry.schedule_table
+    target = next((f for f in registry.fields if f.from_schedule == "stage_totals"), None)
+    table = next((f for f in registry.fields if f.from_schedule == "table"), None)
+    if config is None or target is None or table is None:
+        return []
+    counted = [s for s in state.schedules if s.counted and s.columns]
+    kinds = {d.id: d.kind for d in state.documents if d.kind}
+    for rf in state.resolved:
+        for p in rf.sources:
+            kinds.setdefault(p.doc_id, p.doc_kind)
+    rows: list[ResolvedField] = []
+    for schedule in counted:
+        sources = [
+            Provenance(
+                doc_id=schedule.doc_id, doc_kind=kinds.get(schedule.doc_id, "other"),
+                page=page, printed_page=printed if printed != str(page) else None,
+            )
+            for page, printed in zip(
+                schedule.pages,
+                schedule.printed_pages or [None] * len(schedule.pages),
+                strict=False,
+            )
+        ]
+        for stage in config.stages:
+            columns = [c for c in schedule.columns if c.stage == stage.label]
+            if not columns:
+                continue
+            counts = [c.visits for c in columns if c.visits is not None]
+            summed = stage.says is None and len(counts) == len(columns)
+            # Every column is a part, a repeating one in its own words, so a
+            # stage that mixes both loses none of its fixed visits.
+            parts = [str(c.visits) if c.visits is not None else c.visits_says or ""
+                     for c in columns]
+            notes = (stage.says if stage.says and not summed else None) or " + ".join(parts)
+            rows.append(ResolvedField(
+                field_id=target.id,
+                value=sum(counts) if summed else None,
+                # Not not_specified: the table does state these visits, only
+                # not as one number, so a person reads the words (rule 3).
+                status="needs_review",
+                confidence=1.0,
+                sources=sources,
+                scope=f"{schedule.heading}: {stage.label}" if len(counted) > 1 else stage.label,
+                derived_from=[table.id],
+                notes=notes or None,
+            ))
+    return rows
 
 
 def _is_left_out(scope: str | None, leave_out: ScopeLeftOut | None) -> bool:

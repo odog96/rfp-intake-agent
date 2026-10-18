@@ -4,7 +4,8 @@ Pure function returning bytes; no filesystem access. See ARCHITECTURE.md §4.10.
 One row per field: Group | Variable | Value | Status | Confidence |
 Source Doc | Page | Quote | Contradiction, conditional-formatted
 red/amber/green/grey, plus a Review Queue sheet (non-confirmed rows,
-budget drivers first).
+budget drivers first), and a Schedule of Events sheet with the visit table
+report.pdf prints (Prompt C).
 """
 
 from __future__ import annotations
@@ -19,6 +20,7 @@ from openpyxl.worksheet.worksheet import Worksheet
 
 from rfp_intake.domain.registry import FieldDef, Registry, ReportWording
 from rfp_intake.domain.schemas import ResolvedField, RunState
+from rfp_intake.render.report_model import VisitSchedule, visit_schedule
 
 _HEADERS = [
     "Group", "Variable", "Value", "Status", "Confidence",
@@ -31,6 +33,8 @@ _FILL_CONFLICT = PatternFill("solid", fgColor="FFCDD2")   # red
 _FILL_NOT_FOUND = PatternFill("solid", fgColor="E0E0E0")   # grey
 
 _COLUMN_WIDTHS = [20, 32, 24, 14, 12, 20, 6, 50, 40]
+# Period | Visit timing | Visits | Assessments | Key considerations | Where
+_SCHEDULE_WIDTHS = [30, 34, 18, 14, 44, 40]
 
 
 def _row_fill(rf: ResolvedField) -> PatternFill:
@@ -132,6 +136,42 @@ def build_report_xlsx(state: RunState, registry: Registry) -> bytes:
     review_ws = wb.create_sheet("Review Queue")
     _write_sheet(review_ws, review_rows, registry.report_wording)
 
+    schedule = visit_schedule(state, registry)
+    if schedule is not None:
+        totals = next((f for f in registry.fields if f.from_schedule == "stage_totals"), None)
+        _write_schedule_sheet(
+            wb.create_sheet("Schedule of Events"), schedule, totals.label if totals else None,
+        )
+
     buf = io.BytesIO()
     wb.save(buf)
     return buf.getvalue()
+
+
+def _write_schedule_sheet(ws: Worksheet, schedule: VisitSchedule, totals_label: str | None) -> None:
+    """The counted Schedule of Events in report.pdf's words: each table under its
+    heading and pages, the lines report.pdf prints under it, then the stage totals
+    DERIVE wrote. The counts are text, as printed ("7 each")."""
+    if schedule.missing:
+        ws.append([schedule.missing])
+    for t in schedule.tables:
+        ws.append([t.heading, t.sources])
+        ws[ws.max_row][0].font = Font(bold=True)
+        ws.append(t.head)
+        for cell in ws[ws.max_row]:
+            cell.font = Font(bold=True)
+        for cells in t.rows:
+            ws.append(cells)
+        for line in t.lines:
+            ws.append([line])
+        ws.append([])
+    for line in schedule.lines:
+        ws.append([line])
+    if schedule.totals:
+        ws.append([])
+        ws.append([totals_label or ""])
+        ws[ws.max_row][0].font = Font(bold=True)
+        for line in schedule.totals:
+            ws.append([line])
+    for i, width in enumerate(_SCHEDULE_WIDTHS, start=1):
+        ws.column_dimensions[ws.cell(row=1, column=i).column_letter].width = width

@@ -428,6 +428,7 @@ def _schedule(
             note = _footnote(doc, section, first.headers[i - 1][2], pages[-1])
             if note is not None:
                 col.timing_footnote, col.timing_footnote_page = note
+                col.timing_footnote_printed_page = doc.page_labels.get(note[1])
         _visits(col, config)
         col.stage = next(
             (s.label for s in config.stages

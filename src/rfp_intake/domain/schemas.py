@@ -253,6 +253,8 @@ class ScheduleColumn(BaseModel):
     # (decision B of Prompt C): "EOT/ETD Visit to occur 28-35 days after ...".
     timing_footnote: str | None = None
     timing_footnote_page: int | None = None
+    # The number printed on that page, where it differs (Document.page_labels).
+    timing_footnote_printed_page: str | None = None
     # None for a repeating column, whose `visits_says` is printed instead.
     visits: int | None = 1
     visits_says: str | None = None

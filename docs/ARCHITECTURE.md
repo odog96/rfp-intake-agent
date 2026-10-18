@@ -1089,6 +1089,22 @@ note names each row held back, its pages, and the reason. The placebo rubric use
 they agree; when they give different answers and the rule reached needs that input, the answer is that
 the documents give more than one answer and the sponsor should be asked.
 
+**Stage totals from the Schedule of Events** (added 2026-10-17, stage 3 of Prompt C, exception A to
+"do no calculation", approved by Oliver). After the rubrics, so the visit-intensity rating reads only
+what the documents state, `derive/__init__.py:stage_totals` adds up the visits of each
+`schedule_table.stages` stage from the columns READ_SCHEDULE counted, and writes one row per stage
+into the field marked `from_schedule: stage_totals` (`visits.total_count`). It is an extracted field,
+so this is the one place DERIVE writes into one; every such row has `derived_from` set to the field
+marked `from_schedule: table`, which makes GATE send it for review. `notes` keeps the parts
+("1 + 3 + 1 + 3 + 1 + 3") so the report prints the sum beside them. A stage with `says` in config
+("1 a month until the study ends", decision C), or with a column whose visits repeat, gets no number:
+its row has the words in `notes` instead ("1 + 1 a month" where a stage mixes fixed and repeating
+columns). Such a row is `needs_review`, not `not_specified`, because the table does state these visits,
+only not as one number. A schedule with `counted: false` adds nothing. The call is caught like a
+rubric: if it fails, a `RunError` is recorded and every other field is kept.
+`scripts/rerender_report.py --rederive` throws away only these rows of the field, not the documents'
+own rows (and, as before, every `derived: true` field).
+
 ### 4.9 GATE
 Maps confidence and contradiction state to a reviewer-facing status:
 
@@ -1294,11 +1310,30 @@ is what makes the whole pipeline testable without a filesystem.
   field's `amount_wording` (default `"{amount}"`; `"Every {amount}"` on the two frequency fields), not a
   check on the field id. In Appendix A a list with one passage per page prints the list once, then each
   passage on its own valueless line (Prompt B item 8).
+  *Since 2026-10-17 (stage 3 of Prompt C)* the row of the variable marked `from_schedule: table`
+  ("Visit frequency by study period") prints the Schedule of Events READ_SCHEDULE counted instead of
+  the model's text: a caption with the table's heading and pages, then one line per visit column —
+  period and timing as the header words them (the header footnote's words when the header has none,
+  decision B), visits, the count of marks, the key considerations by their `schedule_table` labels, and
+  the column's pages — then "Not counted: …" for each schedule with `counted: false`. The count is
+  Assessments (`count_non_assessments: false`, the default) or every mark ("Activities"); a column of
+  several visits reads "7 each". The row of the field marked `from_schedule: stage_totals` prints
+  DERIVE's stage totals with their parts, then the documents' own sentence on why they give no total.
+  Both rows read "Worked out by the tool — confirm", carry no confidence figure, and are in Flagged for
+  review. With no table counted, the first row says "No schedule table found." or "Schedule table on
+  p.N could not be read." above its usual text, and the second is as before. All the words are
+  `schedule_table.wording` in `config/fields.yaml`; `render/report_model.py:_visit_schedule` builds
+  them and `render/pdf_renderer.py:_visit_cell` prints the table across the row.
 - **`report.xlsx` (renderer)** — a renderer alongside the two above, not the primary path. One row per field:
   `Group | Variable | Value | Status | Confidence | Source Doc | Page | Quote | Contradiction`.
   Conditional formatting: red = conflict, amber = needs_review, green = confirmed, grey = not found.
   Keeps the `Review Queue` sheet — non-confirmed rows only, budget drivers first — as an XLSX feature for
-  analysts who prefer to work in a spreadsheet.
+  analysts who prefer to work in a spreadsheet. Since 2026-10-17 (Prompt C) a third sheet, `Schedule of
+  Events`, holds the same visit table, lines and stage totals report.pdf prints, from
+  `render/report_model.py:visit_schedule`, or the line saying no table was counted. The `Fields` sheet
+  rows of the two variables are not reworded: they print each stored row as it is, so a stage total
+  with no number shows a blank value, `needs_review` and the stored confidence 100%, and its words are
+  only on the third sheet (decision 23 of `docs/PROMPT_C_LOG.md`).
 
 **Budget creation is out of scope.** This tool produces the inputs. A downstream service consumes
 `extraction.json` and populates the budget model. Keeping that boundary clean is why JSON is a primary

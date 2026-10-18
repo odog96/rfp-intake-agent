@@ -39,6 +39,7 @@ from rfp_intake.domain.registry import (
     PeriodsDisplay,
     Registry,
     ReportWording,
+    ScheduleTable,
     ScopesDisplay,
     placeholders,
     scope_has_phrase,
@@ -50,6 +51,7 @@ from rfp_intake.domain.schemas import (
     ResolvedField,
     RunState,
 )
+from rfp_intake.domain.schemas import Schedule as ScheduleRead
 from rfp_intake.gate import CONFIDENCE_CONFIRMED, DISMISSED_VERDICTS
 from rfp_intake.normalize.duration import amount_count, normalize_duration
 from rfp_intake.normalize.scope import normalize_scope
@@ -222,6 +224,13 @@ class Row:
     # each already in report_wording's words.
     members: list[Row] = field(default_factory=list)
     block_lines: list[BlockText] = field(default_factory=list)
+    # Prompt C: the counted Schedule of Events printed under the visit-frequency
+    # row, across the table's width, and the lines printed under it.
+    visit_tables: list[VisitTable] = field(default_factory=list)
+    visit_lines: list[str] = field(default_factory=list)
+    # A row whose figure would rate the tool's own count or sum has none: there
+    # is no extraction model's rating to print (Prompt C).
+    no_figure: bool = False
 
 
 @dataclass
@@ -246,6 +255,37 @@ class Schedule:
     label: str
     budget_driver: bool
     rows: list[Row]
+
+
+@dataclass
+class VisitTable:
+    """One Schedule of Events READ_SCHEDULE counted, as report.pdf and
+    report.xlsx print it (Prompt C): a row per visit column, every cell already
+    in `schedule_table.wording`'s words, and the marks it could not place."""
+
+    heading: str
+    sources: str  # "Amendment p.26 (printed p.24), 27 (printed p.25)"
+    head: list[str]
+    rows: list[list[str]]
+    lines: list[str] = field(default_factory=list)
+
+
+@dataclass
+class VisitSchedule:
+    """Everything READ_SCHEDULE found, ready to print (Prompt C).
+
+    `missing` is said first, before the extracted text, when no table was
+    counted: that none was found, or that one could not be read. `lines` go
+    under the tables, or under that text: a schedule that is not counted, and a
+    table that could not be read beside one that could. `totals` are the stage
+    totals DERIVE wrote, one line each, then the columns no stage takes.
+    """
+
+    tables: list[VisitTable]
+    lines: list[str]
+    missing: str | None
+    pages: list[Provenance] = field(default_factory=list)
+    totals: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -647,6 +687,15 @@ def build_report_model(state: RunState, registry: Registry) -> ReportModel:
                 fd, fd.display, entries, rows_by_field, field_by_id, docs,
                 registry.report_wording,
             )
+
+    # The Schedule of Events READ_SCHEDULE counted (Prompt C), in the rows of
+    # the variables `from_schedule` names; before the `when_not_found` rows, as
+    # the stage totals are a value.
+    schedule = _visit_schedule(state, registry, docs)
+    if schedule is not None:
+        _show_schedule(
+            schedule, registry, shown_as, rows_by_field, by_field, docs,
+        )
 
     # A variable no document gives, with what its `when_not_found` says about
     # why (fix 4 of the 2026-10-12 brief).
@@ -1837,6 +1886,218 @@ def _periods_row(
         fd, list(rows_by_field.get(fd.id, [])), f"({pages})" if pages else "", "", lines,
         [wording.other_wordings] if reworded else [],
     )
+
+
+# --------------------------------------------------------------------------- #
+# The Schedule of Events (Prompt C)
+# --------------------------------------------------------------------------- #
+#
+# READ_SCHEDULE counted the table in code; here it is only put into words. The
+# one sum is DERIVE's (derive/__init__.py:stage_totals), read back from its rows.
+# Nothing here works out a value.
+
+
+def visit_schedule(state: RunState, registry: Registry) -> VisitSchedule | None:
+    """What report.pdf prints of the Schedule of Events, for report.xlsx.
+    None when config/fields.yaml has no `schedule_table`."""
+    return _visit_schedule(state, registry, _Docs(state))
+
+
+def _visit_schedule(state: RunState, registry: Registry, docs: _Docs) -> VisitSchedule | None:
+    config = registry.schedule_table
+    if config is None:
+        return None
+    w = config.wording
+    fill = ReportWording.fill
+    tables: list[VisitTable] = []
+    pages: list[Provenance] = []
+    unreadable: list[str] = []
+    not_counted: list[str] = []
+    unstaged: list[str] = []
+    for s in state.schedules:
+        where = docs.pages(_schedule_pages(s))
+        if not s.counted:
+            # "Appendix 3: Schedule Of Events For Subjects Who ..." is named "Appendix 3".
+            not_counted.append(fill(
+                w.not_counted, name=s.heading.split(":")[0].strip(), pages=where,
+            ))
+        elif not s.columns:
+            unreadable.append(fill(w.unreadable, pages=where))
+        else:
+            tables.append(_visit_table(s, config, docs))
+            pages += _schedule_pages(s)
+            unstaged += [
+                " ".join(f"{c.period} {c.timing}".split()) for c in s.columns if c.stage is None
+            ]
+    missing = None
+    if not tables:
+        missing = unreadable.pop(0) if unreadable else w.none_found
+    totals = _total_lines(state, registry)
+    if totals and unstaged:
+        totals.append(fill(w.no_stage, periods="; ".join(unstaged)))
+    return VisitSchedule(tables, unreadable + not_counted, missing, pages, totals)
+
+
+def _schedule_pages(s: ScheduleRead) -> list[Provenance]:
+    """A schedule's pages as provenance, for _Docs.pages. The kind is not read
+    there; the document id names the document."""
+    printed = s.printed_pages or [None] * len(s.pages)
+    return [
+        Provenance(doc_id=s.doc_id, doc_kind="other", page=page, printed_page=label)
+        for page, label in zip(s.pages, printed, strict=False)
+    ]
+
+
+def _visit_table(s: ScheduleRead, config: ScheduleTable, docs: _Docs) -> VisitTable:
+    """A row per visit column, in the header's own words. A column of more than
+    one visit, or a repeating one, has its count per visit (`wording.each`)."""
+    w = config.wording
+    fill = ReportWording.fill
+    labels = {c.id: c.label for c in config.considerations}
+    printed = dict(zip(s.pages, s.printed_pages or [None] * len(s.pages), strict=False))
+
+    def where(pages: list[int]) -> str:
+        return docs.pages([
+            Provenance(doc_id=s.doc_id, doc_kind="other", page=p, printed_page=printed.get(p))
+            for p in pages
+        ])
+
+    rows: list[list[str]] = []
+    for c in s.columns:
+        timing = c.timing
+        if not timing and c.timing_footnote and c.timing_footnote_page is not None:
+            note = Provenance(
+                doc_id=s.doc_id, doc_kind="other", page=c.timing_footnote_page,
+                printed_page=c.timing_footnote_printed_page,
+            )
+            timing = fill(w.footnote, pages=docs.pages([note]), text=c.timing_footnote)
+        n = c.marks_all if config.count_non_assessments else c.marks_assessments
+        rows.append([
+            c.period or "—",
+            timing or "—",
+            str(c.visits) if c.visits is not None else c.visits_says or "—",
+            str(n) if c.visits == 1 else fill(w.each, n=n),
+            ", ".join(labels[i] for i in c.considerations if i in labels) or "—",
+            where(c.pages or s.pages),
+        ])
+    return VisitTable(
+        heading=s.heading,
+        sources=docs.pages(_schedule_pages(s)),
+        head=[
+            w.period, w.timing, w.visits,
+            w.every_mark if config.count_non_assessments else w.assessments,
+            w.considerations, w.where,
+        ],
+        rows=rows,
+        lines=[fill(w.unplaced, text=t) for t in s.unplaced],
+    )
+
+
+def _total_lines(state: RunState, registry: Registry) -> list[str]:
+    """A line per stage total DERIVE wrote: the sum beside its parts, or the
+    stage's words where it repeats (exception A and decision C of Prompt C).
+    DERIVE keeps the parts in `notes`."""
+    config = registry.schedule_table
+    target = next((f for f in registry.fields if f.from_schedule == "stage_totals"), None)
+    if config is None or target is None:
+        return []
+    w = config.wording
+    fill = ReportWording.fill
+    lines: list[str] = []
+    for rf in state.resolved:
+        if rf.field_id != target.id or not rf.derived_from:
+            continue
+        stage = rf.scope or ""
+        if rf.value is None:
+            lines.append(fill(w.says_line, stage=stage, says=rf.notes or "—"))
+            continue
+        total = format_value(rf.value, target)[0]
+        if rf.notes and rf.notes != str(rf.value):
+            lines.append(fill(w.total_line, stage=stage, total=total, parts=rf.notes))
+        else:
+            lines.append(fill(w.total_one, stage=stage, total=total))
+    return lines
+
+
+def _show_schedule(
+    schedule: VisitSchedule,
+    registry: Registry,
+    shown_as: dict[str, Row],
+    rows_by_field: dict[str, list[Row]],
+    by_field: dict[str, list[ResolvedField]],
+    docs: _Docs,
+) -> None:
+    """The counted table in the row of the variable marked `from_schedule:
+    table`, and the stage totals in the row marked `from_schedule:
+    stage_totals`. With no table counted, the first says so above its usual
+    text and the second is left as it was."""
+    config = registry.schedule_table
+    assert config is not None  # _visit_schedule returns None without it
+    w, wording = config.wording, registry.report_wording
+    table_fd = next((f for f in registry.fields if f.from_schedule == "table"), None)
+    totals_fd = next((f for f in registry.fields if f.from_schedule == "stage_totals"), None)
+    headings = "; ".join(t.heading for t in schedule.tables)
+    sources = docs.pages(schedule.pages)
+
+    if table_fd is not None and schedule.tables:
+        row = _display_row(
+            table_fd, list(rows_by_field.get(table_fd.id, [])),
+            ReportWording.fill(w.shown_below, heading=headings), sources, [], [],
+        )
+        _counted_by_tool(row, wording)
+        row.visit_tables = schedule.tables
+        row.visit_lines = schedule.lines
+        shown_as[table_fd.id] = row
+    elif table_fd is not None:
+        # A variable with no row at all is printed by the when_not_found loop or
+        # not at all, and has no text for the line to go above.
+        own = shown_as.get(table_fd.id) or next(iter(rows_by_field.get(table_fd.id, [])), None)
+        if own is not None:
+            own.block_lines[:0] = [BlockText(schedule.missing or w.none_found)]
+            own.block_lines += [BlockText(t) for t in schedule.lines]
+
+    if totals_fd is None or not schedule.tables or not schedule.totals:
+        return
+    members = list(rows_by_field.get(totals_fd.id, []))
+    for m in members:
+        if all(rf.derived_from for v in m.values for rf in v.entries):
+            m.no_figure = True
+    lines = [BlockText(t) for t in schedule.totals]
+    entries = by_field.get(totals_fd.id, [])
+    note = totals_fd.when_not_found
+    # What the documents say beside the count: why they give no total, as a
+    # `when_not_found` row quotes it, and any total a document states itself.
+    for rf in entries:
+        if rf.derived_from:
+            continue
+        if note is not None and rf.quote and scope_has_phrase(rf.scope, note.because_scopes):
+            lines.append(BlockText(note.because_line.format(
+                quote=" ".join(rf.quote.split()), pages=docs.pages(rf.sources),
+            )))
+        elif rf.value is not None and rf.status not in ("not_found", "not_applicable"):
+            value = "; ".join(_items(rf, totals_fd, wording))
+            if rf.scope:
+                value = f"{_capital(_scope_words(docs.name_ids(rf.scope), wording), wording)}: " + (
+                    value
+                )
+            lines.append(BlockText(ReportWording.fill(
+                w.stated, value=value, pages=docs.pages(_stating(rf, totals_fd)),
+            )))
+    row = _display_row(
+        totals_fd, members, ReportWording.fill(w.totals_head, heading=headings), sources,
+        lines, [],
+    )
+    _counted_by_tool(row, wording)
+    shown_as[totals_fd.id] = row
+
+
+def _counted_by_tool(row: Row, wording: ReportWording) -> None:
+    """A row the tool counted reads "Worked out by the tool — confirm" and is
+    for review, whatever the extracted rows behind it say; it has no figure."""
+    row.derived_status = wording.derived_status
+    row.status = "needs_review"
+    row.values[0].status = "needs_review"
+    row.no_figure = True
 
 
 # The verdicts on which ADJUDICATE writes ONE row for a whole disagreement:

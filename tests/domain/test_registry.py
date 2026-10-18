@@ -215,6 +215,66 @@ def test_schedule_table_considerations_need_their_own_ids(
         load_registry(p)
 
 
+def _with_fields_changed(fields_yaml_path: Path, tmp_path: Path, change: Any) -> Path:
+    data = yaml.safe_load(fields_yaml_path.read_text())
+    change(data)
+    p = tmp_path / "fields.yaml"
+    p.write_text(yaml.dump(data, allow_unicode=True))
+    return p
+
+
+def test_from_schedule_marks_one_field_each(fields_yaml_path: Path, tmp_path: Path) -> None:
+    # Prompt C: the report prints one visit table and one set of stage totals.
+    registry = load_registry(fields_yaml_path)
+    assert [f.id for f in registry.fields if f.from_schedule == "table"] == [
+        "visits.frequency_by_period"]
+    assert [f.id for f in registry.fields if f.from_schedule == "stage_totals"] == [
+        "visits.total_count"]
+
+    def two_tables(data: dict[str, Any]) -> None:
+        next(f for f in data["fields"] if f["id"] == "visits.schedule_present")[
+            "from_schedule"] = "table"
+
+    with pytest.raises(RegistryValidationError, match="More than one field has from_schedule"):
+        load_registry(_with_fields_changed(fields_yaml_path, tmp_path, two_tables))
+
+
+def test_stage_totals_need_a_table(fields_yaml_path: Path, tmp_path: Path) -> None:
+    def no_table(data: dict[str, Any]) -> None:
+        for f in data["fields"]:
+            if f.get("from_schedule") == "table":
+                del f["from_schedule"]
+
+    with pytest.raises(RegistryValidationError, match="none has from_schedule: table"):
+        load_registry(_with_fields_changed(fields_yaml_path, tmp_path, no_table))
+
+
+def test_stage_totals_go_into_a_scoped_int(fields_yaml_path: Path, tmp_path: Path) -> None:
+    def text_field(data: dict[str, Any]) -> None:
+        for f in data["fields"]:
+            if f.get("from_schedule") == "stage_totals":
+                f["type"] = "text"
+
+    with pytest.raises(RegistryValidationError, match="is not a scoped int"):
+        load_registry(_with_fields_changed(fields_yaml_path, tmp_path, text_field))
+
+
+@pytest.mark.parametrize(("key", "text", "message"), [
+    ("each", "{count} each", "names count"),
+    ("each", "each", "must name n"),
+    ("total_line", "{stage}: {total}", "must name parts"),
+    ("none_found", " ", "is empty"),
+])
+def test_schedule_wording_names_only_its_own(
+    fields_yaml_path: Path, tmp_path: Path, key: str, text: str, message: str
+) -> None:
+    def reword(data: dict[str, Any]) -> None:
+        data["schedule_table"]["wording"][key] = text
+
+    with pytest.raises(RegistryValidationError, match=message):
+        load_registry(_with_fields_changed(fields_yaml_path, tmp_path, reword))
+
+
 def test_amount_wording_defaults_to_the_amount_alone() -> None:
     # Prompt B item 8: "Every" is a field's own amount_wording, not its id.
     from rfp_intake.domain.registry import FieldDef

@@ -179,6 +179,42 @@ report_wording:
 # - repeating wording and stage periods: words in order, ignoring case and
 #   punctuation, where {nth} stands for an ordinal such as "3rd".
 schedule_table:
+  # What report.pdf and report.xlsx print for the counted table: its column headers,
+  # then the sentences around it. `every_mark` heads the count column instead of
+  # `assessments` when `count_non_assessments` is true; `each` is a column of more
+  # than one visit, or a repeating one, whose count is per visit. `{pages}` is
+  # always in the report's page style, "Amendment p.26 (printed p.24)".
+  wording:
+    period: Period
+    timing: Visit timing
+    visits: Visits
+    assessments: Assessments
+    every_mark: Activities
+    considerations: Key considerations
+    where: Where
+    each: "{n} each"
+    # A column whose header gives no timing, timed by the header's own footnote
+    # (decision B of Prompt C).
+    footnote: "From the footnote on {pages}: {text}"
+    # A schedule under a `not_counted_headings` heading. `{name}` is its heading up
+    # to the first colon ("Appendix 3").
+    not_counted: "Not counted: patients who stop treatment early follow {name}, {pages},
+      budgeted separately."
+    # Said first when no counted table was read; the extracted text follows.
+    none_found: No schedule table found.
+    unreadable: "Schedule table on {pages} could not be read."
+    # The visit-frequency row's value, the table printed under it.
+    shown_below: "Counted from {heading}, below."
+    # The total-visits row: its value, then a line per stage. A stage's total is a
+    # sum the tool did, shown with its parts (exception A of Prompt C).
+    totals_head: "Counted from {heading}:"
+    total_line: "{stage}: {total} ({parts})"
+    total_one: "{stage}: {total}"
+    says_line: "{stage}: {says}"
+    no_stage: "Not in any stage, so not in the totals: {periods}."
+    unplaced: "Not placed in a row: {text}"
+    # A total a document states itself, printed under the counted ones.
+    stated: "A document states: {value} ({pages})"
   # A ruled table inside a kept section whose heading says one of these is a schedule.
   headings: [schedule of events, schedule of activities, time and events schedule, soa, soe]
   # A schedule under a heading saying one of these is not counted: it is the
@@ -871,6 +907,9 @@ fields:
     # heading is the section EXTRACT read the quote from.
     prefer_sections: ["schedule of events", "schedule of activities", "schedule of assessments",
                       "study flow chart"]
+    # Prompt C: where READ_SCHEDULE counted a Schedule of Events, the report prints its
+    # visit table here in place of the periods below, which stay in Appendix A.
+    from_schedule: table
     display:
       kind: periods
       order_key: period
@@ -893,6 +932,9 @@ fields:
       "why no total", that sentence as the quote.
     source_priority: protocol
     budget_driver: true
+    # Prompt C: DERIVE adds a row per `schedule_table.stages` stage, the visits of the
+    # counted table's columns in that stage added up, marked worked out by the tool.
+    from_schedule: stage_totals
     # Fix 4 of the 2026-10-12 brief. The reason line is the document's own sentence, from a
     # record scoped "why no total"; where the model gives none, it is left out.
     when_not_found:

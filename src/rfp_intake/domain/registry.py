@@ -534,6 +534,12 @@ class FieldDef(BaseModel):
     # Before Prompt B item 8 the report chose "Every" by finding "frequency" in
     # the field id (rule 4).
     amount_wording: str = "{amount}"
+    # The row the Schedule of Events READ_SCHEDULE counted is printed in
+    # (Prompt C): `table`, the visit table under this row in place of its
+    # extracted text; `stage_totals`, a sum of visits per `schedule_table.stages`
+    # stage, which DERIVE writes as this field's rows. Keyed here so no field id
+    # is named in Python (rule 4).
+    from_schedule: Literal["table", "stage_totals"] | None = None
 
     model_config = {"populate_by_name": True}
 
@@ -778,10 +784,59 @@ class Consideration(BaseModel):
     assessment: bool = True
 
 
+class ScheduleWording(BaseModel):
+    """What the report prints for a Schedule of Events, `schedule_table.wording`
+    in config/fields.yaml: the visit table's column headers and the sentences
+    around it (Prompt C). Each `{name}` is filled by ReportWording.fill."""
+
+    period: str
+    timing: str
+    visits: str
+    assessments: str
+    every_mark: str
+    considerations: str
+    where: str
+    each: str
+    footnote: str
+    not_counted: str
+    none_found: str
+    unreadable: str
+    shown_below: str
+    totals_head: str
+    total_line: str
+    total_one: str
+    says_line: str
+    no_stage: str
+    unplaced: str
+    stated: str
+
+    @model_validator(mode="after")
+    def _names_only_its_own(self) -> ScheduleWording:
+        allowed = {
+            "each": {"n"}, "footnote": {"pages", "text"}, "not_counted": {"name", "pages"},
+            "unreadable": {"pages"}, "shown_below": {"heading"}, "totals_head": {"heading"},
+            "total_line": {"stage", "total", "parts"}, "total_one": {"stage", "total"},
+            "says_line": {"stage", "says"}, "no_stage": {"periods"}, "unplaced": {"text"},
+            "stated": {"value", "pages"},
+        }
+        for name, value in self:
+            unknown = set(placeholders(value)) - allowed.get(name, set())
+            if unknown:
+                raise ValueError(f"wording.{name} names {', '.join(sorted(unknown))}")
+            if not value.strip():
+                raise ValueError(f"wording.{name} is empty")
+        for name in ("each", "total_line", "total_one", "says_line", "stated"):
+            missing = allowed[name] - set(placeholders(getattr(self, name)))
+            if missing:
+                raise ValueError(f"wording.{name} must name {', '.join(sorted(missing))}")
+        return self
+
+
 class ScheduleTable(BaseModel):
     """`schedule_table` in config/fields.yaml: how READ_SCHEDULE reads a protocol's
     Schedule of Events (Prompt C). See the comments there for each key."""
 
+    wording: ScheduleWording
     headings: list[str]
     not_counted_headings: list[str] = Field(default_factory=list)
     marks: list[str]
@@ -926,6 +981,21 @@ def _validate_registry(groups: list[GroupDef], fields: list[FieldDef]) -> None:
             errors.append(
                 f"Field {f.id} when_not_found uses unknown placeholders: "
                 f"{', '.join(sorted(unknown_ph))}"
+            )
+
+    # One visit table and one set of stage totals: the report prints each once,
+    # and the totals are counted from the table's columns.
+    kinds = [f.from_schedule for f in fields if f.from_schedule is not None]
+    for which in ("table", "stage_totals"):
+        if kinds.count(which) > 1:
+            errors.append(f"More than one field has from_schedule: {which}")
+    if "stage_totals" in kinds and "table" not in kinds:
+        errors.append("A field has from_schedule: stage_totals but none has from_schedule: table")
+    for f in fields:
+        if f.from_schedule == "stage_totals" and (f.derived or not f.scoped or f.type != "int"):
+            errors.append(
+                f"Field {f.id} has from_schedule: stage_totals but is not a scoped int "
+                "extracted field"
             )
 
     # A follower's wording needs a disagreement to follow.

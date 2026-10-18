@@ -23,7 +23,8 @@ Two things it does not reproduce:
   not use it.
 
 `--rederive` throws away the saved derived rows (every field `derived: true` in
-config/fields.yaml) and computes them again with today's DERIVE, which is pure
+config/fields.yaml, and the stage totals DERIVE writes into the field marked
+`from_schedule: stage_totals`) and computes them again with today's DERIVE, which is pure
 Python and calls no model. It shows what a DERIVE change does to a run already
 on disk — the visit-intensity fix of 2026-10-11 was checked this way. Without
 it, the derived rows are the ones the run wrote.
@@ -146,8 +147,15 @@ def _doc_id_for(doc: Document, state: RunState) -> str | None:
 
 def rederive(state: RunState) -> RunState:
     """The same state with its derived rows computed again by DERIVE."""
-    derived = {f.id for f in get_registry().fields if f.derived}
-    kept = [rf for rf in state.resolved if rf.field_id not in derived]
+    registry = get_registry()
+    derived = {f.id for f in registry.fields if f.derived}
+    # DERIVE also writes the stage totals into an extracted field (Prompt C);
+    # only its own rows, which carry `derived_from`, are thrown away.
+    totals = {f.id for f in registry.fields if f.from_schedule == "stage_totals"}
+    kept = [
+        rf for rf in state.resolved
+        if rf.field_id not in derived and not (rf.field_id in totals and rf.derived_from)
+    ]
     result = derive_node(state.model_copy(update={"resolved": kept}))
     return state.model_copy(update={"resolved": result["resolved"]})
 

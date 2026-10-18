@@ -203,6 +203,176 @@ Checks:
 - Also in this stage: a comment-only edit in `config/fields.yaml` (`repeating` now says "period or
   timing", as the code matches both).
 
+Commit: `51de1fe`.
+
+### Stage 3 — the visit table and the stage totals in the report
+
+What it adds:
+- `config/fields.yaml`: `from_schedule: table` on `visits.frequency_by_period` and
+  `from_schedule: stage_totals` on `visits.total_count`, so no field id is named in Python;
+  `schedule_table.wording`, every header and sentence the report prints for a schedule.
+  `src/rfp_intake/domain/registry.py` checks both: one field of each kind, totals only with a table and
+  only into a scoped int, and each wording names only its own placeholders.
+- DERIVE (`src/rfp_intake/derive/__init__.py:stage_totals`): after the rubrics, one row per stage of
+  `visits.total_count`, the sum with its parts in `notes` (exception A); a stage with `says`, or with
+  a repeating column, has no number and its words instead (decision C).
+- The report model (`src/rfp_intake/render/report_model.py`, "The Schedule of Events (Prompt C)"):
+  `_visit_schedule` builds the table and lines, `_show_schedule` puts the table in the
+  visit-frequency row and the totals in the total-visits row; both read "Worked out by the tool —
+  confirm". With no table: "No schedule table found." or "Schedule table on p.N could not be read."
+  above the row's usual text.
+- report.pdf (`render/pdf_renderer.py:_visit_cell`): the table spans the main table's width under
+  the row. report.xlsx (`render/xlsx_renderer.py`): a third sheet, "Schedule of Events".
+- `scripts/rerender_report.py --rederive` still throws away and recomputes every `derived: true`
+  field, and now also DERIVE's stage-total rows of `visits.total_count`, never the documents' own rows
+  of that field.
+- `docs/ARCHITECTURE.md` §4.8 (stage totals) and §4.10 (the two rows and the sheet).
+- Tests: `tests/render/test_visit_table.py` (the real protocol: both settings, considerations,
+  pages, the not-counted line, the totals, nothing lost, report.pdf and report.xlsx; made-up
+  schedules: both fallbacks and the sums), and four registry tests in `tests/domain/test_registry.py`.
+  Seven existing tests changed because the report now says what it did not before:
+  `tests/render/test_entries_display.py::TestVisitFrequency` (six tests; their states hold no
+  counted schedule, so each row now starts "No schedule table found.") and
+  `tests/render/test_xlsx_renderer.py` (three sheets, not two).
+
+Decisions taken for Oliver in stage 3:
+
+11. **The not-counted line reads "Not counted: patients who stop treatment early follow Appendix 3,
+    Amendment p.111 (printed p.109), budgeted separately."** Prompt C's target is "… follow Appendix 3
+    (p.111), budgeted separately." Alternative: the target's brackets. Reason: the report's usual page
+    style is "Amendment p.111 (printed p.109)", and inside brackets it would nest brackets. The name
+    "Appendix 3" is the heading before its first colon.
+12. **The count column is headed "Assessments", or "Activities" when every mark is counted.**
+    Alternative: "Marks". Reason: "Activities" is the word the table itself uses for its rows; a mark
+    is how the count is made, not what is counted.
+13. **The stage totals are added after the rubrics.** Alternative: before, so visit intensity could
+    read them. Reason: the intensity rating has `visits.total_count` among its inputs, and it must not
+    be moved by a number the tool worked out; its result on `r-20261016-prompt-b` is unchanged.
+14. **A stage with no number ("From Month 4") is a `needs_review` row with no value and its words in
+    `notes`.** Alternatives: no row; or `not_specified`, which the first draft used. Reason:
+    `extraction.json` then records every stage, and `not_specified` means the documents say none
+    (ARCHITECTURE.md line 101), but Table 1 does state these visits ("1 a month"), only not as one
+    number. Changed after the pipeline-rules reviewer's first pass. A stage that mixes fixed and
+    repeating columns and has no `says` keeps every part in `notes`, for example "1 + 1 a month"
+    (none does in today's config); the first draft dropped the fixed ones.
+15. **"End of treatment: 1" is printed**, though one visit is not a sum. Alternative: leave it out.
+    Reason: Prompt C asks for total subject visits by stage, and End of treatment is a stage in config.
+16. **DERIVE stores confidence 1.0 on the total rows, and the report prints no confidence figure on
+    either row.** Alternative: print 100%. Reason: the confidence is the model's rating of how clearly
+    a document stated a value (CLAUDE.md known problem 6); a count by code has no such rating, and
+    100% would read as certainty. Appendix A still prints the stored 100%.
+17. **The visit-frequency row keeps the model's rows as its members**, so Appendix A still quotes them,
+    the nothing-lost check finds them, and Flagged for review lists them with their own reason
+    ("Budget driver holding more than one value"). Alternative: drop them from the report. Reason:
+    the report never loses a value the documents gave (`assert_nothing_lost`).
+18. **The Where column repeats each column's pages.** Alternative: pages only in the caption. Reason:
+    Prompt C says every count cites its page. Table 1 runs over two pages and every column is on
+    both, so every row reads "Amendment p.26 (printed p.24), 27 (printed p.25)".
+19. **A header footnote's page is printed with its printed number** (`ScheduleColumn` gained
+    `timing_footnote_printed_page`). Alternative: the PDF page alone. Reason: every other page in the
+    report gives both.
+20. **Marks that could not be placed in a row are listed under their table**, not under the totals.
+    Table 1 has none.
+21. **A total row that a document states itself is printed under the counted totals as "A document
+    states: …"**, and the document's sentence saying why it gives no total is quoted there (as the
+    `when_not_found` note did). Alternative: hide the document's own rows once the tool counts.
+    Reason: a reader must see where the count and the document differ. On the sample protocol no
+    document states a total. Known edge, accepted: such a line prints "()" if the row cites no page.
+22. **`visits.total_count` now counts as found** when the tool counted it. So the first page's "N of
+    M variables found" moves by one against `r-20261016-prompt-b` (42 of 45 on the re-render), and
+    check 9 of `scripts/check_review_2026_10_07.py` may move with it.
+23. **report.xlsx carries the table on a third sheet, "Schedule of Events"; its "Fields" sheet rows
+    for the two variables are not reworded.** Alternative: put the table lines, the fallback line and
+    "Worked out by the tool — confirm" into the Fields rows. Reason: the Fields sheet prints one line
+    per stored row and has no place for a table or block lines. It already lags the PDF layouts
+    (CLAUDE.md open item 6), so the stage-total rows there show their stored value, status and
+    confidence (100%, which decision 16 keeps off report.pdf), and the "From Month 4" words, held in
+    `notes`, are not printed there. The third sheet has all of them.
+25. **A column the stage words place in no stage is named under the totals**: "Not in any stage, so
+    not in the totals: {periods}." (`schedule_table.wording.no_stage`). Alternative: leave it out
+    silently. Reason: a reader adding up the table would otherwise find visits the totals do not
+    include, with no reason given. Table 1 has none; `test_a_column_in_no_stage_is_named` covers it.
+24. **The stage totals are caught like a rubric.** If adding them up fails, DERIVE records a
+    `RunError` and keeps every other field. Alternative: let the run stop. Reason: decision 8, one
+    unreadable table must not lose every other field. Added after the pipeline-rules reviewer's first
+    pass.
+
+Known limits, recorded and not fixed (from the reviewers' two passes):
+- A stage with `says` in config that also holds a fixed column prints only the `says` words, so that
+  column's count is not in the totals line (the table above it still shows it). None does in today's
+  config: "From Month 4" is the only stage with `says`, and its columns all repeat.
+- A stage in config that no column falls in has no row and no line, so it is silently absent from the
+  totals. The "Not in any stage" line covers only the opposite case, a column in no stage.
+- The "From Month 4" words are fixed in config (decision C, approved). They print for whatever
+  columns the period words place in that stage: a protocol with an "Every 6th month" column in that
+  stage would still print "1 a month until the study ends". The table's own words for each column are
+  in the Visits column beside it.
+- The first page's "N of M variables found" counts "Visit frequency by study period" only when the
+  model found a row for it. If the model found none and the tool read a table, the table prints but
+  the count does not include it.
+- "No schedule table found." is about the tool: it prints even where "Schedule of events present"
+  says the documents have one, as on `Example Protocol.pdf` (gaps section below).
+- A header footnote is read up to the next numbered line, so unrelated text after it on the page
+  (such as a running header) could be printed with it. Table 1's footnote 3 is clean.
+
+The visit table as it prints, from `python scripts/rerender_report.py r-20261016-prompt-b
+--rederive` (report.pdf page 3, `runs/r-20261016-prompt-b/report-rerender.pdf`). The caption reads
+"Table 1: Schedule of Events — Amendment p.26 (printed p.24), 27 (printed p.25)", and every row's
+Where cell reads "Amendment p.26 (printed p.24), 27 (printed p.25)":
+
+| Period | Visit timing | Visits | Assessments | Key considerations |
+| --- | --- | --- | --- | --- |
+| Screening | Day-28 to Day -1 | 1 | 26 | Informed consent, Eligibility review |
+| Screening | Day -2 or Day -1 | 1 | 16 | — |
+| Month 1 | Day 1 | 1 | 13 | Randomization, Premedication, Study drug infusion, Chemotherapy |
+| Month 1 | Days 8, 15, 22 (±2) | 3 | 7 each | Chemotherapy |
+| Month 2 | Day 1 (±2) | 1 | 23 | Premedication, Study drug infusion, Chemotherapy |
+| Month 2 | Days 8, 15, 22 (±2) | 3 | 6 each | Chemotherapy |
+| Month 3 | Day 1 (±2) | 1 | 28 | Premedication, Study drug infusion, Chemotherapy |
+| Month 3 | Days 8, 15, 22 (±2) | 3 | 7 each | Chemotherapy |
+| Months 6, 9, 12, etc. (Every 3rd Month) | Day 1 (±5) | 1 every 3rd month | 30 each | Premedication, Study drug infusion, Chemotherapy |
+| All Other Months | Day 1 (±5) | 1 a month | 22 each | Premedication, Study drug infusion, Chemotherapy |
+| EOT/ETD | From the footnote on Amendment p.28 (printed p.26): EOT/ETD Visit to occur 28-35 days after the last study drug administration. | 1 | 31 | — |
+
+Under it: "Not counted: patients who stop treatment early follow Appendix 3, Amendment p.111 (printed
+p.109), budgeted separately." The row reads "Counted from Table 1: Schedule of Events, below." and
+"Worked out by the tool — confirm".
+
+The next row, "Total number of subject visits", reads "Counted from Table 1: Schedule of Events:",
+then "Screening: 2 (1 + 1)", "Months 1–3: 12 (1 + 3 + 1 + 3 + 1 + 3)", "From Month 4: 1 a month
+until the study ends", "End of treatment: 1", then the protocol's sentence "This is an event-driven
+trial that will continue until approximately 156 primary endpoint events have occurred. …" (Amendment
+p.15 (printed p.13)), and "Worked out by the tool — confirm".
+
+The eleven counts are 26, 16, 13, 7, 23, 6, 28, 7, 30, 22, 31, as Oliver's target. With
+`count_non_assessments: true` the test suite reads 26, 16, 17, 8, 26, 7, 31, 8, 33, 25, 31.
+
+How the other two protocols would print (offline, reported, not fixed): `Example Protocol.pdf`
+prints "No schedule table found." above today's text. `Example protocol 3.pdf` prints three tables
+(Tables 2, 3 and 4) with periods such as "Treatment and Follow-up Period 1 NA", no timing, and no
+column in a stage, so no totals are printed and the total-visits row is as before.
+
+Checks:
+- pytest, full offline suite: 1560 passed, 1 skipped before the reviewers' first pass; 1562 passed,
+  1 skipped after the fixes from that pass (decisions 14 and 24, two new tests).
+- Re-render of `r-20261016-prompt-b --rederive` after those fixes: the visit table and totals above
+  are unchanged.
+- `ruff check .`: clean. mypy on `render/report_model.py`, `render/pdf_renderer.py`,
+  `render/xlsx_renderer.py`, `derive/__init__.py`, `domain/registry.py`, `domain/schemas.py`,
+  `schedule/__init__.py`, `scripts/rerender_report.py` and `tests/render/test_visit_table.py`: clean
+  (one error, a loop variable `kind` reused with another type in `domain/registry.py`, was fixed).
+- Gate reviewers, two passes each. First pass: pipeline-rules found no violation and five
+  suspicions, of which three were fixed in code (decisions 14 and 24) and the rest recorded as known
+  limits; plan-conformance found three log problems (placeholders, the xlsx Fields sheet, the
+  `--rederive` sentence), all fixed in the log (decision 23). Second pass, after the last edit to
+  src/: pipeline-rules found no violation, safe to commit, and two latent limits now recorded above;
+  plan-conformance found the stage conforms with no code problem, and three record gaps, now fixed
+  (decision 23's confidence, decision 25, and an ARCHITECTURE.md §4.10 sentence on the Fields sheet).
+  Pipeline-rules noted 6 mypy errors in `llm/mock.py` and `llm/provider.py`, files stage 3 does not
+  touch.
+
+Commit: STAGE3_COMMIT.
+
 ## Gaps on the other two protocols (reported, not fixed, as Oliver instructed)
 
 Measured offline with the stage 1 reader on 2026-10-17.

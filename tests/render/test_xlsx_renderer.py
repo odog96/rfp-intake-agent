@@ -30,11 +30,13 @@ def _registry() -> Registry:
 
 
 class TestBuildReportXlsx:
-    def test_produces_two_sheets(self, fields_yaml_path) -> None:  # type: ignore[no-untyped-def]
+    def test_produces_three_sheets(self, fields_yaml_path) -> None:  # type: ignore[no-untyped-def]
         _use_real_registry(fields_yaml_path)
         xlsx = build_report_xlsx(RunState(run_id="r-1"), _registry())
         wb = load_workbook(io.BytesIO(xlsx))
-        assert wb.sheetnames == ["Fields", "Review Queue"]
+        assert wb.sheetnames == ["Fields", "Review Queue", "Schedule of Events"]
+        # Prompt C: with no table counted, the sheet says so.
+        assert wb["Schedule of Events"]["A1"].value == "No schedule table found."
 
     def test_header_row(self, fields_yaml_path) -> None:  # type: ignore[no-untyped-def]
         _use_real_registry(fields_yaml_path)

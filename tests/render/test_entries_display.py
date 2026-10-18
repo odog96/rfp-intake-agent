@@ -161,6 +161,13 @@ def _lines(row: Row) -> list[str]:
     return ["  " * b.indent + b.text for b in row.block_lines]
 
 
+def _period_lines(row: Row) -> list[str]:
+    """The visit-frequency row's lines after Prompt C's "No schedule table found."."""
+    lines = _lines(row)
+    assert lines[0] == "No schedule table found."
+    return lines[1:]
+
+
 class TestArms:
     """Fix 1: one block per arm; the notes on them in the Where column (Prompt B item 3)."""
 
@@ -251,13 +258,16 @@ class TestArms:
 
 
 class TestVisitFrequency:
-    """Fix 3: one line per stretch of the study, in the order of `period`."""
+    """Fix 3: one line per stretch of the study, in the order of `period`.
+
+    None of these states holds a Schedule of Events READ_SCHEDULE could count,
+    so since Prompt C each row first says none was found."""
 
     def test_the_approved_layout(self) -> None:
         _, model = _report(_visits())
         row = _row(model, "visits.frequency_by_period")
         assert [v.text for v in row.values] == ["(Amendment p.26)"]
-        assert _lines(row) == [
+        assert _period_lines(row) == [
             "Screening: 2 visits (Day -28 to Day -1; Day -2 or Day -1)",
             "Early treatment (Months 1–3): weekly, 4 visits a month (Days 1, 8, 15, 22)",
             "Later treatment (Month 4 onwards): monthly, Day 1 (every 28 days)",
@@ -270,7 +280,7 @@ class TestVisitFrequency:
         _, model = _report([_rec("visits.frequency_by_period",
                                  {"period": "screening", "label": "Screening", "n_visits": 2},
                                  None, AM, 26, "Screening: 2 visits")])
-        assert _lines(_row(model, "visits.frequency_by_period")) == ["Screening: 2 visits"]
+        assert _period_lines(_row(model, "visits.frequency_by_period")) == ["Screening: 2 visits"]
 
     def test_stretches_of_one_period_make_one_line(self) -> None:
         # Oliver, 2026-10-12: run r-20261012-stage4check2 printed a line per
@@ -288,7 +298,7 @@ class TestVisitFrequency:
         records[-2].confidence = records[-1].confidence = 0.8
         _, model = _report(records)
         row = _row(model, "visits.frequency_by_period")
-        lines = _lines(row)
+        lines = _period_lines(row)
         assert [line for line in lines if line.startswith("Later treatment")] == [
             "Later treatment (Month 4 onwards): monthly, Day 1 (every 28 days)",
         ]
@@ -308,13 +318,14 @@ class TestVisitFrequency:
         _, model = _report([_rec("visits.frequency_by_period",
                                  {"period": period, "label": label,
                                   "frequency": "1 visit"}, None, AM, 26, "1 visit")])
-        assert _lines(_row(model, "visits.frequency_by_period")) == [line]
+        assert _period_lines(_row(model, "visits.frequency_by_period")) == [line]
 
     def test_a_stretch_with_no_label_is_named_by_its_period(self) -> None:
         _, model = _report([_rec("visits.frequency_by_period",
                                  {"period": "early_treatment", "frequency": "weekly"},
                                  None, AM, 26, "weekly")])
-        assert _lines(_row(model, "visits.frequency_by_period")) == ["Early treatment: weekly"]
+        assert _period_lines(_row(model, "visits.frequency_by_period")) == [
+            "Early treatment: weekly"]
 
     def test_a_schedule_for_one_part_is_under_its_heading(self) -> None:
         records = _visits()[:1] + [_rec(
@@ -323,7 +334,7 @@ class TestVisitFrequency:
             "part:Part B", AM, 30, "Part B Weeks 1–4 weekly",
         )]
         _, model = _report(records)
-        assert _lines(_row(model, "visits.frequency_by_period")) == [
+        assert _period_lines(_row(model, "visits.frequency_by_period")) == [
             "Screening: 2 visits (Day -28 to Day -1; Day -2 or Day -1)",
             "Part: Part B:",
             "  Early treatment (Weeks 1–4): weekly",

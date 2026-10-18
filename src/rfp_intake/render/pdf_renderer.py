@@ -335,6 +335,7 @@ def _variables(model: ReportModel, styles: dict) -> list:  # type: ignore[type-a
     head = ["Variable", "Value", "Status", "Confidence", "Where"]
     data: list[list[object]] = [[Paragraph(h, styles["cell_head"]) for h in head]]
     bands: list[int] = []
+    spans: list[int] = []
     for section in model.groups:
         if not section.rows:
             continue
@@ -350,6 +351,9 @@ def _variables(model: ReportModel, styles: dict) -> list:  # type: ignore[type-a
         for r in section.rows:
             data.append(_row_cells(r, styles, scope_only=r.field_id == prev))
             prev = r.field_id
+            if r.visit_tables or r.visit_lines:
+                spans.append(len(data))
+                data.append([_visit_cell(r, styles), "", "", "", ""])
     table = _table(data, _MAIN_COLS)
     extra = []
     for i in bands:
@@ -358,8 +362,38 @@ def _variables(model: ReportModel, styles: dict) -> list:  # type: ignore[type-a
             ("BACKGROUND", (0, i), (-1, i), _BAND_BG),
             ("TOPPADDING", (0, i), (-1, i), 4),
         ]
+    extra += [("SPAN", (0, i), (-1, i)) for i in spans]
     table.setStyle(TableStyle(extra))
     return [Paragraph("All variables", styles["section"]), table]
+
+
+# Period | Visit timing | Visits | Assessments | Key considerations | Where: the
+# visit table under the visit-frequency row, across the main table's width less
+# the cell's 4-point padding each side (Prompt C).
+_VISIT_COLS = [1.25 * inch, 1.45 * inch, 0.8 * inch, 0.95 * inch, 1.55 * inch]
+_VISIT_COLS.append(_WIDTH - 8 - sum(_VISIT_COLS))
+
+
+def _visit_cell(r: Row, styles: dict) -> list[object]:  # type: ignore[type-arg]
+    """The Schedule of Events READ_SCHEDULE counted, each table under its
+    heading and pages, then the lines the report model puts under it."""
+    out: list[object] = []
+    for t in r.visit_tables:
+        out.append(Paragraph(
+            f"<b>{escape(t.heading)}</b> "
+            f'<font size="7" color="#757575">— {escape(t.sources)}</font>',
+            styles["cell"],
+        ))
+        data: list[list[object]] = [[Paragraph(escape(h), styles["cell_head"]) for h in t.head]]
+        for cells in t.rows:
+            data.append(
+                [Paragraph(escape(c), styles["cell"]) for c in cells[:-1]]
+                + [Paragraph(escape(cells[-1]), styles["cell_small"])]
+            )
+        out.append(_table(data, _VISIT_COLS))
+        out += [Paragraph(escape(line), styles["cell"]) for line in t.lines]
+    out += [Paragraph(escape(line), styles["cell"]) for line in r.visit_lines]
+    return out
 
 
 def _schedules(model: ReportModel, styles: dict) -> list:  # type: ignore[type-arg]
@@ -590,7 +624,8 @@ def _confidence_cell(r: Row) -> str:
     word in the cell to its left can never tell different stories.
     """
     scored = _scored(r)
-    if r.is_pointer or not scored:
+    # no_figure: a row of the tool's own counting (Prompt C) has no rating.
+    if r.is_pointer or r.no_figure or not scored:
         return ""
     low = min(scored)
     color = _GREY if low >= CONFIDENCE_CONFIRMED else _AMBER
