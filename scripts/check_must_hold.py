@@ -249,7 +249,79 @@ def coverage(run: Run, fact: Fact) -> Result:
     return verdict, detail
 
 
+def _flat(text: str | None) -> str:
+    return " ".join((text or "").split()).lower()
+
+
+def _schedule(run: Run, fact: Fact) -> tuple[dict[str, Any] | None, str]:
+    """The one counted schedule from `from`'s kind of document headed `heading`,
+    or None and why not. A schedule names only its document id, so the kind comes
+    from the rows that cite that document."""
+    if "schedules" not in run.data:
+        return None, "no schedules in extraction.json: the run was made before READ_SCHEDULE"
+    kinds: dict[str, str] = {}
+    for r in run.rows:
+        for s in r.get("sources", []):
+            kinds.setdefault(s.get("doc_id"), s.get("doc_kind"))
+    found = [s for s in run.data["schedules"]
+             if s.get("counted") and kinds.get(s.get("doc_id")) == fact["from"]
+             and _flat(s.get("heading")) == _flat(fact["heading"])]
+    if len(found) != 1:
+        headings = [s.get("heading") for s in run.data["schedules"]]
+        return None, f"{len(found)} counted schedule(s) so headed; schedules: {headings or 'none'}"
+    return found[0], ""
+
+
+def schedule_counts(run: Run, fact: Fact) -> Result:
+    """Each visit column's count of marks, in order: `assessments` counts only the
+    rows of assessments, `every_mark` every row (the two settings of Prompt C)."""
+    schedule, why = _schedule(run, fact)
+    if schedule is None:
+        return FAIL, why
+    key = {"assessments": "marks_assessments", "every_mark": "marks_all"}[fact["count"]]
+    counts = [c.get(key) for c in schedule.get("columns", [])]
+    return _verdict(counts == fact["columns"]), f"{fact['count']}: {counts}"
+
+
+def _timing_starts(timing: str, words: str) -> bool:
+    """"Day 1 (±5)" starts with Day 1; "Day 15" and "Days 8, 15, 22" do not."""
+    return re.match(rf"{re.escape(words)}(?![\w-])", timing.strip(), re.IGNORECASE) is not None
+
+
+def schedule_marks(run: Run, fact: Fact) -> Result:
+    """Every chosen visit column has a mark in a row of each `marked`
+    consideration. A column is chosen by its header: `period` (the first such
+    column only if `first`), or every column from the first `from_period` on,
+    and in either case `timing_starts`. `columns`, where given, is how many
+    must be chosen, so a header read differently cannot pass on fewer."""
+    schedule, why = _schedule(run, fact)
+    if schedule is None:
+        return FAIL, why
+    columns = schedule.get("columns", [])
+    if "from_period" in fact:
+        start = next((i for i, c in enumerate(columns)
+                      if _flat(c.get("period")) == _flat(fact["from_period"])), len(columns))
+        chosen = columns[start:]
+    else:
+        chosen = [c for c in columns if _flat(c.get("period")) == _flat(fact["period"])]
+    if "timing_starts" in fact:
+        chosen = [c for c in chosen if _timing_starts(c.get("timing") or "", fact["timing_starts"])]
+    if fact.get("first"):
+        chosen = chosen[:1]
+    shown = "; ".join(f"{c.get('period')} {c.get('timing') or ''}".strip()
+                      + f": {', '.join(c.get('considerations', [])) or 'none'}" for c in chosen)
+    problems = []
+    if not chosen or ("columns" in fact and len(chosen) != fact["columns"]):
+        problems.append(f"{len(chosen)} column(s) chosen")
+    problems += [f"{c.get('period')} {c.get('timing') or ''} has no {m}".replace("  ", " ")
+                 for c in chosen for m in fact["marked"] if m not in c.get("considerations", [])]
+    return _verdict(not problems), (shown or "no column") + (
+        f" — {', '.join(problems)}" if problems else "")
+
+
 KINDS: dict[str, Callable[[Run, Fact], Result]] = {
+    "schedule_counts": schedule_counts,
+    "schedule_marks": schedule_marks,
     "one_row": one_row,
     "value_row": value_row,
     "arms": arms,

@@ -371,7 +371,73 @@ Checks:
   Pipeline-rules noted 6 mypy errors in `llm/mock.py` and `llm/provider.py`, files stage 3 does not
   touch.
 
-Commit: STAGE3_COMMIT.
+Commit: `13b0823`.
+
+### Stage 4 — the must-hold facts for the Schedule of Events
+
+What it adds:
+- `eval/golden/sample_pair_must_hold.yaml`: facts 10 to 14, read from Table 1 of the amendment
+  (PDF p.26–27):
+  - 10: each visit column's assessments are 26, 16, 13, 7, 23, 6, 28, 7, 30, 22, 31;
+  - 11: each column's marks of every row are 26, 16, 17, 8, 26, 7, 31, 8, 33, 25, 31;
+  - 12: informed consent and eligibility review are marked at the first screening visit;
+  - 13: randomization is marked at Month 1 Day 1;
+  - 14: study drug is marked at every Day 1 visit from Month 1 (five columns).
+- `scripts/check_must_hold.py`: two new kinds of fact. `schedule_counts` compares one count per
+  column, in order, in the setting the fact names. `schedule_marks` chooses columns by their header
+  words and checks each has a mark in a row of every listed consideration. Both read the one counted
+  schedule with that heading from that kind of document in `extraction.json`'s `schedules`.
+- Tests in `tests/test_check_must_hold.py`: facts 10 to 14 pass on READ_SCHEDULE's tables for the real
+  protocol, saved as `extraction.json` saves them; and made-up runs fail where they should (a run from
+  before READ_SCHEDULE, another document kind, another heading, a not-counted schedule, a Day 1
+  without study drug, a header read so that fewer columns are chosen).
+
+Decisions taken for Oliver in stage 4:
+
+26. **Five facts, not one.** Alternative: one fact for the whole table. Reason: a failure then names
+    what broke — a count, or which consideration at which visit.
+27. **The facts check the counts READ_SCHEDULE saved, not the text report.pdf prints.** Alternative:
+    read report.pdf. Reason: the script's own rule (its docstring): whether the pipeline produced the
+    answer, read from `extraction.json`. The report's printing of the same counts is covered by
+    `tests/render/test_visit_table.py`.
+28. **A run made before READ_SCHEDULE fails facts 10 to 14**, saying "no schedules in
+    extraction.json: the run was made before READ_SCHEDULE". Alternatives: skip the facts, or KNOWN.
+    Reason: KNOWN is kept for failures tied to an open item in CLAUDE.md (Oliver, 2026-10-15), and a
+    skipped fact could hide a run that lost its schedules. A consequence: from this stage on
+    `scripts/check_must_hold.py` gives `r-20261016-prompt-b` 8 pass, 1 known, 5 fail (facts 10 to 14),
+    so the commit gate denies a commit message that names that run. It is still the baseline for the
+    run-comparison reviewer.
+29. **Fact 14 says how many columns it must choose (5)**, and fact 13 one. Alternative: any number.
+    Reason: a header read differently ("Day 15" for "Day 1") would otherwise pass on fewer columns.
+30. **Columns are chosen by the header's words, not by position.** Alternative: column numbers.
+    Reason: the facts then say what Prompt C says ("every Day 1 visit from Month 1") and can be
+    checked by eye against the PDF.
+
+Checks:
+- `python scripts/check_must_hold.py r-20261016-prompt-b`: facts 1 to 9 as before (8 pass, 1 known),
+  facts 10 to 14 fail as decision 28 says.
+- pytest, full offline suite: 1573 passed, 1 skipped (11 new tests).
+- `ruff check .`: clean. mypy on `scripts/check_must_hold.py` and `tests/test_check_must_hold.py`:
+  clean.
+- Gate reviewers, one pass each (no file under `src/` or `config/` changed, so the commit gate does
+  not apply, but Oliver asked for both). Pipeline-rules found no violation, and that facts 1 to 9 and
+  KNOWN are unchanged and that no fact passes on an empty match. Five suspicions were left as they
+  are: facts 10 and 11 check the counts but not the column headers (facts 12 to 14 do check them); a
+  misspelt `marked` id makes a fact fail, not pass, but with an unclear message; "first screening
+  visit" means the first column whose period is "Screening"; the real-protocol test sets the document
+  kind to amendment itself; and the gate now refuses a commit message naming `r-20261016-prompt-b`
+  (decision 28). Plan-conformance found the stage conforms, with no code problem. Two record gaps
+  were fixed: the facts file's legend now names every key the schedule facts use, and says that
+  `columns` is a list of counts in `schedule_counts` but a number of columns in `schedule_marks`; and
+  the commit line below no longer points at a section that did not exist. Both reviewers ran the
+  real-protocol test alone, and it passed.
+
+Commit: stage 4's hash is in the section "Live run r-20261017-prompt-c2" below, written after the
+commit, because a commit cannot hold its own hash.
+
+## Live run r-20261017-prompt-c2
+
+Not started when stage 4 was committed.
 
 ## Gaps on the other two protocols (reported, not fixed, as Oliver instructed)
 

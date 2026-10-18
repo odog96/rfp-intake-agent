@@ -35,6 +35,24 @@
 #   rows_say       each listed field has a row read from that kind of document
 #                  whose value states the listed amount (or says every listed word)
 #   coverage       at least this many registry fields have a value
+#   schedule_counts  the one counted schedule from that kind of document (`from`)
+#                  with this `heading` counts each visit column's marks, in
+#                  order, as the list `columns`: `count: assessments` counts
+#                  only the rows of assessments, `count: every_mark` every row
+#                  (the two settings of Prompt C)
+#   schedule_marks the visit columns chosen by their header words in that
+#                  schedule each have a mark in a row of every consideration
+#                  in `marked` (`schedule_table.considerations` ids in
+#                  config/fields.yaml). A column is chosen by `period` (with
+#                  `first: true`, only the first such column), or as every
+#                  column from the first whose period is `from_period`; then,
+#                  if given, only those whose timing starts with the words
+#                  `timing_starts`. Here `columns` is a number, not a list:
+#                  how many columns must be chosen, so a header read
+#                  differently cannot pass on fewer
+#
+# The schedule facts read extraction.json's `schedules`, which READ_SCHEDULE
+# writes from 2026-10-17 (Prompt C), so a run made before then fails them.
 #
 # A fact can name a known intermittent failure, approved by Oliver on
 # 2026-10-15: one row of a `rows_say` fact may carry `known`, and a `coverage`
@@ -140,3 +158,55 @@ facts:
     # threshold is 39, never lower.
     known_missing:
       - {field: ops.visits_site_selection, known: "CLAUDE.md open item 1, the two-column table on RFP p.3"}
+
+  # Table 1: Schedule of Events, amendment PDF p.26–27 (printed p.24–25), counted by
+  # hand for Prompt C (Angus Gray's request of 13 October). Eleven visit columns:
+  # Screening Day-28 to Day -1, Screening Day -2 or Day -1, Month 1 Day 1, Month 1
+  # Days 8/15/22, Month 2 Day 1, Month 2 Days 8/15/22, Month 3 Day 1, Month 3
+  # Days 8/15/22, Every 3rd Month Day 1, All Other Months Day 1, EOT/ETD. A count
+  # is one visit's marks; a column of three visits has that many each time.
+  - id: 10
+    name: Table 1 counts each visit column's assessments as 26, 16, 13, 7, 23, 6, 28, 7, 30, 22, 31
+    kind: schedule_counts
+    from: amendment
+    heading: "Table 1: Schedule of Events"
+    count: assessments
+    columns: [26, 16, 13, 7, 23, 6, 28, 7, 30, 22, 31]
+
+  - id: 11
+    name: Table 1 counts each visit column's marks of every row as 26, 16, 17, 8, 26, 7, 31, 8, 33, 25, 31
+    kind: schedule_counts
+    from: amendment
+    heading: "Table 1: Schedule of Events"
+    count: every_mark
+    columns: [26, 16, 17, 8, 26, 7, 31, 8, 33, 25, 31]
+
+  - id: 12
+    name: Informed consent and eligibility review are at the first screening visit
+    kind: schedule_marks
+    from: amendment
+    heading: "Table 1: Schedule of Events"
+    period: Screening
+    first: true
+    marked: [informed_consent, eligibility_review]
+
+  - id: 13
+    name: Randomization is at Month 1 Day 1
+    kind: schedule_marks
+    from: amendment
+    heading: "Table 1: Schedule of Events"
+    period: Month 1
+    timing_starts: Day 1
+    columns: 1
+    marked: [randomization]
+
+  - id: 14
+    name: Study drug is given at every Day 1 visit from Month 1
+    kind: schedule_marks
+    from: amendment
+    heading: "Table 1: Schedule of Events"
+    # Month 1, Month 2, Month 3, every 3rd month and all other months.
+    from_period: Month 1
+    timing_starts: Day 1
+    columns: 5
+    marked: [study_drug_administration]

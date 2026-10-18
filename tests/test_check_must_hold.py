@@ -192,3 +192,115 @@ def test_no_fact_matches_a_number_and_unit_by_exact_words() -> None:
     facts = yaml.safe_load((ROOT / "eval" / "golden" / "sample_pair_must_hold.yaml").read_text())
     specs = [s for f in facts["facts"] for s in [f, *f.get("sides", []), *f.get("rows", [])]]
     assert [s["says"] for s in specs if any(str(w).isdigit() for w in s.get("says", []))] == []
+
+
+# --------------------------------------------------------------------------- #
+# The Schedule of Events facts (Prompt C stage 4)
+# --------------------------------------------------------------------------- #
+
+TABLE_1 = "Table 1: Schedule of Events"
+
+
+def _schedule_facts() -> list[dict[str, Any]]:
+    import yaml
+
+    facts = yaml.safe_load((ROOT / "eval" / "golden" / "sample_pair_must_hold.yaml").read_text())
+    return [f for f in facts["facts"] if f["kind"].startswith("schedule_")]
+
+
+def _cited(doc_id: str, doc_kind: str) -> dict[str, Any]:
+    """A row citing the document, which is how the check learns its kind."""
+    return {"field_id": "study.phase", "value": "phase_3", "status": "confirmed",
+            "sources": [{"doc_id": doc_id, "doc_kind": doc_kind, "page": 1}]}
+
+
+def _column(period: str, timing: str, considerations: list[str],
+            marks: int = 5) -> dict[str, Any]:
+    return {"period": period, "timing": timing, "marks_all": marks + 1,
+            "marks_assessments": marks, "considerations": considerations}
+
+
+def _run(check: ModuleType, columns: list[dict[str, Any]], *, doc_kind: str = "amendment",
+         heading: str = TABLE_1, counted: bool = True) -> Any:
+    return check.Run({"resolved_fields": [_cited("doc-a", doc_kind)], "schedules": [
+        {"doc_id": "doc-a", "heading": heading, "counted": counted, "columns": columns}]})
+
+
+DAY_1 = ["randomization", "study_drug_administration"]
+COLUMNS = [
+    _column("Screening", "Day-28 to Day -1", ["informed_consent", "eligibility_review"]),
+    _column("Screening", "Day -2 or Day -1", []),
+    _column("Month 1", "Day 1", DAY_1),
+    _column("Month 1", "Days 8, 15, 22 (±2)", []),
+    _column("Month 2", "Day 1 (±2)", ["study_drug_administration"]),
+    _column("Month 3", "Day 1 (±2)", ["study_drug_administration"]),
+    _column("Months 6, 9, 12, etc. (Every 3rd Month)", "Day 1 (±5)",
+            ["study_drug_administration"]),
+    _column("All Other Months", "Day 1 (±5)", ["study_drug_administration"]),
+    _column("EOT/ETD", "", []),
+]
+
+
+def _fact(fact_id: int) -> dict[str, Any]:
+    return next(f for f in _schedule_facts() if f["id"] == fact_id)
+
+
+class TestScheduleFacts:
+    @pytest.mark.parametrize("fact_id", [12, 13, 14])
+    def test_the_marks_hold(self, check: ModuleType, fact_id: int) -> None:
+        assert check.schedule_marks(_run(check, COLUMNS), _fact(fact_id))[0] == "PASS"
+
+    def test_a_run_from_before_read_schedule_fails(self, check: ModuleType) -> None:
+        run = check.Run({"resolved_fields": [_cited("doc-a", "amendment")]})
+        verdict, detail = check.schedule_counts(run, _fact(10))
+        assert verdict == "FAIL" and "before READ_SCHEDULE" in detail
+
+    @pytest.mark.parametrize("change", [
+        {"doc_kind": "rfp"}, {"heading": "Appendix 3: Schedule Of Events"}, {"counted": False},
+    ])
+    def test_only_the_amendments_counted_table_1_is_read(
+        self, check: ModuleType, change: dict[str, Any]
+    ) -> None:
+        assert check.schedule_marks(_run(check, COLUMNS, **change), _fact(12))[0] == "FAIL"
+
+    def test_a_day_1_without_study_drug_fails(self, check: ModuleType) -> None:
+        columns = [*COLUMNS[:5], _column("Month 3", "Day 1 (±2)", []), *COLUMNS[6:]]
+        verdict, detail = check.schedule_marks(_run(check, columns), _fact(14))
+        assert verdict == "FAIL" and "Month 3 Day 1 (±2) has no study_drug_administration" in detail
+
+    def test_a_header_read_differently_cannot_pass_on_fewer_columns(
+        self, check: ModuleType
+    ) -> None:
+        # Day 15 is not Day 1, so only four Day 1 columns are chosen, not five.
+        columns = [*COLUMNS[:5], _column("Month 3", "Day 15", []), *COLUMNS[6:]]
+        verdict, detail = check.schedule_marks(_run(check, columns), _fact(14))
+        assert verdict == "FAIL" and "4 column(s) chosen" in detail
+
+    def test_the_counts_are_read_in_either_setting(self, check: ModuleType) -> None:
+        columns = [_column("Screening", "Day 1", [], marks=n) for n in _fact(10)["columns"]]
+        assert check.schedule_counts(_run(check, columns), _fact(10))[0] == "PASS"
+        # Every mark is one more than the assessments in these made-up columns.
+        assert check.schedule_counts(_run(check, columns), _fact(11))[0] == "FAIL"
+
+
+@pytest.mark.slow
+def test_every_schedule_fact_holds_on_the_real_protocol(
+    check: ModuleType, samples_dir: Path, fields_yaml_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """READ_SCHEDULE's tables for samples/Example protocol 2.pdf, as extraction.json
+    saves them, pass facts 10 to 14. A live run classifies the PDF as the amendment."""
+    from rfp_intake.domain.registry import get_registry
+
+    pdf = samples_dir / "Example protocol 2.pdf"
+    if not pdf.exists():
+        pytest.skip("Example protocol 2.pdf not available")
+    monkeypatch.setenv("RFP_INTAKE_FIELDS_YAML_PATH", str(fields_yaml_path))
+    get_registry.cache_clear()
+    from tests.render.test_visit_table import _protocol_schedules
+
+    schedules = [s.model_dump(mode="json") for s in _protocol_schedules(pdf)]
+    run = check.Run({"resolved_fields": [_cited("doc-protocol", "amendment")],
+                     "schedules": schedules})
+    results = {f["id"]: check.KINDS[f["kind"]](run, f) for f in _schedule_facts()}
+    assert {i: v for i, (v, _) in results.items()} == {i: "PASS" for i in range(10, 15)}, results
