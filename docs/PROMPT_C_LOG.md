@@ -437,7 +437,29 @@ commit, because a commit cannot hold its own hash.
 
 ## Live run r-20261017-prompt-c2
 
-Not started when stage 4 was committed.
+Stage 4's commit: `aac658a`.
+
+**The run failed on credentials, before reading any document.** Started on 2026-10-17 at 20:26:49
+with `python -m rfp_intake.job r-20261017-prompt-c2`, on `samples/Example protocol 2.pdf` and
+`samples/Synthetic_RFP_NEOD001.pdf`, using the token already in the environment
+(`AWS_BEARER_TOKEN_BEDROCK` was set and had the expected prefix; it was not printed). PREFLIGHT, the
+step that checks that the model service answers, got "AccessDeniedException … Bearer Token has
+expired" from AWS Bedrock two seconds later. `runs/r-20261017-prompt-c2/status.json` says
+`"state": "failed"`, `"node": "PREFLIGHT"`, failure kind `model_service`. The folder holds only
+`inputs/` and `status.json`, with no `extraction.json`, `report.pdf` or `report.xlsx`.
+
+As Oliver instructed, the run was not retried and no token was looked for anywhere else.
+
+Not done, because each needs the run's output:
+- `scripts/check_must_hold.py r-20261017-prompt-c2`: facts 10 to 14 have not yet been seen to pass
+  on a live run. They pass offline on READ_SCHEDULE's tables for the real protocol (stage 4's slow
+  test).
+- `scripts/check_review_2026_10_07.py` on the run.
+- The run-comparison reviewer against `r-20261016-prompt-b`.
+- The report-usability reviewer.
+
+To finish: once the AWS Bedrock credential is renewed, start a new run (a new run id, since
+`r-20261017-prompt-c2` holds a failed status) and run the four checks above on it.
 
 ## Gaps on the other two protocols (reported, not fixed, as Oliver instructed)
 
@@ -466,3 +488,7 @@ schedule-like heading is "Trial Schedule", p.29). Its marks are bullets ("•"),
 - Footnote notes, home dosing and schedules printed as images: out of scope in Prompt C.
 - Tables without ruled lines are not read (the plan's decision; none of the three protocols' target
   tables needs it).
+- The live run and the four checks after it: the AWS Bedrock token had expired (see "Live run
+  r-20261017-prompt-c2" above). Waits on a renewed credential.
+- The gaps on `samples/Example Protocol.pdf` and `samples/Example protocol 3.pdf`: reported above,
+  not fixed, as Oliver instructed.
