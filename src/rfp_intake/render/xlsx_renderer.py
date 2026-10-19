@@ -122,7 +122,7 @@ def build_report_xlsx(state: RunState, registry: Registry) -> bytes:
     budget_drivers = {f.id for f in registry.fields if f.budget_driver}
 
     # What report.pdf prints: a counted visit table keeps the model's own visit
-    # frequencies and an empty total in extraction.json only (Prompt C follow-ups).
+    # frequencies and a "not found" total in extraction.json only (Prompt C follow-ups).
     printed, _ = report_entries(state, registry)
     all_rows = [(rf, field_by_id.get(rf.field_id)) for rf in printed]
 

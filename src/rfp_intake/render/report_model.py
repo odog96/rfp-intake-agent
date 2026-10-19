@@ -663,9 +663,11 @@ def report_entries(
     `from_schedule` in config/fields.yaml, never by its id:
     - every entry of the `table` variable: the model's own reading of the
       schedule, which the counted table printed in its row replaces;
-    - an entry of the `stage_totals` variable that says only that no total was
-      found (not found, no quote), once DERIVE has written the stage totals.
-      An entry quoting why there is no total is still printed.
+    - an entry of the `stage_totals` variable that is not found, once DERIVE
+      has written the stage totals, whatever its quote, page or confidence:
+      the stage totals answer the variable (Oliver, 2026-10-19, after run
+      r-20261019-prompt-c3 printed a quoted "why no total" entry beside them).
+      A total a document states is still printed.
     Nothing is worked out here; entries are only left out of the reports.
     """
     kept: list[ResolvedField] = []
@@ -678,8 +680,7 @@ def report_entries(
         kept = [
             rf for rf in state.resolved
             if rf.field_id in table or (
-                rf.field_id in summed and rf.status == "not_found"
-                and not rf.quote and not rf.derived_from
+                rf.field_id in summed and rf.status == "not_found" and not rf.derived_from
             )
         ]
     printed = [rf for rf in state.resolved if not any(rf is k for k in kept)]

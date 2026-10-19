@@ -343,18 +343,50 @@ class TestPrintedOnce:
         assert appendix[at:at + 60].startswith("From Month 4] 1 a month until the study ends —"), (
             appendix[at:at + 120])
 
-    def test_a_total_with_a_quote_is_still_printed(self, review_state: RunState) -> None:
-        """Decision of 2026-10-19: only the empty "not found" total goes; a
-        passage on why there is no total is evidence, and stays."""
-        quoted = ResolvedField(
-            field_id=TOTALS, status="not_found", confidence=0.6,
-            quote="The number of visits depends on how long each subject is treated.",
+    def test_a_quoted_not_found_total_is_kept_out(self, review_state: RunState) -> None:
+        """Oliver, 2026-10-19: with the stage totals written, the "not found" total
+        is never printed, whatever its quote, page or confidence. The record is
+        run r-20261019-prompt-c3's, which Appendix A p.10 and report.xlsx printed
+        as "[Why no total] —"."""
+        from openpyxl import load_workbook
+
+        from rfp_intake.render.xlsx_renderer import build_report_xlsx
+
+        c3 = ResolvedField(
+            field_id=TOTALS, status="not_found", confidence=0.95, scope="why no total",
+            sources=[Provenance(doc_id="doc-690ef067", doc_kind="amendment", page=15,
+                                printed_page="13", section="PROTOCOL SYNOPSIS")],
+            quote="This is an event-driven trial that will continue until approximately 156 "
+                  "primary endpoint events have occurred. All subjects who discontinue will "
+                  "be followed until the last event is adjudicated.",
+        )
+        resolved = [rf for rf in review_state.resolved if rf.derived_from or rf.field_id != TOTALS]
+        state = review_state.model_copy(update={"resolved": [*resolved, c3]})
+        model = build_report_model(state, get_registry())
+        assert any(k is c3 for k in model.kept_out)
+        totals = [e for e in model.evidence if e.field_id == TOTALS]
+        assert [e.scope for e in totals] == [
+            "Screening", "Months 1–3", "From Month 4", "End of treatment",
+        ]
+        assert c3.quote not in {e.quote for e in model.evidence}
+        assert_nothing_lost(state, get_registry(), model)
+
+        wb = load_workbook(io.BytesIO(build_report_xlsx(state, get_registry())))
+        for sheet in ("Fields", "Review Queue"):
+            cells = [str(c) for row in wb[sheet].iter_rows(values_only=True) for c in row if c]
+            assert not any("why no total" in c.casefold() for c in cells), sheet
+            assert not any("event-driven trial" in c for c in cells), sheet
+
+    def test_a_total_a_document_states_is_still_printed(self, review_state: RunState) -> None:
+        stated = ResolvedField(
+            field_id=TOTALS, status="needs_review", confidence=0.8, value=24, scope="Total",
+            quote="Each subject will attend 24 visits.",
             sources=[Provenance(doc_id="doc-protocol", doc_kind="protocol", page=26)],
         )
-        state = review_state.model_copy(update={"resolved": [*review_state.resolved, quoted]})
+        state = review_state.model_copy(update={"resolved": [*review_state.resolved, stated]})
         model = build_report_model(state, get_registry())
-        assert not any(k is quoted for k in model.kept_out)
-        assert quoted.quote in {e.quote for e in model.evidence if e.field_id == TOTALS}
+        assert not any(k is stated for k in model.kept_out)
+        assert stated.quote in {e.quote for e in model.evidence if e.field_id == TOTALS}
         assert_nothing_lost(state, get_registry(), model)
 
 

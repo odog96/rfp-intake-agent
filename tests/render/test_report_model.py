@@ -74,14 +74,14 @@ def assert_nothing_lost(state: RunState, registry: Registry, model: ReportModel)
             scope = re.sub(rf"\b{re.escape(doc_id)}\b", code, scope, flags=re.IGNORECASE)
         return scope
 
-    # A counted visit table keeps the model's own visit frequencies, and an empty
-    # total beside the stage totals, in extraction.json only (Prompt C follow-ups
-    # 1 and 2). Nothing else may be kept out, and nothing with a quote of a total.
+    # A counted visit table keeps the model's own visit frequencies, and a "not
+    # found" total beside the stage totals, in extraction.json only (Prompt C
+    # follow-ups 1 and 2; quoted or not since 2026-10-19). Nothing else may be
+    # kept out, and no total a document states.
     for k in model.kept_out:
         kind = field_by_id[k.field_id].from_schedule
         assert kind == "table" or (
-            kind == "stage_totals" and k.status == "not_found" and not k.quote
-            and not k.derived_from
+            kind == "stage_totals" and k.status == "not_found" and not k.derived_from
         ), k.field_id
 
     for rf in state.resolved:

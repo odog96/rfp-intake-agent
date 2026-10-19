@@ -125,8 +125,8 @@ default baseline. `ops.subjects_total`'s "per arm" row is not fixed by it. Read 
 `docs/JOURNAL.md` for the rule, the step-3 limit on placebo scopes, and why `--baseline
 r-20261008-review2-run3` gives check 9 a false FAIL.
 
-Nine things are still open, each its own item. Items 1 to 7 wait for Oliver's decision; item 8 waits
-for more real RFPs; item 9 must be done before production. (The visit-intensity rating computed from
+Ten things are still open, each its own item. Items 1 to 7 and item 10 wait for Oliver's decision;
+item 8 waits for more real RFPs; item 9 must be done before production. (The visit-intensity rating computed from
 one row of several was item 1 until it was fixed on 2026-10-11; see `docs/JOURNAL.md`.)
 
 1. **`Site selection visits` reads Not found.** The synthetic RFP calls them "Site Qualification
@@ -215,6 +215,16 @@ one row of several was item 1 until it was fixed on 2026-10-11; see `docs/JOURNA
    production run that reaches rung 2 or 3 on a machine without the cache would make the same
    outbound calls. Before production the models must be installed with the deployment and loaded
    from a local path, with downloads switched off.
+10. **"20800" and "20,800 CRF pages total" are not normalised to the same number** (recorded
+   2026-10-19, Oliver). In live run `r-20261019-prompt-c3` the model extracted RFP p.4's "Approximately
+   20,800 CRF pages total." twice for `ops.crf_pages`, scope "total": once as `20800`, once as the
+   string "20,800 CRF pages total". `normalize/types.py:normalize_int` strips a unit word only when
+   it follows the number directly (`_TRAILING_JUNK`, line 35), so "20,800 pages" gives 20800 but
+   "20,800 CRF pages" gives None, and `normalize/__init__.py:66` then keeps the raw string as the
+   value. The two records then differ, so RECONCILE sends them to ADJUDICATE, which called them
+   `not_a_conflict` (severity high), and GATE's budget-driver rule turned the total row from
+   `confirmed` (in `r-20261019-prompt-c2`) into `needs_review`. Not fixed; the fix belongs in
+   NORMALIZE, which rule 7 keeps pure and table-tested.
 
 Phases 0–4 of ARCHITECTURE.md §10 are done, and stages 1, 2, 3, 4 and 5 of `docs/PLAN_2026-10-02.md`.
 **Stage 5's two live criteria failed on 2026-10-02 and still fail after the 2026-10-03 fix**, though for

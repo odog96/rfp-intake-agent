@@ -814,6 +814,69 @@ The reviewer also raised:
 
 No code changed after the run, so there was no further commit to src/ or config/. Not pushed.
 
+### The "not found" total is never printed beside the stage totals — built
+
+Oliver, 2026-10-19, verbatim: "one render-only fix: when the stage totals exist, never print the
+"not found" record for Total number of subject visits, in Appendix A or report.xlsx, whatever page or
+confidence it carries. Add a test using this run's record. Re-render this run and confirm the row is
+gone. No live run. Record the CRF pages "20800" vs "20,800" normalisation as an open item in
+CLAUDE.md. Do not push."
+
+**This replaces the earlier decision "Item 2 drops only an empty 'not found'"** (under the
+follow-ups above), which kept a not-found total that carries a quote. In `r-20261019-prompt-c3` the
+model's not-found record carried scope "why no total", confidence 0.95 and an amendment p.15 quote,
+so it was printed as "[Why no total] —".
+
+Built:
+- `render/report_model.py:report_entries` keeps out every not-found, non-derived entry of the
+  variable marked `from_schedule: stage_totals` once DERIVE has written stage totals. Its quote,
+  page and confidence no longer matter. A total a document states is still printed. report.xlsx's
+  Fields and Review Queue sheets read the same function. The record stays in `extraction.json`
+  and on `ReportModel.kept_out`.
+- Tests (`tests/render/test_visit_table.py`):
+  - `test_a_quoted_not_found_total_is_kept_out` uses c3's record as written in its
+    `extraction.json`. It checks:
+    - the record is kept out;
+    - Appendix A holds only the four stage totals;
+    - neither sheet of the workbook has "why no total" or the quote.
+  - The test fails against the old rule.
+  - `test_a_total_a_document_states_is_still_printed` replaces the old test that a quoted total is
+    printed.
+  - The nothing-lost test (`tests/render/test_report_model.py:assert_nothing_lost`) no longer
+    requires a kept-out total to have no quote.
+- `docs/ARCHITECTURE.md` §4.10 says the same.
+- CLAUDE.md gains open item 10: "20800" and "20,800 CRF pages total" do not normalise to the same
+  number. Not fixed.
+
+Re-render: `scripts/rerender_report.py r-20261019-prompt-c3` wrote `report-rerender.pdf` (18 pages).
+- The "[Why no total]" row and its quote are gone from Appendix A p.10.
+- The quote is also gone from the main table's total-visits row on p.3.
+- The only remaining "event-driven trial" text is on p.12, in Timeline components' own entry, which
+  is correct.
+- `report-rerender.xlsx` was built with `build_report_xlsx` from the same state, because the script
+  writes only the PDF. Its Fields and Review Queue sheets list the four stage totals and no "[why no
+  total]" row. In the run's own `report.xlsx` that row is listed in both sheets.
+- The run's `report.pdf`, `report.xlsx` and `extraction.json` are untouched.
+
+Checks:
+- Full offline pytest: 1598 passed, 1 skipped. The two new tests were run again after the test edit
+  below: 2 passed.
+- `ruff check src tests`: clean.
+- mypy on the four changed source and test files: no new error. The older one at
+  `tests/render/test_report_model.py:194` remains.
+- Gate reviewers, after the last edit to src/:
+  - pipeline-rules found no violation and said the change is safe to commit. Its suspicions:
+    - the test passed `group` and `label`, which `ResolvedField` does not have. Removed.
+    - the test might be skipped. It runs: 2 passed.
+    - the `visits.total_count` hint still asks the model for a "why no total" sentence, which the
+      report now drops whenever stage totals exist. Left: config was not in this instruction.
+  - plan-conformance found every part met and nothing blocking. Its two findings: this log did not
+    yet record the override (now done), and §4.10's "any passage a document gives on the total" was
+    loose (now "any total a document states").
+
+Not done: the `visits.total_count` hint is unchanged. The xlsx "[From Month 4]" value is still an
+empty cell (not asked).
+
 ## Gaps on the other two protocols (reported, not fixed, as Oliver instructed)
 
 Measured offline with the stage 1 reader on 2026-10-17.

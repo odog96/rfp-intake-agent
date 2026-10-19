@@ -1322,12 +1322,13 @@ is what makes the whole pipeline testable without a filesystem.
   the column's pages — then "Not counted: …" for each schedule with `counted: false`. The count is
   Assessments (`count_non_assessments: false`, the default) or every mark ("Activities"); a column of
   several visits reads "7 each". The row of the field marked `from_schedule: stage_totals` prints
-  DERIVE's stage totals with their parts, then any passage a document gives on the total.
+  DERIVE's stage totals with their parts, then any total a document states.
   Both rows read "Worked out by the tool — confirm", carry no confidence figure, and are in Flagged for
   review, each once: the table's row as `wording.flagged_table`, the totals as one line without their
   parts. *Since 2026-10-19 (Prompt C follow-ups)*, with a table counted, the model's own entries of the
-  `table` variable, and a `stage_totals` entry that is not found with no quote once DERIVE has written
-  stage totals, are left out of the main table, Flagged for review, Appendix A and report.xlsx's
+  `table` variable, and a `stage_totals` entry that is not found once DERIVE has written stage totals
+  (whatever its quote, page or confidence, since a later 2026-10-19 decision), are left out of the
+  main table, Flagged for review, Appendix A and report.xlsx's
   Fields and Review Queue sheets by `render/report_model.py:report_entries`, which lists them on
   `ReportModel.kept_out` for the nothing-lost test. A variable whose every entry is left out also has
   its disagreements left out of the Disagreements table and Appendix B (2026-10-19), so the model's
