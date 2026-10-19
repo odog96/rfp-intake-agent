@@ -732,7 +732,14 @@ rules" comment in `domain/schemas.py`, now corrected. Second pass, after that la
 pipeline-rules found no violation and safe to commit; plan-conformance found every part still met
 and nothing blocking.
 
-Commit: one commit for item 5's fix and the two gaps (hash in the live-run section below). Not pushed.
+Commit: `0db322b`, item 5's fix and the two gaps together. Not pushed.
+
+Live run: not made. Inputs for `r-20261019-prompt-c3` were copied from `r-20261019-prompt-c2`
+(the two sample documents) and the token was present with the right prefix, but the session's
+permission check refused `python -m rfp_intake.job r-20261019-prompt-c3`. It was not retried another
+way. So the four checks (`scripts/check_must_hold.py`, `scripts/check_review_2026_10_07.py`, the
+run-comparison and report-usability reviewers) were not run, and the fix's effect on a live
+`dosing.duration` extraction is not shown. Waits for Oliver.
 
 ## Gaps on the other two protocols (reported, not fixed, as Oliver instructed)
 
