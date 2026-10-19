@@ -734,12 +734,85 @@ and nothing blocking.
 
 Commit: `0db322b`, item 5's fix and the two gaps together. Not pushed.
 
-Live run: not made. Inputs for `r-20261019-prompt-c3` were copied from `r-20261019-prompt-c2`
-(the two sample documents) and the token was present with the right prefix, but the session's
-permission check refused `python -m rfp_intake.job r-20261019-prompt-c3`. It was not retried another
-way. So the four checks (`scripts/check_must_hold.py`, `scripts/check_review_2026_10_07.py`, the
-run-comparison and report-usability reviewers) were not run, and the fix's effect on a live
-`dosing.duration` extraction is not shown. Waits for Oliver.
+Live run `r-20261019-prompt-c3`. The session's permission check refused
+`python -m rfp_intake.job r-20261019-prompt-c3` when Claude ran it, and Claude did not retry it.
+Oliver then ran the same command himself. The inputs were the two sample documents, copied from
+`r-20261019-prompt-c2`. The run started at 20:49:57 and finished at 20:58:22 (8m25s). It produced 13
+contradiction clusters, 14 EXTRACT errors and 58 resolved rows; 42 of the 45 fields have a value, and
+`report.pdf` has 18 pages.
+
+The four checks:
+- `scripts/check_must_hold.py`: 14 pass, 0 fail. This includes the Table 1 counts
+  [26, 16, 13, 7, 23, 6, 28, 7, 30, 22, 31] and the every-mark counts
+  [26, 16, 17, 8, 26, 7, 31, 8, 33, 25, 31].
+- `scripts/check_review_2026_10_07.py`: 8 pass, 0 fail. Check 6 prints LOOK, as on every run. Check 9
+  finds 38 kept variables, against 36.
+- The run-comparison reviewer compared the run with `r-20261019-prompt-c2`; its findings are under
+  "Item 5" and "Other changes" below.
+- The report-usability reviewer read all 18 pages and the three workbook sheets; its findings are
+  under "The six follow-ups" below.
+
+Item 5:
+- "How long patients are dosed" (`dosing.duration`) is now one `confirmed` row, from amendment p.54
+  only, with no disagreement. In c2 the same field had a second record from RFP p.3 (the 40-month
+  study length) and was flagged for review.
+- The new rejection rule did not fire. No error says `quote_mentions_none_of_the_required_words`.
+  The run's only rejections on the RFP's dosing task are the older `ip.form` rejection.
+- So the model did not return the RFP p.3 record this time. One run cannot tell whether the new hint
+  sentence did that or chance did. **The rule is shown only by the offline tests, not on a live
+  run.**
+
+Gap 1 was not exercised. This run has no disagreement on the model's visit frequencies to hide; the
+only visits contradiction is on `visits.schedule_present` (reconcilable).
+
+Gap 2 holds in the PDF. Appendix A p.10 reads "From Month 4] 1 a month until the study ends —
+Amendment p.26 (printed p.24), …".
+
+Other changes against c2 (run-comparison reviewer):
+- **`ops.crf_pages`, the total row (20,800), got worse.** It went from `confirmed` to `needs_review`.
+  The model wrote the figure twice, as "20800" and as "20,800 CRF pages total". ADJUDICATE judged the
+  two records `not_a_conflict` with severity high, and GATE's budget-driver rule then forced review.
+  Nothing in item 5 or either gap touches this field or ADJUDICATE; the reviewer and Claude both read
+  it as the model answering differently from run to run. Not fixed.
+- `timeline.total_duration`: the per-subject rows went from four to one ("18 months", amendment
+  p.24 and p.47). The 42-month vs 40-month `conflict` is intact.
+- Planted contradictions: 1 of 3 caught in both runs (`timeline.total_duration`). Missed in both:
+  `ops.sites_total` and `timeline.periods`.
+- `eval/scoring` keeps only the last cluster for a field with two clusters. So it scores c3 better
+  than c2 on `timeline.total_duration` only because the cluster order changed.
+- No wrong removal in Appendix C; `study.phase` is one row, `phase_3`.
+
+The six follow-ups (report-usability reviewer):
+- Followed: (1) the model's visit-frequency records are out of Flagged and Appendix A; (3) one Flagged
+  row, and page 1 counts 10 variables; (4) the grey line and "Key considerations"; (5) dosing
+  duration cites amendment p.54 only.
+- **(2) is only half met.** No "Not found" label is in the PDF. But Appendix A p.10 still opens "Total
+  number of subject visits" with a "[Why no total] —" row: in this run the model's not-found record
+  carries a scope, confidence 0.95 and amendment p.15, so `report_entries` does not treat it as an
+  empty total. `report.xlsx` shows that row with status `not_found` in its Fields and Review Queue
+  sheets. Not fixed: Oliver's instruction was one live run, then stop.
+- (6) is met in the PDF only. In `report.xlsx` the "[From Month 4]" value is still an empty cell (not
+  asked; listed under "Still not done" above).
+- The grey line is 7 pt, smaller than the 7.5 pt body text.
+
+The reviewer's three biggest usability problems for Angus. All three are older than this change and
+none is fixed:
+- Appendix B prints the adjudicating model's record-by-record reasoning, with internal tokens such as
+  `not_matching_stated` and `yes_body`.
+- The Flagged table names derived variables ("Unblinded monitoring likely required", "What to assume
+  about the placebo") that All variables merges into one row. It also shows "0%" for the placebo
+  assumption, which means "no agreed input", not "worthless".
+- Appendix A's visit-intensity evidence is garbled, repeated table fragments, plus an eligibility lab
+  limit.
+
+The reviewer also raised:
+- The word list misses terms the report uses, such as EOT/ETD, IXRS and SoC.
+- Two cells are cut off mid-word.
+- Disagreement 1's provisional-value reason differs between p.2, p.6 and Appendix B.
+- Angus called the 42-month duration "not very helpful", yet it is a high-severity Disagreement 2.
+  That needs his answer.
+
+No code changed after the run, so there was no further commit to src/ or config/. Not pushed.
 
 ## Gaps on the other two protocols (reported, not fixed, as Oliver instructed)
 
