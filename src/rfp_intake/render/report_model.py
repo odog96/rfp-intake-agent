@@ -690,13 +690,21 @@ def build_report_model(state: RunState, registry: Registry) -> ReportModel:
     docs = _Docs(state)
     field_by_id = {f.id: f for f in registry.fields}
 
-    decisions = _decisions(state, field_by_id, docs, registry.report_wording)
-    decision_no = {d.signature: d.no for d in decisions}
-
-    # The main table, the review list and Appendix A read only the entries the
-    # report prints; the disagreements and the document names read the run.
+    # The main table, the review list, the disagreements and Appendices A and B
+    # read only the entries the report prints, and only the disagreements of a
+    # variable with an entry printed: a variable whose every entry is kept in
+    # extraction.json (the model's visit frequencies once the Schedule of Events
+    # is counted) gets no numbered disagreement either (Oliver, 2026-10-19).
+    # The document names and Appendix C read the run.
     printed, kept_out = report_entries(state, registry)
-    shown = state.model_copy(update={"resolved": printed})
+    hidden = {rf.field_id for rf in kept_out} - {rf.field_id for rf in printed}
+    shown = state.model_copy(update={
+        "resolved": printed,
+        "contradictions": [c for c in state.contradictions if c.field_id not in hidden],
+    })
+
+    decisions = _decisions(shown, field_by_id, docs, registry.report_wording)
+    decision_no = {d.signature: d.no for d in decisions}
 
     by_field: dict[str, list[ResolvedField]] = defaultdict(list)
     for rf in shown.resolved:
@@ -818,7 +826,7 @@ def build_report_model(state: RunState, registry: Registry) -> ReportModel:
         documents=docs.refs,
         groups=sections,
         decisions=decisions,
-        dismissed=_dismissed(state, field_by_id, docs, registry.report_wording),
+        dismissed=_dismissed(shown, field_by_id, docs, registry.report_wording),
         evidence=_evidence(shown, field_by_id, docs, decision_no, registry.report_wording),
         glossary=_glossary(registry, schedule),
         variables_total=len(registry.fields),
@@ -2550,6 +2558,16 @@ def _evidence(
         fd = field_by_id.get(rf.field_id)
         label = _label(field_by_id, rf.field_id)
         items = _items(rf, fd, wording)
+        # A stage total DERIVE gave no sum, where the stage repeats until the
+        # study ends, reads as the stage's own words, which DERIVE keeps in
+        # `notes`, as Flagged for review prints it (_total_lines), not as "—"
+        # (Oliver, 2026-10-19).
+        says = bool(
+            fd is not None and fd.from_schedule == "stage_totals" and rf.derived_from
+            and rf.value is None and rf.notes
+        )
+        if says:
+            items = [rf.notes or ""]
         value = "; ".join(items)
         c = _own_disagreement(rf)
         marker = _marker(c, fd, decision_no, wording)
@@ -2599,7 +2617,7 @@ def _evidence(
                 notes=None,
                 marker=marker(r),
             ))
-        notes = rf.notes if (rf.derived_from or rf.contradiction is None) else None
+        notes = rf.notes if (rf.derived_from or rf.contradiction is None) and not says else None
         # Each document's own statement of an entry, with its own page and quote:
         # the row's `quote` is only the most confident one, and the entries and
         # periods rows say the other wordings are quoted here (pipeline-rules-

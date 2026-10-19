@@ -20,6 +20,8 @@ import pytest
 from rfp_intake.derive import stage_totals
 from rfp_intake.domain.registry import Registry, get_registry
 from rfp_intake.domain.schemas import (
+    Contradiction,
+    FieldRecord,
     Provenance,
     ResolvedField,
     RunState,
@@ -244,8 +246,16 @@ class TestPrintedOnce:
         ]
         assert TABLE not in {e.field_id for e in model.evidence}
         # Appendix A keeps the four stage totals and nothing for the empty total.
-        assert [e.value for e in model.evidence if e.field_id == TOTALS] == ["2", "12", "—", "1"]
-        assert all(e.derived_from for e in model.evidence if e.field_id == TOTALS)
+        # From Month 4 has no sum and reads as its stage's words, as in Flagged
+        # for review, not "—" (2026-10-19).
+        totals = [e for e in model.evidence if e.field_id == TOTALS]
+        assert [(e.scope, e.value, e.notes) for e in totals] == [
+            ("Screening", "2", "1 + 1"),
+            ("Months 1–3", "12", "1 + 3 + 1 + 3 + 1 + 3"),
+            ("From Month 4", "1 a month until the study ends", None),
+            ("End of treatment", "1", "1"),
+        ]
+        assert all(e.derived_from for e in totals)
         assert_nothing_lost(review_state, get_registry(), model)
 
     def test_no_table_counted_keeps_everything(self, review_state: RunState) -> None:
@@ -302,6 +312,37 @@ class TestPrintedOnce:
         # Straight under the table's last row, EOT/ETD.
         assert schedule[note - 1] == "EOT/ETD"
 
+    @pytest.mark.parametrize("verdict", ["conflict", "not_a_conflict"])
+    def test_the_model_s_visit_frequencies_get_no_disagreement(
+        self, review_state: RunState, verdict: str,
+    ) -> None:
+        """Oliver, 2026-10-19: with the table shown, the kept-out visit
+        frequencies give no numbered disagreement, nor a line in Appendix B."""
+        c = _frequency_disagreement(verdict)
+        resolved = [rf.model_copy(update={"contradiction": c}) if rf.field_id == TABLE else rf
+                    for rf in review_state.resolved]
+        state = review_state.model_copy(update={"resolved": resolved, "contradictions": [c]})
+        model = build_report_model(state, get_registry())
+        assert model.decisions == [] and model.dismissed == []
+        assert_nothing_lost(state, get_registry(), model)
+        # With no table counted the disagreement is printed, as before.
+        before = build_report_model(state.model_copy(update={"schedules": []}), get_registry())
+        listed = before.decisions if verdict == "conflict" else before.dismissed
+        assert [d.field_id for d in listed] == [TABLE]
+
+    def test_appendix_a_prints_from_month_4_in_words(self, review_state: RunState) -> None:
+        import pymupdf
+
+        from rfp_intake.render import build_report_pdf
+
+        pdf = build_report_pdf(review_state, get_registry(), generated_at="2026-10-19")
+        with pymupdf.open(stream=pdf, filetype="pdf") as doc:  # type: ignore[no-untyped-call]
+            text = " ".join(" ".join(page.get_text().split()) for page in doc)
+        appendix = text[text.index("Appendix A — Evidence"):]
+        at = appendix.index("From Month 4")
+        assert appendix[at:at + 60].startswith("From Month 4] 1 a month until the study ends —"), (
+            appendix[at:at + 120])
+
     def test_a_total_with_a_quote_is_still_printed(self, review_state: RunState) -> None:
         """Decision of 2026-10-19: only the empty "not found" total goes; a
         passage on why there is no total is evidence, and stays."""
@@ -315,6 +356,20 @@ class TestPrintedOnce:
         assert not any(k is quoted for k in model.kept_out)
         assert quoted.quote in {e.quote for e in model.evidence if e.field_id == TOTALS}
         assert_nothing_lost(state, get_registry(), model)
+
+
+def _frequency_disagreement(verdict: str) -> Contradiction:
+    return Contradiction(
+        field_id=TABLE, verdict=verdict, severity="high",  # type: ignore[arg-type]
+        explanation="The synopsis and the schedule give different visit frequencies.",
+        records=[
+            FieldRecord(field_id=TABLE, group="visits", raw_value=v, value=v, quote=v,
+                        provenance=Provenance(doc_id="doc-protocol", doc_kind="protocol",
+                                              page=page),
+                        confidence=0.7)
+            for v, page in (("weekly", 26), ("every 2 weeks", 12))
+        ],
+    )
 
 
 @pytest.mark.parametrize(("label", "inside"), [

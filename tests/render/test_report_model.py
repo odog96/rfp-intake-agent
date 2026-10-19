@@ -245,8 +245,13 @@ def assert_nothing_lost(state: RunState, registry: Registry, model: ReportModel)
                     f"{row.field_id}: a side cites {at} for {text!r}, which it does not state"
                 )
 
-    # Every adjudicated disagreement is either a decision or listed as dismissed.
-    adjudicated = [c for c in state.contradictions if c.verdict is not None]
+    # Every adjudicated disagreement is either a decision or listed as dismissed,
+    # except one of a variable whose every entry is kept out above (2026-10-19).
+    printed = {rf.field_id for rf in state.resolved if not any(rf is k for k in model.kept_out)}
+    hidden = {k.field_id for k in model.kept_out} - printed
+    adjudicated = [
+        c for c in state.contradictions if c.verdict is not None and c.field_id not in hidden
+    ]
     decided = {d.field_id for d in model.decisions}
     dismissed = {d.field_id for d in model.dismissed}
     for c in adjudicated:

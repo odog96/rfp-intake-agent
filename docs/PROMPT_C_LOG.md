@@ -617,7 +617,8 @@ Decisions taken for Oliver:
   member row had (such as a document-stated total at low confidence), each once.
 
 Known limits, recorded:
-- Appendix B and the Disagreements table still read every entry. A numbered disagreement on the
+- (Fixed 2026-10-19; see "Item 5's fix and the two gaps" below.) Appendix B and the Disagreements
+  table still read every entry. A numbered disagreement on the
   visit frequency itself would still print there, but its passages would be missing from Appendix A,
   which reads only the printed entries (pipeline-rules reviewer, 2026-10-19). `r-20261019-prompt-c2`
   has none: its only visits contradiction is on `visits.schedule_present`. Closing it (keeping an
@@ -626,7 +627,7 @@ Known limits, recorded:
 - A document-stated total that is already a numbered disagreement would be listed twice: once in
   Disagreements and once inside the one totals row in Flagged for review, which is listed whole. No
   saved run has one.
-- Appendix A still prints the derived "From Month 4" row with value "—" and the note "1 a month
+- (Fixed 2026-10-19; see below.) Appendix A still prints the derived "From Month 4" row with value "—" and the note "1 a month
   until the study ends". Item 3 named Flagged for review only.
 - report.xlsx's Fields sheet shows the "From Month 4" value as an empty cell, as before.
 
@@ -670,6 +671,68 @@ Commit: `bb19091`. Not pushed. The live run waits for Oliver's decision on item 
 `ruff check .` clean. mypy on the changed files: no new error (one older error at
 `tests/render/test_report_model.py:194`, an identity check between a ResolvedField and a FieldRecord,
 was there before this change).
+
+### Item 5's fix and the two gaps — built
+
+Oliver's instruction, verbatim:
+
+> Build the item 5 fix, with one change: drop "treatment" and "treated" from the required words,
+> because study-period sentences such as "a treatment/follow-up period of 18 months" contain them.
+> Keep: dose, dosed, dosing, administered, drug, cycle, cycles, infusion. Add a test that the
+> 18-month treatment/follow-up sentence is rejected and the amendment p.54 sentence is accepted.
+> The two gaps: when the visit table is present, the old visit-frequency records must not produce a
+> numbered disagreement either; and fix the "—" for From Month 4 in Appendix A the same way as in
+> Flagged for review.
+
+Item 5, built:
+- A new registry key, `quote_must_mention` (`domain/registry.py`, `FieldDef`): words a record's
+  quote must contain, any one, whole and ignoring case, whatever the value. The registry check
+  refuses an empty word.
+- `extract/validate.py:answers_field` gains the third rule. A record whose quote says none of the
+  words is rejected as "Rejected: quote_mentions_none_of_the_required_words", with its value, quote
+  and page in the run's errors, and no repair retry, like the other two rules.
+- `config/fields.yaml`, `dosing.duration`: `quote_must_mention: [dose, dosed, dosing, administered,
+  drug, cycle, cycles, infusion]`, and one hint sentence: "The length of the whole study, of its
+  enrolment period or of its treatment and follow-up period together is not how long patients are
+  dosed."
+- Tests (`tests/extract/test_answers_field.py:TestTheQuoteMustMentionDosing`): RFP p.3's sentence
+  and "a treatment/follow-up period of 18 months" are rejected; amendment p.54's "The study drug
+  will be administered once every 28 days … until the EOT/Early Treatment Discontinuation (ETD)
+  Visit" is accepted; whole words in any case; a not-specified record is judged by confidence only;
+  the config list is Oliver's. `tests/domain/test_registry.py`: the key is read, and an empty word
+  is refused.
+- Known risk: whole-word matching means "doses", "drugs", "infusions" and "administration" do not
+  count. A dosing sentence using only those words would be rejected. Not added, because Oliver gave
+  the list.
+
+Gap 1, built: `render/report_model.py:build_report_model` leaves out the disagreements of a variable
+whose every entry `report_entries` keeps out — the model's visit frequencies once the Schedule of
+Events is counted — from the Disagreements table and Appendix B. They stay in `extraction.json`.
+The nothing-lost test skips them the same way.
+- **Decision taken for Oliver: Appendix B too.** Alternative: leave them out of the numbered table
+  only and list them in Appendix B. Reason: item 1 said the records are kept "in extraction.json
+  only", and Appendix B would print their values and pages with no Appendix A passage behind them.
+
+Gap 2, built: in Appendix A, a derived stage total with no sum reads as its stage's words, which
+DERIVE keeps in `notes` ("1 a month until the study ends"), the words Flagged for review prints;
+the note is then not printed a second time. Keyed by `from_schedule: stage_totals`, not the field id.
+
+Still not done: report.xlsx's Fields sheet still shows the "From Month 4" value as an empty cell
+(not asked). The double listing of a document-stated total that is a numbered disagreement (limit 2
+above) is unchanged. A scan of the saved runs' `dosing.duration` quotes against the new word list
+was refused by the session's permission check and not retried, so how many past records the rule
+would have rejected is not measured.
+
+Checks: full offline pytest 1596 passed, 1 skipped. `ruff check src tests` clean. mypy on the six
+changed source and test files: no new error (the older one at `tests/render/test_report_model.py:194`
+remains). Gate reviewers, two passes each. First pass: pipeline-rules found no violation and one
+suspicion, that §4.4's "whatever its value" did not say a not-specified record is exempt; §4.4 now
+says so (the code and a test already did). Plan-conformance found every part met, and a stale "two
+rules" comment in `domain/schemas.py`, now corrected. Second pass, after that last edit to src/:
+pipeline-rules found no violation and safe to commit; plan-conformance found every part still met
+and nothing blocking.
+
+Commit: one commit for item 5's fix and the two gaps (hash in the live-run section below). Not pushed.
 
 ## Gaps on the other two protocols (reported, not fixed, as Oliver instructed)
 

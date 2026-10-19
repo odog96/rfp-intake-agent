@@ -1,5 +1,6 @@
-"""EXTRACT's two rejection rules of stage 6 of the 2026-10-12 plan, and the
-section heading it records on each kept record.
+"""EXTRACT's two rejection rules of stage 6 of the 2026-10-12 plan, the third of
+2026-10-19 (`quote_must_mention`), and the section heading it records on each kept
+record.
 
 `answers_field` rejects a record that passed the word-for-word quote check but
 does not answer the field: a "not specified" the model rates below 0.50, and a
@@ -125,8 +126,49 @@ class TestTheQuoteMustSayTheRoute:
         assert answers_field(item, _field(registry, _FORM)) is None
 
     def test_a_field_with_no_words_listed_is_not_checked(self, registry: Registry) -> None:
-        field = next(f for f in registry.fields if not f.quote_must_say and not f.derived)
+        field = next(f for f in registry.fields
+                     if not f.quote_must_say and not f.quote_must_mention and not f.derived)
         assert answers_field(_item("anything", "a quote"), field) is None
+
+
+_DURATION = "dosing.duration"
+
+
+class TestTheQuoteMustMentionDosing:
+    # Item 5 of Oliver's 2026-10-19 follow-ups: run r-20261019-prompt-c2 read RFP
+    # p.3's study length as how long patients are dosed. "treatment" and "treated"
+    # are not among the words, because study-period sentences contain them.
+
+    @pytest.mark.parametrize("quote", [
+        "40 month study duration; enrollment over approximately 24 months",
+        "a treatment/follow-up period of 18 months",
+    ])
+    def test_a_study_length_sentence_is_rejected(self, registry: Registry, quote: str) -> None:
+        item = _item("18 months", quote)
+        assert (answers_field(item, _field(registry, _DURATION))
+                == "quote_mentions_none_of_the_required_words")
+
+    def test_the_amendment_p54_sentence_is_accepted(self, registry: Registry) -> None:
+        quote = ("The study drug will be administered once every 28 days from the time the "
+                 "subject is randomized until the EOT/Early Treatment Discontinuation (ETD) Visit")
+        item = _item("until the EOT/ETD Visit", quote)
+        assert answers_field(item, _field(registry, _DURATION)) is None
+
+    def test_the_words_are_whole_and_in_any_case(self, registry: Registry) -> None:
+        field = _field(registry, _DURATION)
+        assert answers_field(_item("6 cycles", "Up to 6 CYCLES of therapy"), field) is None
+        # "drug" inside "drugstore" is not the study drug.
+        assert answers_field(_item("6 months", "a drugstore for 6 months"), field) is not None
+
+    def test_a_not_specified_record_is_judged_by_confidence_only(
+        self, registry: Registry
+    ) -> None:
+        item = _item("not specified", "The protocol does not state it", status="not_specified")
+        assert answers_field(item, _field(registry, _DURATION)) is None
+
+    def test_the_config_words_are_the_ones_oliver_kept(self, registry: Registry) -> None:
+        assert _field(registry, _DURATION).quote_must_mention == [
+            "dose", "dosed", "dosing", "administered", "drug", "cycle", "cycles", "infusion"]
 
 
 _PAGE_1 = (

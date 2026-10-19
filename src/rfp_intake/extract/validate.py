@@ -7,9 +7,9 @@ Non-negotiable per ARCHITECTURE.md §4.4:
 4. numeric fields must parse
 5. an `object[]` field's entry must be one JSON object of its schema's keys
 
-`answers_field` adds two rules of 2026-10-12 (stage 6 of that day's plan) that
-reject a record without a repair retry, since a retry cannot make the passage
-say what it does not say.
+`answers_field` adds two rules of 2026-10-12 (stage 6 of that day's plan) and
+one of 2026-10-19 that reject a record without a repair retry, since a retry
+cannot make the passage say what it does not say.
 """
 
 from __future__ import annotations
@@ -226,24 +226,31 @@ def validate_entry(raw_value: str, quote: str, field_def: FieldDef) -> str | Non
 def answers_field(item: FieldExtractionItem, field_def: FieldDef) -> str | None:
     """Why a record that passed `validate_record` is still rejected, or None.
 
-    Two rules, both of stage 6 of the 2026-10-12 plan:
+    Three rules, the first two of stage 6 of the 2026-10-12 plan:
     - a "not specified" record the model rates below
       NOT_SPECIFIED_MIN_CONFIDENCE is a guess that the document is silent, not
       a document saying so;
     - a value the field lists under `quote_must_say` in config/fields.yaml needs
       a quote containing one of its words, whole and in any case. The value is
       read as NORMALIZE will read it, so "IV infusion" and "infusion_iv" are the
-      same value.
+      same value;
+    - a field with `quote_must_mention` needs a quote containing one of those
+      words, whole and in any case, whatever the value (item 5 of the
+      2026-10-19 follow-ups).
     """
     if item.status == "not_specified":
         if item.confidence < NOT_SPECIFIED_MIN_CONFIDENCE:
             return f"not_specified_below_{NOT_SPECIFIED_MIN_CONFIDENCE:.2f}_confidence"
         return None
+    quote_words = {w.casefold() for w in re.findall(r"\w+", item.quote)}
+    if field_def.quote_must_mention and not any(
+        w.casefold() in quote_words for w in field_def.quote_must_mention
+    ):
+        return "quote_mentions_none_of_the_required_words"
     if not field_def.quote_must_say:
         return None
     value = normalize_value(item.raw_value, field_def.type, field_def.values)
     values = value if isinstance(value, list) else [value]
-    quote_words = {w.casefold() for w in re.findall(r"\w+", item.quote)}
     for v in values:
         words = field_def.quote_must_say.get(str(v)) if v is not None else None
         if words and not any(w.casefold() in quote_words for w in words):

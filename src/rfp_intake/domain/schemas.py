@@ -377,8 +377,8 @@ class RunError(BaseModel):
     rejected_value: str | None = None
     rejected_quote: str | None = None
     # The page the rejected record named. Added 2026-10-12 so the records the
-    # two rules of extract/validate.py:answers_field reject can be listed by
-    # field, page and quote.
+    # rules of extract/validate.py:answers_field reject (two then, three since
+    # 2026-10-19) can be listed by field, page and quote.
     rejected_page: int | None = None
     timestamp: datetime = Field(default_factory=datetime.now)
 

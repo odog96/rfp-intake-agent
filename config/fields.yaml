@@ -846,7 +846,15 @@ fields:
       when the patient joins the study, say so in the value and quote the sentence that says
       that. Never work out a number of weeks, months, doses or cycles the passage does not
       give. If dosing differs by cohort, arm, dose level or part, emit one record per scope,
-      as for the dosing schedule.
+      as for the dosing schedule. The length of the whole study, of its enrolment period or of
+      its treatment and follow-up period together is not how long patients are dosed.
+    # Item 5 of Oliver's 2026-10-19 follow-ups: run r-20261019-prompt-c2 read RFP p.3's
+    # "40 month study duration; enrollment over approximately 24 months" as this field. A
+    # record whose quote says none of these words is rejected by EXTRACT
+    # (extract/validate.py:answers_field). "treatment" and "treated" are left out on
+    # Oliver's instruction: study-period sentences such as "a treatment/follow-up period of
+    # 18 months" contain them.
+    quote_must_mention: [dose, dosed, dosing, administered, drug, cycle, cycles, infusion]
     plain: >
       How long each patient keeps receiving the study drug: a fixed number of weeks or cycles,
       or until a visit or an event. Together with how often it is given, it sets how many

@@ -824,7 +824,11 @@ Where two sections share a page, the table may belong to the other one. Accepted
    record rated below `NOT_SPECIFIED_MIN_CONFIDENCE` (0.50) is rejected: it is a guess that the document
    is silent. A value a field lists under `quote_must_say` in `config/fields.yaml` is rejected when its
    quote says none of the listed words, as whole words with case ignored; only `ip.form`'s `infusion_iv`
-   declares words. A rejected record goes to `errors` as "Rejected: <reason>" with its value, quote and
+   declares words. A field that lists words under `quote_must_mention` is rejected, whatever its value,
+   when its quote says none of them, matched the same way (a "not specified" record is judged by its confidence
+   only, as for `quote_must_say`); added 2026-10-19 for `dosing.duration`, after
+   run `r-20261019-prompt-c2` read RFP p.3's "40 month study duration" as how long patients are dosed.
+   A rejected record goes to `errors` as "Rejected: <reason>" with its value, quote and
    page (`RunError.rejected_page`), and gets **no repair retry**, because the quote was found and a retry
    cannot change what the passage says. The prompt says "not_specified" only where the quoted passage
    itself says the item does not apply.
@@ -1325,8 +1329,11 @@ is what makes the whole pipeline testable without a filesystem.
   `table` variable, and a `stage_totals` entry that is not found with no quote once DERIVE has written
   stage totals, are left out of the main table, Flagged for review, Appendix A and report.xlsx's
   Fields and Review Queue sheets by `render/report_model.py:report_entries`, which lists them on
-  `ReportModel.kept_out` for the nothing-lost test. The Disagreements table and Appendix B still read
-  every entry (a known limit in `docs/PROMPT_C_LOG.md`). Under the table a grey line,
+  `ReportModel.kept_out` for the nothing-lost test. A variable whose every entry is left out also has
+  its disagreements left out of the Disagreements table and Appendix B (2026-10-19), so the model's
+  visit frequencies get no Disagreement number; they stay in `extraction.json`. In Appendix A a stage
+  total with no sum ("From Month 4") reads as its stage's words, as in Flagged for review, not "—".
+  Under the table a grey line,
   `wording.left_out`, names the considerations the Assessments count leaves out, and "Words used in
   this report" explains Key considerations (`wording.considerations_plain`). Page 1 counts the
   variables flagged for review, not the rows.

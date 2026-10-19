@@ -1112,12 +1112,14 @@ def test_the_stage6_keys_are_read(tmp_path: Path) -> None:
     registry = load_registry(_with_stage6_keys(
         tmp_path,
         quote_must_say={"infusion": ["IV", "infusion"]},
+        quote_must_mention=["dose", "drug"],
         prefer_sections=["schedule of assessments"],
         when_not_found={"lines": ["No total."], "because_scopes": ["why no total"],
                         "see": ["g1.form"]},
     ))
     form, count = registry.get_field("g1.form"), registry.get_field("g1.count")
     assert form.quote_must_say == {"infusion": ["IV", "infusion"]}
+    assert form.quote_must_mention == ["dose", "drug"]
     assert form.prefer_sections == ["schedule of assessments"]
     note = count.when_not_found
     assert note is not None and note.see == ["g1.form"]
@@ -1128,6 +1130,7 @@ def test_the_stage6_keys_are_read(tmp_path: Path) -> None:
 @pytest.mark.parametrize(("keys", "message"), [
     ({"quote_must_say": {"capsule": ["oral"]}}, "quote_must_say for values it does not allow"),
     ({"quote_must_say": {"infusion": [" "]}}, "quote_must_say value with no words"),
+    ({"quote_must_mention": ["dose", " "]}, "empty quote_must_mention word"),
     ({"prefer_sections": ["schedule", " "]}, "empty prefer_sections phrase"),
     ({"when_not_found": {"see": ["g1.nothing"]}}, "when_not_found sees unknown field"),
     ({"when_not_found": {"see": ["g1.count"]}}, "when_not_found sees unknown field"),

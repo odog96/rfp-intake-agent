@@ -521,6 +521,12 @@ class FieldDef(BaseModel):
     # infusion from RFP p.1, which names only an antibody. Fix 11 of the
     # 2026-10-12 brief, declared for ip.form only.
     quote_must_say: dict[str, list[str]] = Field(default_factory=dict)
+    # Words a record's quote must contain, any one of them, whatever the value,
+    # matched as whole words ignoring case. A record whose quote says none of
+    # them is rejected by EXTRACT (extract/validate.py:answers_field). Item 5 of
+    # Oliver's 2026-10-19 follow-ups: run r-20261019-prompt-c2 read RFP p.3's
+    # "40 month study duration" as how long patients are dosed.
+    quote_must_mention: list[str] = Field(default_factory=list)
     # Section headings, as phrases (scope_has_phrase), whose records outrank
     # every other record of the same document for this field, whatever their
     # confidence: the schedule table over a summary paragraph. Read from the
@@ -963,6 +969,8 @@ def _validate_registry(groups: list[GroupDef], fields: list[FieldDef]) -> None:
             )
         if any(not [w for w in ws if w.strip()] for ws in f.quote_must_say.values()):
             errors.append(f"Field {f.id} has a quote_must_say value with no words")
+        if any(not w.strip() for w in f.quote_must_mention):
+            errors.append(f"Field {f.id} has an empty quote_must_mention word")
         if any(not p.strip() for p in f.prefer_sections):
             errors.append(f"Field {f.id} has an empty prefer_sections phrase")
 
