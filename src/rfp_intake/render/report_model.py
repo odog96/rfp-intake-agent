@@ -231,6 +231,11 @@ class Row:
     # A row whose figure would rate the tool's own count or sum has none: there
     # is no extraction model's rating to print (Prompt C).
     no_figure: bool = False
+    # A row Flagged for review lists as itself, not as its members, with
+    # `review_text` as its value there: the counted visit table and the stage
+    # totals, one row each (follow-up 3 of Prompt C, Oliver, 2026-10-19).
+    review_as_one: bool = False
+    review_text: str | None = None
 
 
 @dataclass
@@ -268,6 +273,9 @@ class VisitTable:
     head: list[str]
     rows: list[list[str]]
     lines: list[str] = field(default_factory=list)
+    # Printed in grey straight under the table: what the Assessments count
+    # leaves out (follow-up 4 of Prompt C). None when every mark is counted.
+    note: str | None = None
 
 
 @dataclass
@@ -286,6 +294,8 @@ class VisitSchedule:
     missing: str | None
     pages: list[Provenance] = field(default_factory=list)
     totals: list[str] = field(default_factory=list)
+    # The stage totals as Flagged for review prints them, one short line each.
+    flagged: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -402,24 +412,30 @@ class ReportModel:
     # report rebuilt by older code — scripts/rerender_report.py against an
     # extraction.json written before 2026-10-02 — has nothing to put in it.
     removed: list[RemovedText] = field(default_factory=list)
+    # The entries kept in extraction.json only (`report_entries`).
+    kept_out: list[ResolvedField] = field(default_factory=list)
 
     def all_rows(self) -> list[Row]:
         """Every row with a value, a row of a `scopes` display as its parts and
         a block as the rows it replaced."""
+        return self._rows(as_one=False)
+
+    def review_rows(self) -> list[Row]:
+        """Rows needing a look that are not already a page-1 decision. A row
+        marked `review_as_one` is one of them, not its members."""
+        return [
+            r for r in self._rows(as_one=True)
+            if r.status == "needs_review" and r.decision_no is None
+        ]
+
+    def _rows(self, as_one: bool) -> list[Row]:
         rows: list[Row] = []
         for g in self.groups:
             for r in g.rows:
-                rows += r.parts or r.members or [r]
+                rows += [r] if as_one and r.review_as_one else (r.parts or r.members or [r])
             for s in g.schedules:
                 rows += s.rows
         return rows
-
-    def review_rows(self) -> list[Row]:
-        """Rows needing a look that are not already a page-1 decision."""
-        return [
-            r for r in self.all_rows()
-            if r.status == "needs_review" and r.decision_no is None
-        ]
 
 
 # --------------------------------------------------------------------------- #
@@ -637,6 +653,39 @@ def _all_provenance(state: RunState) -> list[Provenance]:
 # --------------------------------------------------------------------------- #
 
 
+def report_entries(
+    state: RunState, registry: Registry,
+) -> tuple[list[ResolvedField], list[ResolvedField]]:
+    """The entries report.pdf and report.xlsx print, and the entries kept in
+    extraction.json only (follow-ups 1 and 2 of Prompt C, Oliver, 2026-10-19).
+
+    Only when a Schedule of Events was counted, and only by a variable's
+    `from_schedule` in config/fields.yaml, never by its id:
+    - every entry of the `table` variable: the model's own reading of the
+      schedule, which the counted table printed in its row replaces;
+    - an entry of the `stage_totals` variable that says only that no total was
+      found (not found, no quote), once DERIVE has written the stage totals.
+      An entry quoting why there is no total is still printed.
+    Nothing is worked out here; entries are only left out of the reports.
+    """
+    kept: list[ResolvedField] = []
+    if registry.schedule_table is not None and any(
+        s.counted and s.columns for s in state.schedules
+    ):
+        table = {f.id for f in registry.fields if f.from_schedule == "table"}
+        totals = {f.id for f in registry.fields if f.from_schedule == "stage_totals"}
+        summed = {rf.field_id for rf in state.resolved if rf.field_id in totals and rf.derived_from}
+        kept = [
+            rf for rf in state.resolved
+            if rf.field_id in table or (
+                rf.field_id in summed and rf.status == "not_found"
+                and not rf.quote and not rf.derived_from
+            )
+        ]
+    printed = [rf for rf in state.resolved if not any(rf is k for k in kept)]
+    return printed, kept
+
+
 def build_report_model(state: RunState, registry: Registry) -> ReportModel:
     docs = _Docs(state)
     field_by_id = {f.id: f for f in registry.fields}
@@ -644,8 +693,13 @@ def build_report_model(state: RunState, registry: Registry) -> ReportModel:
     decisions = _decisions(state, field_by_id, docs, registry.report_wording)
     decision_no = {d.signature: d.no for d in decisions}
 
+    # The main table, the review list and Appendix A read only the entries the
+    # report prints; the disagreements and the document names read the run.
+    printed, kept_out = report_entries(state, registry)
+    shown = state.model_copy(update={"resolved": printed})
+
     by_field: dict[str, list[ResolvedField]] = defaultdict(list)
-    for rf in state.resolved:
+    for rf in shown.resolved:
         by_field[rf.field_id].append(rf)
 
     # Every variable's rows first: a block can quote a variable of another group.
@@ -691,7 +745,7 @@ def build_report_model(state: RunState, registry: Registry) -> ReportModel:
     # The Schedule of Events READ_SCHEDULE counted (Prompt C), in the rows of
     # the variables `from_schedule` names; before the `when_not_found` rows, as
     # the stage totals are a value.
-    schedule = _visit_schedule(state, registry, docs)
+    schedule = _visit_schedule(shown, registry, docs)
     if schedule is not None:
         _show_schedule(
             schedule, registry, shown_as, rows_by_field, by_field, docs,
@@ -720,7 +774,11 @@ def build_report_model(state: RunState, registry: Registry) -> ReportModel:
         for fd in (f for f in registry.fields if f.group == group.id):
             field_rows = rows_by_field[fd.id]
             noted = fd.id in shown_as and shown_as[fd.id].status == "not_found"
-            if not noted and any(r.status != "not_found" for r in field_rows):
+            # A row standing for the variable with a value is found, though the
+            # entries behind it are kept out of the report (report_entries).
+            if not noted and (
+                fd.id in shown_as or any(r.status != "not_found" for r in field_rows)
+            ):
                 found += 1
             if fd.id in in_headline:
                 continue
@@ -761,12 +819,29 @@ def build_report_model(state: RunState, registry: Registry) -> ReportModel:
         groups=sections,
         decisions=decisions,
         dismissed=_dismissed(state, field_by_id, docs, registry.report_wording),
-        evidence=_evidence(state, field_by_id, docs, decision_no, registry.report_wording),
-        glossary=[Term(f.label, f.plain) for f in registry.fields if f.plain],
+        evidence=_evidence(shown, field_by_id, docs, decision_no, registry.report_wording),
+        glossary=_glossary(registry, schedule),
         variables_total=len(registry.fields),
         variables_found=found,
         removed=_removed(state, docs),
+        kept_out=kept_out,
     )
+
+
+def _glossary(registry: Registry, schedule: VisitSchedule | None) -> list[Term]:
+    """Each field's `plain`, and with a visit table printed, what its Key
+    considerations column means, after the table variable's own term
+    (follow-up 4 of Prompt C)."""
+    terms = []
+    config = registry.schedule_table
+    for f in registry.fields:
+        if f.plain:
+            terms.append(Term(f.label, f.plain))
+        if (f.from_schedule == "table" and config is not None and schedule is not None
+                and schedule.tables):
+            w = config.wording
+            terms.append(Term(w.considerations, w.considerations_plain))
+    return terms
 
 
 # How much of a removed passage Appendix C prints. One or two sentences is enough
@@ -1438,7 +1513,11 @@ def _display_row(
     scored = [
         v.confidence for m in members for v in m.values if v.status != "not_found"
     ]
-    status = min((m.status for m in members), key=lambda st: _STATUS_RANK.get(st, 0))
+    # No members: the counted visit table's row (_show_schedule), whose status
+    # _counted_by_tool sets.
+    status = min(
+        (m.status for m in members), key=lambda st: _STATUS_RANK.get(st, 0), default="not_found",
+    )
     return Row(
         field_id=fd.id,
         label=fd.label,
@@ -1924,7 +2003,7 @@ def _visit_schedule(state: RunState, registry: Registry, docs: _Docs) -> VisitSc
         elif not s.columns:
             unreadable.append(fill(w.unreadable, pages=where))
         else:
-            tables.append(_visit_table(s, config, docs))
+            tables.append(_visit_table(s, config, docs, registry.report_wording))
             pages += _schedule_pages(s)
             unstaged += [
                 " ".join(f"{c.period} {c.timing}".split()) for c in s.columns if c.stage is None
@@ -1935,7 +2014,10 @@ def _visit_schedule(state: RunState, registry: Registry, docs: _Docs) -> VisitSc
     totals = _total_lines(state, registry)
     if totals and unstaged:
         totals.append(fill(w.no_stage, periods="; ".join(unstaged)))
-    return VisitSchedule(tables, unreadable + not_counted, missing, pages, totals)
+    return VisitSchedule(
+        tables, unreadable + not_counted, missing, pages, totals,
+        _total_lines(state, registry, short=True),
+    )
 
 
 def _schedule_pages(s: ScheduleRead) -> list[Provenance]:
@@ -1948,9 +2030,21 @@ def _schedule_pages(s: ScheduleRead) -> list[Provenance]:
     ]
 
 
-def _visit_table(s: ScheduleRead, config: ScheduleTable, docs: _Docs) -> VisitTable:
+def _lower_first(label: str) -> str:
+    """A label inside a sentence: "Randomization" reads "randomization". A label
+    whose first word is not one capital followed by lower-case letters, such as
+    "IV infusion", stays as written."""
+    first = label.split(" ", 1)[0]
+    return label[:1].lower() + label[1:] if first[1:].islower() else label
+
+
+def _visit_table(
+    s: ScheduleRead, config: ScheduleTable, docs: _Docs, wording: ReportWording,
+) -> VisitTable:
     """A row per visit column, in the header's own words. A column of more than
-    one visit, or a repeating one, has its count per visit (`wording.each`)."""
+    one visit, or a repeating one, has its count per visit (`wording.each`).
+    Under it, when only assessments are counted, the considerations whose marks
+    the count leaves out (`assessment: false`), by their labels."""
     w = config.wording
     fill = ReportWording.fill
     labels = {c.id: c.label for c in config.considerations}
@@ -1980,6 +2074,9 @@ def _visit_table(s: ScheduleRead, config: ScheduleTable, docs: _Docs) -> VisitTa
             ", ".join(labels[i] for i in c.considerations if i in labels) or "—",
             where(c.pages or s.pages),
         ])
+    left = [] if config.count_non_assessments else [
+        _lower_first(c.label) for c in config.considerations if not c.assessment
+    ]
     return VisitTable(
         heading=s.heading,
         sources=docs.pages(_schedule_pages(s)),
@@ -1990,13 +2087,16 @@ def _visit_table(s: ScheduleRead, config: ScheduleTable, docs: _Docs) -> VisitTa
         ],
         rows=rows,
         lines=[fill(w.unplaced, text=t) for t in s.unplaced],
+        note=fill(w.left_out, column=w.assessments, items=_join_list(left, wording))
+        if left else None,
     )
 
 
-def _total_lines(state: RunState, registry: Registry) -> list[str]:
+def _total_lines(state: RunState, registry: Registry, short: bool = False) -> list[str]:
     """A line per stage total DERIVE wrote: the sum beside its parts, or the
     stage's words where it repeats (exception A and decision C of Prompt C).
-    DERIVE keeps the parts in `notes`."""
+    DERIVE keeps the parts in `notes`. `short`: the sum without its parts, as
+    Flagged for review prints it."""
     config = registry.schedule_table
     target = next((f for f in registry.fields if f.from_schedule == "stage_totals"), None)
     if config is None or target is None:
@@ -2012,7 +2112,7 @@ def _total_lines(state: RunState, registry: Registry) -> list[str]:
             lines.append(fill(w.says_line, stage=stage, says=rf.notes or "—"))
             continue
         total = format_value(rf.value, target)[0]
-        if rf.notes and rf.notes != str(rf.value):
+        if rf.notes and rf.notes != str(rf.value) and not short:
             lines.append(fill(w.total_line, stage=stage, total=total, parts=rf.notes))
         else:
             lines.append(fill(w.total_one, stage=stage, total=total))
@@ -2040,13 +2140,15 @@ def _show_schedule(
     sources = docs.pages(schedule.pages)
 
     if table_fd is not None and schedule.tables:
+        # No members: the variable's extracted entries are kept in
+        # extraction.json only (report_entries), so this row stands alone.
         row = _display_row(
-            table_fd, list(rows_by_field.get(table_fd.id, [])),
-            ReportWording.fill(w.shown_below, heading=headings), sources, [], [],
+            table_fd, [], ReportWording.fill(w.shown_below, heading=headings), sources, [], [],
         )
         _counted_by_tool(row, wording)
         row.visit_tables = schedule.tables
         row.visit_lines = schedule.lines
+        row.review_text = ReportWording.fill(w.flagged_table, heading=headings)
         shown_as[table_fd.id] = row
     elif table_fd is not None:
         # A variable with no row at all is printed by the when_not_found loop or
@@ -2058,7 +2160,7 @@ def _show_schedule(
 
     if totals_fd is None or not schedule.tables or not schedule.totals:
         return
-    members = list(rows_by_field.get(totals_fd.id, []))
+    members = [r for r in rows_by_field.get(totals_fd.id, []) if r.values[0].entries]
     for m in members:
         if all(rf.derived_from for v in m.values for rf in v.entries):
             m.no_figure = True
@@ -2088,16 +2190,23 @@ def _show_schedule(
         lines, [],
     )
     _counted_by_tool(row, wording)
+    row.review_text = "; ".join(schedule.flagged)
     shown_as[totals_fd.id] = row
 
 
 def _counted_by_tool(row: Row, wording: ReportWording) -> None:
     """A row the tool counted reads "Worked out by the tool — confirm" and is
-    for review, whatever the extracted rows behind it say; it has no figure."""
+    for review, whatever the extracted rows behind it say; it has no figure.
+    Flagged for review lists it once, as itself, for that reason."""
     row.derived_status = wording.derived_status
     row.status = "needs_review"
     row.values[0].status = "needs_review"
     row.no_figure = True
+    row.review_as_one = True
+    # A member's own reason too: a total a document states, at low confidence.
+    row.reasons = list(dict.fromkeys(
+        [REASON_DERIVED, *(reason for m in row.members for reason in m.reasons)]
+    ))
 
 
 # The verdicts on which ADJUDICATE writes ONE row for a whole disagreement:

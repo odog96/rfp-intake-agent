@@ -809,6 +809,9 @@ class ScheduleWording(BaseModel):
     no_stage: str
     unplaced: str
     stated: str
+    left_out: str
+    flagged_table: str
+    considerations_plain: str
 
     @model_validator(mode="after")
     def _names_only_its_own(self) -> ScheduleWording:
@@ -817,7 +820,8 @@ class ScheduleWording(BaseModel):
             "unreadable": {"pages"}, "shown_below": {"heading"}, "totals_head": {"heading"},
             "total_line": {"stage", "total", "parts"}, "total_one": {"stage", "total"},
             "says_line": {"stage", "says"}, "no_stage": {"periods"}, "unplaced": {"text"},
-            "stated": {"value", "pages"},
+            "stated": {"value", "pages"}, "left_out": {"column", "items"},
+            "flagged_table": {"heading"},
         }
         for name, value in self:
             unknown = set(placeholders(value)) - allowed.get(name, set())
@@ -825,7 +829,7 @@ class ScheduleWording(BaseModel):
                 raise ValueError(f"wording.{name} names {', '.join(sorted(unknown))}")
             if not value.strip():
                 raise ValueError(f"wording.{name} is empty")
-        for name in ("each", "total_line", "total_one", "says_line", "stated"):
+        for name in ("each", "total_line", "total_one", "says_line", "stated", "left_out"):
             missing = allowed[name] - set(placeholders(getattr(self, name)))
             if missing:
                 raise ValueError(f"wording.{name} must name {', '.join(sorted(missing))}")

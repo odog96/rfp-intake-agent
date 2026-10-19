@@ -212,14 +212,17 @@ def _header_block(model: ReportModel, generated_at: str, styles: dict) -> list: 
             lines.append(f"<b>{escape(d.code)}</b> = {name}{pages}")
         story.append(Paragraph("Documents reviewed: " + " · ".join(lines), styles["body"]))
 
-    review = model.review_rows()
-    review_bd = [r for r in review if r.budget_driver]
+    # Counted in variables, not rows: a variable with several flagged rows is one
+    # (Prompt C follow-up 3).
+    review = list(dict.fromkeys(r.field_id for r in model.review_rows()))
+    drivers = {r.field_id for r in model.review_rows() if r.budget_driver}
+    review_bd = [f for f in review if f in drivers]
     counts = (
         f"Values found for <b>{model.variables_found} of {model.variables_total}</b> variables. "
         f"<b>{len(model.decisions)}</b> disagreement{'s' if len(model.decisions) != 1 else ''} "
         f"between the documents need{'s' if len(model.decisions) == 1 else ''} a decision; "
-        f"<b>{len(review)}</b> other value{'s' if len(review) != 1 else ''} "
-        f"{'is' if len(review) == 1 else 'are'} flagged for review"
+        f"<b>{len(review)}</b> other variable{'s' if len(review) != 1 else ''} "
+        f"{'has' if len(review) == 1 else 'have'} values flagged for review"
         + (f", {len(review_bd)} of them budget drivers." if review_bd else ".")
     )
     story.append(Paragraph(counts, styles["body"]))
@@ -391,6 +394,10 @@ def _visit_cell(r: Row, styles: dict) -> list[object]:  # type: ignore[type-arg]
                 + [Paragraph(escape(cells[-1]), styles["cell_small"])]
             )
         out.append(_table(data, _VISIT_COLS))
+        if t.note:
+            out.append(Paragraph(
+                f'<font size="7" color="#757575">{escape(t.note)}</font>', styles["cell"],
+            ))
         out += [Paragraph(escape(line), styles["cell"]) for line in t.lines]
     out += [Paragraph(escape(line), styles["cell"]) for line in r.visit_lines]
     return out
@@ -692,7 +699,10 @@ def _flagged(model: ReportModel, styles: dict) -> list:  # type: ignore[type-arg
             label += ' <font size="6.5" color="#1565c0">BUDGET</font>'
         if r.scope:
             label += f'<br/><font size="7.5" color="#555555">{escape(r.scope)}</font>'
-        value = _clip("; ".join(v.text for v in r.values), DECISION_VALUE_CHARS)
+        value = (
+            r.review_text if r.review_text is not None
+            else _clip("; ".join(v.text for v in r.values), DECISION_VALUE_CHARS)
+        )
         why = "<br/>".join(
             ("• " if len(r.reasons) > 1 else "") + escape(reason) for reason in r.reasons
         )

@@ -215,6 +215,17 @@ schedule_table:
     unplaced: "Not placed in a row: {text}"
     # A total a document states itself, printed under the counted ones.
     stated: "A document states: {value} ({pages})"
+    # Printed in grey under the table when only assessments are counted. `{column}`
+    # is `assessments` above; `{items}` the labels of the considerations below with
+    # `assessment: false`, in their order.
+    left_out: "The {column} count leaves out {items}."
+    # The visit-frequency row's value in Flagged for review, where the table is not.
+    flagged_table: "Counted from {heading}; the table is under this variable in All
+      variables."
+    # The "Words used in this report" entry for the `considerations` column.
+    considerations_plain: "The activities a visit includes that matter most for a
+      budget, such as informed consent, randomization or the study drug infusion. Each
+      visit lists the ones the Schedule of Events marks for it."
   # A ruled table inside a kept section whose heading says one of these is a schedule.
   headings: [schedule of events, schedule of activities, time and events schedule, soa, soe]
   # A schedule under a heading saying one of these is not counted: it is the

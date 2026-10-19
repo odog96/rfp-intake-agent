@@ -1318,9 +1318,19 @@ is what makes the whole pipeline testable without a filesystem.
   the column's pages — then "Not counted: …" for each schedule with `counted: false`. The count is
   Assessments (`count_non_assessments: false`, the default) or every mark ("Activities"); a column of
   several visits reads "7 each". The row of the field marked `from_schedule: stage_totals` prints
-  DERIVE's stage totals with their parts, then the documents' own sentence on why they give no total.
+  DERIVE's stage totals with their parts, then any passage a document gives on the total.
   Both rows read "Worked out by the tool — confirm", carry no confidence figure, and are in Flagged for
-  review. With no table counted, the first row says "No schedule table found." or "Schedule table on
+  review, each once: the table's row as `wording.flagged_table`, the totals as one line without their
+  parts. *Since 2026-10-19 (Prompt C follow-ups)*, with a table counted, the model's own entries of the
+  `table` variable, and a `stage_totals` entry that is not found with no quote once DERIVE has written
+  stage totals, are left out of the main table, Flagged for review, Appendix A and report.xlsx's
+  Fields and Review Queue sheets by `render/report_model.py:report_entries`, which lists them on
+  `ReportModel.kept_out` for the nothing-lost test. The Disagreements table and Appendix B still read
+  every entry (a known limit in `docs/PROMPT_C_LOG.md`). Under the table a grey line,
+  `wording.left_out`, names the considerations the Assessments count leaves out, and "Words used in
+  this report" explains Key considerations (`wording.considerations_plain`). Page 1 counts the
+  variables flagged for review, not the rows.
+  With no table counted, the first row says "No schedule table found." or "Schedule table on
   p.N could not be read." above its usual text, and the second is as before. All the words are
   `schedule_table.wording` in `config/fields.yaml`; `render/report_model.py:_visit_schedule` builds
   them and `render/pdf_renderer.py:_visit_cell` prints the table across the row.
@@ -1331,9 +1341,9 @@ is what makes the whole pipeline testable without a filesystem.
   analysts who prefer to work in a spreadsheet. Since 2026-10-17 (Prompt C) a third sheet, `Schedule of
   Events`, holds the same visit table, lines and stage totals report.pdf prints, from
   `render/report_model.py:visit_schedule`, or the line saying no table was counted. The `Fields` sheet
-  rows of the two variables are not reworded: they print each stored row as it is, so a stage total
-  with no number shows a blank value, `needs_review` and the stored confidence 100%, and its words are
-  only on the third sheet (decision 23 of `docs/PROMPT_C_LOG.md`).
+  rows of the two variables are not reworded: they print each stored row `report_entries` keeps, so a
+  stage total with no number shows a blank value, `needs_review` and the stored confidence 100%, and
+  its words are only on the third sheet (decision 23 of `docs/PROMPT_C_LOG.md`).
 
 **Budget creation is out of scope.** This tool produces the inputs. A downstream service consumes
 `extraction.json` and populates the budget model. Keeping that boundary clean is why JSON is a primary

@@ -20,7 +20,7 @@ from openpyxl.worksheet.worksheet import Worksheet
 
 from rfp_intake.domain.registry import FieldDef, Registry, ReportWording
 from rfp_intake.domain.schemas import ResolvedField, RunState
-from rfp_intake.render.report_model import VisitSchedule, visit_schedule
+from rfp_intake.render.report_model import VisitSchedule, report_entries, visit_schedule
 
 _HEADERS = [
     "Group", "Variable", "Value", "Status", "Confidence",
@@ -121,7 +121,10 @@ def build_report_xlsx(state: RunState, registry: Registry) -> bytes:
     field_by_id = {f.id: f for f in registry.fields}
     budget_drivers = {f.id for f in registry.fields if f.budget_driver}
 
-    all_rows = [(rf, field_by_id.get(rf.field_id)) for rf in state.resolved]
+    # What report.pdf prints: a counted visit table keeps the model's own visit
+    # frequencies and an empty total in extraction.json only (Prompt C follow-ups).
+    printed, _ = report_entries(state, registry)
+    all_rows = [(rf, field_by_id.get(rf.field_id)) for rf in printed]
 
     wb = Workbook()
     fields_ws = wb.active
@@ -162,6 +165,8 @@ def _write_schedule_sheet(ws: Worksheet, schedule: VisitSchedule, totals_label: 
             cell.font = Font(bold=True)
         for cells in t.rows:
             ws.append(cells)
+        if t.note:
+            ws.append([t.note])
         for line in t.lines:
             ws.append([line])
         ws.append([])

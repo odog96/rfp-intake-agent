@@ -198,6 +198,136 @@ class TestTheRealProtocol:
         assert [r[3] for r in rows[2:13]] == ASSESSMENTS
         assert rows[-3][:1] == ("Months 1–3: 12 (1 + 3 + 1 + 3 + 1 + 3)",)
 
+    def test_the_table_says_what_the_assessments_count_leaves_out(
+        self, protocol_state: RunState,
+    ) -> None:
+        [table] = _row(get_registry(), protocol_state, TABLE).visit_tables
+        assert table.note == (
+            "The Assessments count leaves out randomization, premedication, study drug "
+            "infusion and chemotherapy."
+        )
+        # Counting every mark leaves nothing out, so says nothing.
+        [table] = _row(_every_mark(get_registry()), protocol_state, TABLE).visit_tables
+        assert table.note is None
+
+    def test_key_considerations_is_in_the_word_list(self, protocol_state: RunState) -> None:
+        model = build_report_model(protocol_state, get_registry())
+        [term] = [t for t in model.glossary if t.label == "Key considerations"]
+        assert term.plain.startswith("The activities a visit includes")
+
+
+@pytest.fixture
+def review_state(samples_dir: Path) -> RunState:
+    """As run r-20261019-prompt-c2 left the two visit variables: the model's own
+    visit frequencies for review, and an empty total beside the stage totals."""
+    pdf = samples_dir / PROTOCOL
+    if not pdf.exists():
+        pytest.skip(f"{PROTOCOL} not available")
+    periods = _periods_row().model_copy(update={"status": "needs_review", "confidence": 0.7})
+    no_total = ResolvedField(field_id=TOTALS, status="not_found", confidence=0.0)
+    return _with(RunState(run_id="r-test", resolved=[periods, no_total],
+                          schedules=_protocol_schedules(pdf)))
+
+
+@pytest.mark.slow
+class TestPrintedOnce:
+    """Prompt C follow-ups 1 to 3 (Oliver, 2026-10-19): with the visit table shown,
+    the model's own visit frequencies and the empty total are in extraction.json
+    only, and each visit variable is flagged once."""
+
+    def test_the_model_s_visit_frequencies_and_the_empty_total_are_kept_out(
+        self, review_state: RunState,
+    ) -> None:
+        model = build_report_model(review_state, get_registry())
+        assert [(k.field_id, k.status) for k in model.kept_out] == [
+            (TABLE, "needs_review"), (TOTALS, "not_found"),
+        ]
+        assert TABLE not in {e.field_id for e in model.evidence}
+        # Appendix A keeps the four stage totals and nothing for the empty total.
+        assert [e.value for e in model.evidence if e.field_id == TOTALS] == ["2", "12", "—", "1"]
+        assert all(e.derived_from for e in model.evidence if e.field_id == TOTALS)
+        assert_nothing_lost(review_state, get_registry(), model)
+
+    def test_no_table_counted_keeps_everything(self, review_state: RunState) -> None:
+        state = review_state.model_copy(update={"schedules": []})
+        model = build_report_model(state, get_registry())
+        assert model.kept_out == []
+        assert TABLE in {e.field_id for e in model.evidence}
+
+    def test_each_visit_variable_is_flagged_once(self, review_state: RunState) -> None:
+        flagged = build_report_model(review_state, get_registry()).review_rows()
+        visits = [r for r in flagged if r.field_id in (TABLE, TOTALS)]
+        assert [(r.field_id, r.review_text) for r in visits] == [
+            (TABLE, "Counted from Table 1: Schedule of Events; the table is under this "
+                    "variable in All variables."),
+            (TOTALS, "Screening: 2; Months 1–3: 12; From Month 4: 1 a month until the study "
+                     "ends; End of treatment: 1"),
+        ]
+        assert all(r.reasons[0].startswith("Worked out by the tool") for r in visits)
+
+    def test_report_pdf(self, review_state: RunState) -> None:
+        import pymupdf
+
+        from rfp_intake.render import build_report_pdf
+
+        model = build_report_model(review_state, get_registry())
+        pdf = build_report_pdf(review_state, get_registry(), generated_at="2026-10-19")
+        with pymupdf.open(stream=pdf, filetype="pdf") as doc:  # type: ignore[no-untyped-call]
+            text = " ".join(" ".join(page.get_text().split()) for page in doc)
+        n = len({r.field_id for r in model.review_rows()})
+        assert f"{n} other variables have values flagged for review" in text
+        assert "Period: early_treatment" not in text
+        assert "The Assessments count leaves out randomization" in text
+        flagged = text[text.index("Flagged for review The documents"):]
+        assert "From Month 4: 1 a month until the study ends; End of treatment: 1" in flagged
+
+    def test_report_xlsx(self, review_state: RunState) -> None:
+        import openpyxl
+
+        from rfp_intake.render.xlsx_renderer import build_report_xlsx
+
+        wb = openpyxl.load_workbook(io.BytesIO(build_report_xlsx(review_state, get_registry())))
+        for sheet in ("Fields", "Review Queue"):
+            labels = [r[1] for r in wb[sheet].iter_rows(values_only=True)]
+            assert "Visit frequency by study period" not in labels
+            assert [lab for lab in labels if lab.startswith("Total number of subject visits")] == [
+                f"Total number of subject visits [{stage}]"
+                for stage in ("Screening", "Months 1–3", "From Month 4", "End of treatment")
+            ], sheet
+        schedule = [r[0] for r in wb["Schedule of Events"].iter_rows(values_only=True)]
+        note = schedule.index(
+            "The Assessments count leaves out randomization, premedication, study drug "
+            "infusion and chemotherapy."
+        )
+        # Straight under the table's last row, EOT/ETD.
+        assert schedule[note - 1] == "EOT/ETD"
+
+    def test_a_total_with_a_quote_is_still_printed(self, review_state: RunState) -> None:
+        """Decision of 2026-10-19: only the empty "not found" total goes; a
+        passage on why there is no total is evidence, and stays."""
+        quoted = ResolvedField(
+            field_id=TOTALS, status="not_found", confidence=0.6,
+            quote="The number of visits depends on how long each subject is treated.",
+            sources=[Provenance(doc_id="doc-protocol", doc_kind="protocol", page=26)],
+        )
+        state = review_state.model_copy(update={"resolved": [*review_state.resolved, quoted]})
+        model = build_report_model(state, get_registry())
+        assert not any(k is quoted for k in model.kept_out)
+        assert quoted.quote in {e.quote for e in model.evidence if e.field_id == TOTALS}
+        assert_nothing_lost(state, get_registry(), model)
+
+
+@pytest.mark.parametrize(("label", "inside"), [
+    ("Randomization", "randomization"),
+    ("Study drug infusion", "study drug infusion"),
+    ("IV infusion", "IV infusion"),
+    ("ECG", "ECG"),
+])
+def test_a_label_inside_a_sentence(label: str, inside: str) -> None:
+    from rfp_intake.render.report_model import _lower_first
+
+    assert _lower_first(label) == inside
+
 
 # --------------------------------------------------------------------------- #
 # Made-up schedules: the fallbacks and the sums

@@ -534,6 +534,141 @@ Appendix 3, the schedule for subjects who stop study drug early (not counted, 3 
   with "…"; the Timeline components value is garbled; and several abbreviations are missing from
   the word list.
 
+## Follow-ups of 2026-10-19
+
+Oliver's instruction, after the review of `r-20261019-prompt-c2`, verbatim:
+
+> 1. When the visit table is shown, the old model-written Visit frequency records do not print in
+>    Flagged for review or Appendix A. Keep them in extraction.json only.
+> 2. Total number of subject visits: drop the old "not found" row when the four stage totals exist,
+>    in report.pdf and in report.xlsx.
+> 3. Flagged for review shows Total number of subject visits as one row, not four, and never a bare
+>    dash for "From Month 4". The page 1 count counts variables, not rows.
+> 4. Under the visit table, one grey line saying the Assessments count leaves out randomization,
+>    premedication, study drug and chemotherapy, with the wording from config/fields.yaml. Add "Key
+>    considerations" to the word list.
+> 5. Dosing duration: find why the RFP p.3 study-length sentence was read as a dosing duration, and
+>    stop it. Tell me the cause before fixing.
+
+Order taken, as agreed with Oliver: item 5's cause first, read-only, reported before any fix; then
+items 1 to 4 as one render-only commit, shown by re-rendering `r-20261019-prompt-c2`; the live run
+waits until item 5's fix is approved and made.
+
+### Item 5 — the cause (found, not fixed; waits for Oliver)
+
+In `r-20261019-prompt-c2`, EXTRACT, reading the RFP's one whole-document section, returned for
+`dosing.duration` the value "40 month study duration; enrollment over approximately 24 months"
+(RFP p.3, confidence 0.6); the model's own note says the sentence is not a dosing duration. Two
+things let it through:
+- the field's aliases in `config/fields.yaml` include "treatment duration" and "treatment period",
+  which invite reading a study length as a dosing length;
+- no code check keeps a free-text field's quote on its subject: `extract/validate.py`'s
+  `answers_field` applies `quote_must_say` only to enum values.
+
+ADJUDICATE then did the right thing — it named the record off-topic (`off_topic_record_indexes`
+[2], verdict `not_a_conflict`) — but GATE's budget-driver rule turns any adjudicated field into
+needs_review, so Flagged for review prints the row with "Budget driver; the documents word it
+differently." GATE's rule is deliberate (CLAUDE.md, deviations) and is not the thing to change.
+
+Fix proposed to Oliver, not built: (a) a config rule that a text field's quote must contain one of a
+list of words, enforced in `answers_field` and keyed by config, never by field id; for
+`dosing.duration`: dose, dosed, dosing, administered, drug, treatment, treated, cycle, cycles,
+infusion. The RFP p.3 quote has none of them; the protocol's quote has "drug" and "administered".
+(b) one hint sentence: the overall study duration or the enrolment period is not a dosing duration.
+
+### Items 1 to 4 — what was built
+
+All render-only; nothing in EXTRACT, RECONCILE, ADJUDICATE, DERIVE or GATE changed, and
+`extraction.json` is unchanged.
+- `render/report_model.py:report_entries` decides what the two reports print. Only when a Schedule
+  of Events was counted with columns, and only by `from_schedule` in config/fields.yaml: every entry
+  of the `table` variable, and each entry of the `stage_totals` variable that is not found, has no
+  quote and is not derived, once DERIVE has written stage totals, is kept out. They are listed on
+  `ReportModel.kept_out`, and the nothing-lost test (`tests/render/test_report_model.py:
+  assert_nothing_lost`) now skips them and checks that nothing else is kept out.
+- Flagged for review lists the counted table's row and the totals row once each (`Row.review_as_one`),
+  with `Row.review_text` as its value: the new wording `schedule_table.wording.flagged_table` for the
+  table, and the totals in short form, without their parts, for the totals. Page 1 counts distinct
+  variables: "N other variables have values flagged for review, M of them budget drivers."
+- Under the visit table, in grey (`VisitTable.note`): `schedule_table.wording.left_out`, "The
+  {column} count leaves out {items}.", with the labels of the considerations marked
+  `assessment: false`. Printed only while `count_non_assessments` is false. In report.xlsx's Schedule
+  of Events sheet too.
+- "Words used in this report" gains "Key considerations" (`wording.considerations_plain`), after
+  Visit frequency by study period's own entry, only when a visit table is printed.
+- report.xlsx's Fields and Review Queue sheets read `report_entries` too.
+
+Decisions taken for Oliver:
+- **Item 1 also covers report.xlsx.** The kept-out visit-frequency entries leave the Fields and
+  Review Queue sheets as well. Alternative: keep them in the Fields sheet. Reason: "Keep them in
+  extraction.json only", and the Schedule of Events sheet carries the table.
+- **Item 2 drops only an empty "not found".** An entry of the totals variable that quotes why there
+  is no total, or one a document states, is still printed. Alternative: drop every non-derived
+  totals entry. Reason: a quoted passage is evidence; only the empty row repeats what the stage totals
+  already answer.
+- **Item 4's list uses the config labels**, lower-cased where the label starts with an ordinary
+  capital, so it reads "study drug infusion", not Oliver's "study drug". Alternative: new short
+  names in config. Reason: the instruction says to use the wording from config/fields.yaml.
+- **Item 3, the table row.** The visit-frequency row is flagged once, with the new `flagged_table`
+  wording ("Counted from Table 1: Schedule of Events; the table is under this variable in All
+  variables.") in place of the main table's "below". Alternative: drop it from Flagged. Reason: GATE
+  marks it for review, and every review row must be listed.
+- **Item 3, the reasons.** The totals row's reasons are "Worked out by the tool" plus any reason a
+  member row had (such as a document-stated total at low confidence), each once.
+
+Known limits, recorded:
+- Appendix B and the Disagreements table still read every entry. A numbered disagreement on the
+  visit frequency itself would still print there, but its passages would be missing from Appendix A,
+  which reads only the printed entries (pipeline-rules reviewer, 2026-10-19). `r-20261019-prompt-c2`
+  has none: its only visits contradiction is on `visits.schedule_present`. Closing it (keeping an
+  entry with its own numbered disagreement in the report) needs Oliver's decision, as item 1 says the
+  model's entries as a whole.
+- A document-stated total that is already a numbered disagreement would be listed twice: once in
+  Disagreements and once inside the one totals row in Flagged for review, which is listed whole. No
+  saved run has one.
+- Appendix A still prints the derived "From Month 4" row with value "—" and the note "1 a month
+  until the study ends". Item 3 named Flagged for review only.
+- report.xlsx's Fields sheet shows the "From Month 4" value as an empty cell, as before.
+
+### Re-render of `r-20261019-prompt-c2`
+
+`python scripts/rerender_report.py r-20261019-prompt-c2` wrote
+`runs/r-20261019-prompt-c2/report-rerender.pdf` (18 pages, against 20); report.xlsx was built from the
+same state into `report-rerender.xlsx`. The run's own report.pdf and report.xlsx are untouched.
+Checked with pymupdf and openpyxl:
+- Page 1: "10 other variables have values flagged for review, 10 of them budget drivers" (was "13
+  other values are flagged for review, 13 of them budget drivers").
+- Flagged for review (p.6): one "Visit frequency by study period" row, "Counted from Table 1:
+  Schedule of Events; the table is under this variable in All variables." (was the model's own list,
+  "Period: screening; Label: Screening; Frequency: …"), and one "Total number of subject visits" row,
+  "Screening: 2; Months 1–3: 12; From Month 4: 1 a month until the study ends; End of treatment: 1"
+  (was four rows, "From Month 4" reading "—").
+- Appendix A: no entry of Visit frequency by study period's own (was 5 lines of the model's
+  readings); the four stage totals are kept; the "not found" total is gone.
+- Under the visit table: "The Assessments count leaves out randomization, premedication, study drug
+  infusion and chemotherapy."
+- Words used in this report: "Key considerations — The activities a visit includes that matter most
+  for a budget, …".
+- report-rerender.xlsx, Fields and Review Queue: no Visit frequency row and no "not found" total row,
+  four stage-total rows each; Schedule of Events sheet: the grey line's sentence under the table.
+
+Checks: full offline pytest 1586 passed, 1 skipped (new tests in `tests/render/test_visit_table.py`: two in
+`TestTheRealProtocol`, six in `TestPrintedOnce`, and four cases of `test_a_label_inside_a_sentence`).
+Gate reviewers, two passes each. First pass: pipeline-rules found no violation and five suspicions;
+plan-conformance found all four items met, two untrue sentences in `docs/ARCHITECTURE.md` §4.10 and
+four test gaps. Answered: the nothing-lost test now also requires a kept-out total to be not found
+and not derived; new tests for a quoted total staying printed, for `_lower_first`, and for the Review
+Queue sheet; the xlsx note is found by its words, not its row number; `_lower_first`'s docstring is
+rewritten; §4.10 is corrected; the two limits above are recorded. The found count ("43 of 45") is
+the same before and after on `r-20261019-prompt-c2`.
+Second pass, after the last edit to src/: pipeline-rules found no violation of the ten rules and
+safe to commit, naming the two limits above as Oliver's decisions; plan-conformance found items 1 to
+4 met and its first-pass problems fixed, and asked that §4.10 say the Disagreements table and
+Appendix B still read every entry, which it now does.
+`ruff check .` clean. mypy on the changed files: no new error (one older error at
+`tests/render/test_report_model.py:194`, an identity check between a ResolvedField and a FieldRecord,
+was there before this change).
+
 ## Gaps on the other two protocols (reported, not fixed, as Oliver instructed)
 
 Measured offline with the stage 1 reader on 2026-10-17.
