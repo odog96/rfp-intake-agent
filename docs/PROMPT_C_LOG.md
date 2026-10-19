@@ -458,8 +458,81 @@ Not done, because each needs the run's output:
 - The run-comparison reviewer against `r-20261016-prompt-b`.
 - The report-usability reviewer.
 
-To finish: once the AWS Bedrock credential is renewed, start a new run (a new run id, since
-`r-20261017-prompt-c2` holds a failed status) and run the four checks above on it.
+**Second attempt, `r-20261018-prompt-c2`, failed the same way.** Started on 2026-10-18 at 19:54:51
+after Oliver said a new token had been added. `AWS_BEARER_TOKEN_BEDROCK` was set with the expected
+prefix, but PREFLIGHT got "Bearer Token has expired" again at 19:54:54
+(`runs/r-20261018-prompt-c2/status.json`: failed at PREFLIGHT). Not retried, and no token looked for
+elsewhere.
+
+**Third attempt, `r-20261019-prompt-c2`, completed.** Oliver added a new token on 2026-10-19. The
+pipeline's own model service check (`probe_model_service`, `src/rfp_intake/llm/health.py:217`) was
+run once on its own first and answered. The run started at 12:44:58 and finished at 12:53:09
+(8m11s), on the same two documents: 59 resolved rows, 14 contradiction clusters, 10 errors.
+READ_SCHEDULE saved two schedules: "Table 1: Schedule of Events" (counted, 11 visit columns) and
+Appendix 3, the schedule for subjects who stop study drug early (not counted, 3 columns).
+
+- `scripts/check_must_hold.py r-20261019-prompt-c2`: **14 pass, 0 known, 0 fail.**
+  - Facts 10 and 11 give the target counts: assessments 26, 16, 13, 7, 23, 6, 28, 7, 30, 22, 31, and
+    every mark 26, 16, 17, 8, 26, 7, 31, 8, 33, 25, 31.
+  - Facts 12 to 14 hold.
+  - Fact 8 passes in full this time: site selection visits reads "a total of 80 visits", so open item
+    1 of CLAUDE.md did not occur on this run.
+  - Fact 9: 42 of 45 fields have a value.
+- `scripts/check_review_2026_10_07.py r-20261019-prompt-c2`: 8 pass, 0 fail. Check 6 is LOOK, and
+  its live half is ok. Check 9: 38 kept variables found, against 36.
+- Run-comparison reviewer against `r-20261016-prompt-b`: **mixed, leaning better.** No field lost a
+  value. Fields with a value went from 40 to 42: "Total number of subject visits" and "Site
+  selection visits" gained one. Fields with a confirmed row stayed at 30. The removed passage
+  (1.3.2 Clinical Experience) and the 57 set-aside sections are the same in both runs. Study phase
+  is one confirmed Phase 3 row in both. The reviewer checked the four stage totals against the
+  saved schedule, and the sums match the table. Findings, recorded and **not fixed**:
+  1. "Dosing duration", a budget driver, went from confirmed to needs review. The value is
+     unchanged (Amendment p.54). A new cluster filed the RFP's "40 month study duration" (RFP p.3)
+     as a dosing duration. ADJUDICATE called it not a conflict and marked that record off-topic,
+     but GATE's budget-driver rule still marks the field for review. This is the one budget
+     driver that is worse than in `r-20261016-prompt-b`, and it is not caused by Prompt C.
+  2. "Total number of subject visits" still keeps its old not-found row, with no source, beside
+     the four stage totals. report.xlsx's Fields sheet prints that row ("not_found") directly above
+     them. I checked report.pdf p.11 (Appendix A) with pymupdf: it prints only the four stage rows,
+     so the contradiction is in the spreadsheet only. This one is Prompt C's: DERIVE's
+     stage totals should replace the not-found row.
+  3. Errors rose from 9 to 10, all EXTRACT quote checks. The site selection error is gone; two new
+     `quote_not_found_in_excerpt` rejections appeared, on "Evidence of visit intensity" (Amendment
+     p.14) and "Visit frequency by study period" (a quote copied from the p.26 table with its
+     separator characters). Nothing was lost through them.
+  4. The scores against the old golden files in `eval/golden/` are the same in both runs, and those
+     files describe a different study, so they say nothing here. "Verdict accuracy" reads 1.00 then
+     0.00, but only because the scorer keeps the last cluster per field, which this time is the
+     subject-level duration cluster. The study-level disagreement (42 against 40 months) is caught
+     in both runs.
+  The reviewer was refused permission to read report.pdf, did not retry, and based its layout
+  remarks on extraction.json and report.xlsx only.
+- Report-usability reviewer: Table 1 on report.pdf p.3 prints the 11 target counts and reads
+  clearly. It handles repeating visits well ("3", "7 each", "1 a month"), shows each sum with its
+  parts, and puts the "Not counted" line, naming Appendix 3 (Amendment p.111), directly under the
+  table. The report is 20 pages, the same as `r-20261016-prompt-b`, with about 10% more text
+  before Appendix A. Findings that touch Prompt C, recorded and **not fixed** (Oliver: nothing
+  beyond Prompt C without him):
+  1. The model-written "Visit frequency by study period" records still print in Flagged for review
+     (p.6, "Budget driver holding more than one value", citing eight pages) and in Appendix A
+     (p.10–11, about 28 bullets with raw period tokens such as `early_treatment` and table scraps as
+     quotes). They now sit beside Table 1 and disagree with the main row on p.2.
+  2. "Total number of subject visits" prints as four rows in Flagged for review (p.6–7), and "From
+     Month 4" shows a bare dash there. Page 1's "13 other values are flagged for review" counts
+     those rows, not variables (10 variables; 8 in `r-20261016-prompt-b`).
+  3. Nothing says the Assessments count leaves out randomization, premedication, study drug and
+     chemotherapy. "Key considerations" is not in the word list, and the word list entry for "Visit
+     frequency by study period" still describes the old row.
+  4. Every row prints the same "Where" text (Amendment p.26 and 27), because the table spans both
+     pages. That costs width and does not say which page holds which count.
+  5. The EOT/ETD timing cell is a whole footnote sentence wrapped over six lines. "EOT/ETD" is not
+     defined. "—" in Key considerations could mean either "none" or "not found".
+  6. There are no per-stage assessment totals, and no caveat that not all weekly visits need to be
+     at the site (Amendment p.13).
+  Findings not about Prompt C, recorded only: yes-or-no answers lack their proof phrase in the main
+  table; raw tokens show ("Yes body", `yes_body`, `ops.subjects_total`); several values are cut off
+  with "…"; the Timeline components value is garbled; and several abbreviations are missing from
+  the word list.
 
 ## Gaps on the other two protocols (reported, not fixed, as Oliver instructed)
 
@@ -488,7 +561,5 @@ schedule-like heading is "Trial Schedule", p.29). Its marks are bullets ("•"),
 - Footnote notes, home dosing and schedules printed as images: out of scope in Prompt C.
 - Tables without ruled lines are not read (the plan's decision; none of the three protocols' target
   tables needs it).
-- The live run and the four checks after it: the AWS Bedrock token had expired (see "Live run
-  r-20261017-prompt-c2" above). Waits on a renewed credential.
 - The gaps on `samples/Example Protocol.pdf` and `samples/Example protocol 3.pdf`: reported above,
   not fixed, as Oliver instructed.
