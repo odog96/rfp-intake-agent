@@ -665,6 +665,8 @@ Second pass, after the last edit to src/: pipeline-rules found no violation of t
 safe to commit, naming the two limits above as Oliver's decisions; plan-conformance found items 1 to
 4 met and its first-pass problems fixed, and asked that §4.10 say the Disagreements table and
 Appendix B still read every entry, which it now does.
+
+Commit: `bb19091`. Not pushed. The live run waits for Oliver's decision on item 5's fix.
 `ruff check .` clean. mypy on the changed files: no new error (one older error at
 `tests/render/test_report_model.py:194`, an identity check between a ResolvedField and a FieldRecord,
 was there before this change).
