@@ -3093,11 +3093,12 @@ def _name_values(text: str, fd: FieldDef | None) -> str:
 
 # ADJUDICATE's numbers for the passages it was shown, in the order of the
 # disagreement's records: "Record 3", "Records 1 and 2", "records 2/3", and a
-# range, "Records 1–3", whose two ends are named. A dash or "to" after the
-# singular "Record" is not a range: "Record 2 - 1 interim analysis" gives a
-# value (pipeline-rules-reviewer, third reading, 23 November 2026).
+# range, "Records 1–3" or "Records 1 to 3", whose two ends are named. A dash is
+# a range only with no space around it, and only after the plural: "Record 2 -
+# 1 interim analysis" and "Records 2 and 3 – 1 visit per site" give a value
+# after the dash (pipeline-rules-reviewer, third reading, 23 November 2026).
 _RECORD_NUMBERS = re.compile(
-    r"\b(Records)\s+(\d+(?:\s*(?:,|/|&|and|or|to|-|\u2013)\s*\d+)*)\b"
+    r"\b(Records)\s+(\d+(?:(?:\s*(?:,|/|&|and|or|to)\s*|[-\u2013])\d+)*)\b"
     r"|\b(Record)\s+(\d+(?:\s*(?:,|/|&|and|or)\s*\d+)*)\b",
     re.IGNORECASE,
 )

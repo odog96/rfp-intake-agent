@@ -200,8 +200,13 @@ _DIGITS = r"\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d+(?:\.\d+)?"
 # hyphen ("twenty-four months") is not one; "to", "or" and "and" between any
 # two numbers, so "1 or 2 years" and "between 1 and 2 years" are ranges like
 # "1-2 years" (pipeline-rules-reviewer, second reading, 23 November 2026).
+# Nor is a number read after "hundred", "thousand" or a digit and a space, where
+# it is the end of a longer number: "one hundred and twenty days" would read as
+# 20 days and "1 000 days" as 0 days (pipeline-rules-reviewer, 23 November 2026).
 _AMOUNT_OR_RANGE_PATTERN = re.compile(
-    r"(?<![\w.,\-])(?<![Dd]ay )(?:between\s+)?"
+    r"(?<![\w.,\-])(?<![Dd]ay )"
+    r"(?<!hundred )(?<!hundred and )(?<!thousand )(?<!thousand and )(?<!\d )"
+    r"(?:between\s+)?"
     r"(?:(" + _DIGITS + r")\s*(?:-|\u2013|to\b|or\b|and\b)\s*"
     r"|(" + _NUMBER_WORDS + r")\s+(?:to|or|and)\s+)?"
     r"(" + _DIGITS + r"|" + _NUMBER_WORDS + r")(?:\s+|-)"

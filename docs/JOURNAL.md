@@ -129,8 +129,10 @@ run-comparison-reviewer read run 4. What changed:
   number words one to nineteen and the tens, alone or with a unit ("twenty-eight days" is 28
   days, not a range from twenty, and was "eight days" before), digits with thousands separators
   ("1,000 days" read as 0 days before, so 1,000 and 2,000 days agreed), and ranges written with
-  "or", "and" and "between" ("1 or 2 years", "between 1 and 2 years"). "hundred" is not read:
-  "two hundred days" gives no amount and is compared by its words, rather than read as 100 days.
+  "or", "and" and "between" ("1 or 2 years", "between 1 and 2 years"). "hundred" is not read,
+  nor a number after "hundred", "thousand" or a digit and a space: "two hundred days", "one
+  hundred and twenty days" and "1 000 days" give no amount and are compared by their words,
+  rather than read as 100, 20 and 0 days.
 - A patient-timeline line takes the period's name from the passage it cites, and where several
   passages give the line, its words come from one whose quote states them.
 - Within one document, the record shown for an entry's key is one whose own quote states the key

@@ -163,6 +163,9 @@ class TestAmountsIn:
         ("1,000 days", [(1000, 1000, "days")]),
         ("1,000-2,000 days", [(1000, 2000, "days")]),
         ("two hundred days", []),
+        ("one hundred and twenty days", []),
+        ("1 000 days", []),
+        ("10,12 days", []),
     ])
     def test_amounts_in(self, raw: str, expected: list[tuple[float, float, str]]) -> None:
         assert amounts_in(raw) == expected

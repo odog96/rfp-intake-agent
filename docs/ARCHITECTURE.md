@@ -1219,8 +1219,9 @@ included.
   compared by the amounts it gives, a range by both its ends (`normalize/duration.py:amounts_in`):
   "28 days" and "a 28-day period" agree; "28 days" and "4 weeks" do not, as nothing is converted, and
   nor do "1-2 years" and "2 years"; "twenty-eight days" is 28 days (the number words one to nineteen
-  and the tens, alone or with a unit; "hundred" is not read, so "two hundred days" is compared by its
-  words), "1,000 days" is 1000 days, and "1 or 2 years" and "between 1 and 2 years" are ranges. So a treatment period one page gives as 24 months and another as
+  and the tens, alone or with a unit; "hundred" is not read, nor a number after "hundred", "thousand" or
+  a digit and a space, so "two hundred days", "one hundred and twenty days" and "1 000 days" are compared
+  by their words), "1,000 days" is 1000 days, and "1 or 2 years" and "between 1 and 2 years" are ranges. So a treatment period one page gives as 24 months and another as
   36 keeps the row in review, and the report prints each length under the line with its pages. `visits.frequency_by_period`, which the
   Schedule of Events replaces (`from_schedule`), keeps the several-values rule.
 
@@ -1357,8 +1358,9 @@ amendment doc-…" reads "the amendment"), and a field's code words in it read a
 for them (`_name_values`): a code word with an underscore wherever it stands, any other only in
 quotation marks, so a plain "no" in a sentence is left alone. Appendix B gives each passage ADJUDICATE
 names by number its document and page, printed page included, "Record 3 (RFP p.3)" (`_name_records`),
-since the report shows the reader no record numbers; a range ("Records 1–3") is read only after the
-plural, as "Record 2 - 1 interim analysis" gives a value after the dash. The value shown for an entry's key, within one document, is the record's
+since the report shows the reader no record numbers; a dash is a range ("Records 1–3") only after the
+plural and with no space around it, as "Record 2 - 1 interim analysis" and "Records 2 and 3 – 1 visit
+per site" give a value after the dash. The value shown for an entry's key, within one document, is the record's
 whose quote states the key (§4.6's entries, `reconcile/entries.py:quote_states`), and a period's line,
 where several passages give it all, takes its words from one whose quote states them
 (`_one_passage`). Under a budget driver in review because ADJUDICATE dismissed a difference, the other

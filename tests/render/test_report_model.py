@@ -1982,9 +1982,12 @@ class TestModelTextAndQuotePages:
         )
         assert _name_records("Records 1\u20133 agree.", c, self._docs()) \
             == "Records 1 (Amendment p.15)\u20133 (RFP p.3) agree."
-        # After the singular a dash is not a range: the number after it is a value.
+        # After the singular, or with a space around it, a dash is not a range:
+        # the number after it is a value.
         assert _name_records("Record 2 - 1 interim analysis", c, self._docs()) \
             == "Record 2 (Amendment p.24) - 1 interim analysis"
+        assert _name_records("Records 2 and 3 \u2013 1 visit per site", c, self._docs()) \
+            == "Records 2 (Amendment p.24) and 3 (RFP p.3) \u2013 1 visit per site"
 
     def test_appendix_a_prints_no_scope_for_the_whole_study(self) -> None:
         from rfp_intake.render.report_model import _evidence_scope
