@@ -44,7 +44,8 @@ def test_registry_version_stable(fields_yaml_path: Path) -> None:
 def test_get_group(fields_yaml_path: Path) -> None:
     registry = load_registry(fields_yaml_path)
     group = registry.get_group("visits")
-    assert group.label == "Subject Visit Schedule and Intensity"
+    # "and Intensity" went with the visit-intensity fields on 2026-11-23.
+    assert group.label == "Subject Visit Schedule"
 
 
 def test_get_group_unknown(fields_yaml_path: Path) -> None:
@@ -63,10 +64,10 @@ def test_get_field(fields_yaml_path: Path) -> None:
 def test_get_fields_for_group(fields_yaml_path: Path) -> None:
     registry = load_registry(fields_yaml_path)
     visit_fields = registry.get_fields_for_group("visits")
-    assert len(visit_fields) >= 4
+    assert len(visit_fields) >= 3
     ids = [f.id for f in visit_fields]
     assert "visits.total_count" in ids
-    assert "visits.intensity_rating" in ids
+    assert "visits.schedule_present" in ids
 
 
 class TestTheStageFiveFields:
@@ -78,7 +79,8 @@ class TestTheStageFiveFields:
     would never reach the report's budget-driver list.
     """
 
-    def test_all_five_load(self, fields_yaml_path: Path) -> None:
+    def test_the_four_still_in_the_registry_load(self, fields_yaml_path: Path) -> None:
+        # The fifth, blinding.placebo_assumption, was removed on 2026-11-23.
         registry = load_registry(fields_yaml_path)
         ids = {f.id for f in registry.fields}
         for field_id in (
@@ -86,7 +88,6 @@ class TestTheStageFiveFields:
             "blinding.placebo_matching",
             "blinding.unblinded_staff_stated",
             "visits.schedule_present",
-            "blinding.placebo_assumption",
         ):
             assert field_id in ids, f"{field_id} did not load"
 
@@ -122,31 +123,18 @@ class TestTheStageFiveFields:
         field = load_registry(fields_yaml_path).get_field(field_id)
         assert field.values == expected_values
 
-    def test_all_four_new_extracted_fields_drive_the_budget(
+    def test_the_new_fields_still_in_the_registry_drive_the_budget(
         self, fields_yaml_path: Path
     ) -> None:
-        """Each one changes a price, so each one belongs on the budget-driver list."""
+        """Each one changes a price, so each one belongs on the budget-driver list.
+        blinding.placebo_assumption, the fourth, was removed on 2026-11-23."""
         registry = load_registry(fields_yaml_path)
         for field_id in (
             "blinding.placebo_matching",
             "blinding.unblinded_staff_stated",
             "visits.schedule_present",
-            "blinding.placebo_assumption",
         ):
             assert registry.get_field(field_id).budget_driver is True, field_id
-
-    def test_the_placebo_assumption_is_derived_from_the_four_inputs(
-        self, fields_yaml_path: Path
-    ) -> None:
-        """Item 9. The order matters only to a reader; the set is what the rubric reads."""
-        field = load_registry(fields_yaml_path).get_field("blinding.placebo_assumption")
-        assert field.derived is True
-        assert set(field.derived_from or []) == {
-            "blinding.design",
-            "ip.form",
-            "blinding.placebo_matching",
-            "blinding.unblinded_staff_stated",
-        }
 
     def test_every_derived_field_has_a_registered_rubric(
         self, fields_yaml_path: Path
@@ -159,8 +147,9 @@ class TestTheStageFiveFields:
         """
         from rfp_intake.derive import DERIVE_RUBRICS
 
+        # No field is derived since 2026-11-23, so this holds with nothing to
+        # check until one is added.
         derived = [f.id for f in load_registry(fields_yaml_path).fields if f.derived]
-        assert derived, "no derived fields found at all"
         missing = [field_id for field_id in derived if field_id not in DERIVE_RUBRICS]
         assert not missing, f"derived fields with no rubric in DERIVE_RUBRICS: {missing}"
 
@@ -829,12 +818,6 @@ class TestAGroupBlock:
         assert [(ln.field, ln.label, ln.wording) for ln in block.lines] == [
             ("g1.b", "Bee", None), ("g2.c", None, "{doc} says {value} ({pages})"),
         ]
-
-    def test_the_real_blinding_block_replaces_the_six_rows(self, fields_yaml_path: Path) -> None:
-        block = load_registry(fields_yaml_path).get_group("blinding_monitoring").block
-        assert block is not None
-        assert block.headline == "monitoring.unblinded_required"
-        assert len(block.replaces) == 6
 
     @pytest.mark.parametrize(("block", "match"), [
         ({"replaces": ["g1.a", "g1.z"]}, "replacing an unknown field"),

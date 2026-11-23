@@ -84,10 +84,12 @@ class TestGateNode:
 
     def test_derived_field_always_needs_review_even_high_confidence(self, fields_yaml_path) -> None:  # type: ignore[no-untyped-def]
         _use_real_registry(fields_yaml_path)
+        # A stage total DERIVE counts from the Schedule of Events (derive/__init__.py:
+        # stage_totals); the visit-intensity rating was the example until 2026-11-23.
         rf = _resolved(
-            field_id="visits.intensity_rating",
+            field_id="visits.total_count",
             confidence=0.99,
-            derived_from=["visits.intensity_evidence"],
+            derived_from=["visits.frequency_by_period"],
         )
         state = RunState(run_id="t", resolved=[rf])
         result = gate_node(state)

@@ -20,26 +20,27 @@ class TestCollectionFieldsDoNotContradict:
         )
 
     def test_list_enum_members_merge_into_one_answer(self) -> None:
-        # visits.intensity_evidence produced 38 of 158 rows in run
-        # r-20260827-205037, one per piece of evidence found.
+        # visits.intensity_evidence (removed 2026-11-23) produced 38 of 158 rows
+        # in run r-20260827-205037, one per piece of evidence found. The list
+        # field here has the same shape: list[enum], unscoped.
         from rfp_intake.domain.registry import get_registry
         from rfp_intake.reconcile import _reconcile_field
 
         registry = get_registry()
-        field_def = registry.get_field("visits.intensity_evidence")
+        field_def = registry.get_field("monitoring.unblinded_factors")
         records = [
-            self._record("visits.intensity_evidence", "visits", ["safety_labs"], 1),
-            self._record("visits.intensity_evidence", "visits", ["biomarker_sampling"], 2),
-            self._record("visits.intensity_evidence", "visits", ["questionnaires"], 3),
+            self._record("monitoring.unblinded_factors", "blinding_monitoring", ["ip_accountability"], 1),
+            self._record("monitoring.unblinded_factors", "blinding_monitoring", ["pharmacy_manual_requirements"], 2),
+            self._record("monitoring.unblinded_factors", "blinding_monitoring", ["drug_preparation_requirements"], 3),
         ]
         resolved, contradictions = _reconcile_field(field_def, records)
 
         assert len(resolved) == 1, "three pieces of evidence are one answer"
         assert contradictions == [], "collection members never disagree"
         assert set(resolved[0].value) == {
-            "safety_labs",
-            "biomarker_sampling",
-            "questionnaires",
+            "ip_accountability",
+            "pharmacy_manual_requirements",
+            "drug_preparation_requirements",
         }
         assert len(resolved[0].sources) == 3, "every source is kept"
 
@@ -47,25 +48,25 @@ class TestCollectionFieldsDoNotContradict:
         from rfp_intake.domain.registry import get_registry
         from rfp_intake.reconcile import _reconcile_field
 
-        field_def = get_registry().get_field("visits.intensity_evidence")
+        field_def = get_registry().get_field("monitoring.unblinded_factors")
         records = [
-            self._record("visits.intensity_evidence", "visits", ["safety_labs"], 1),
-            self._record("visits.intensity_evidence", "visits", ["safety_labs"], 7),
+            self._record("monitoring.unblinded_factors", "blinding_monitoring", ["ip_accountability"], 1),
+            self._record("monitoring.unblinded_factors", "blinding_monitoring", ["ip_accountability"], 7),
         ]
         resolved, _ = _reconcile_field(field_def, records)
-        assert resolved[0].value == ["safety_labs"]
+        assert resolved[0].value == ["ip_accountability"]
 
     def test_members_keep_the_order_they_were_found_in(self) -> None:
         from rfp_intake.domain.registry import get_registry
         from rfp_intake.reconcile import _reconcile_field
 
-        field_def = get_registry().get_field("visits.intensity_evidence")
+        field_def = get_registry().get_field("monitoring.unblinded_factors")
         records = [
-            self._record("visits.intensity_evidence", "visits", ["ecgs"], 1),
-            self._record("visits.intensity_evidence", "visits", ["safety_labs"], 2),
+            self._record("monitoring.unblinded_factors", "blinding_monitoring", ["blinded_vs_open_design"], 1),
+            self._record("monitoring.unblinded_factors", "blinding_monitoring", ["ip_accountability"], 2),
         ]
         resolved, _ = _reconcile_field(field_def, records)
-        assert resolved[0].value == ["ecgs", "safety_labs"]
+        assert resolved[0].value == ["blinded_vs_open_design", "ip_accountability"]
 
     def test_a_single_valued_field_still_contradicts(self) -> None:
         # The change must not stop RECONCILE noticing a real disagreement:
@@ -164,10 +165,10 @@ class TestARecordsOwnNoteStaysOnTheRecord:
         from rfp_intake.domain.registry import get_registry
         from rfp_intake.reconcile import _reconcile_field
 
-        field_def = get_registry().get_field("visits.intensity_evidence")
+        field_def = get_registry().get_field("monitoring.unblinded_factors")
         records = [
-            self._record("visits.intensity_evidence", "visits", ["safety_labs"], 1),
-            self._record("visits.intensity_evidence", "visits", ["questionnaires"], 2),
+            self._record("monitoring.unblinded_factors", "blinding_monitoring", ["ip_accountability"], 1),
+            self._record("monitoring.unblinded_factors", "blinding_monitoring", ["drug_preparation_requirements"], 2),
         ]
         for record in records:
             record.notes = self._NOTE
