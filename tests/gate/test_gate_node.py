@@ -418,3 +418,33 @@ class TestABudgetDriverTheDocumentsState:
         )
         assert _gate_field(follower, leader, is_budget_driver=True).status == "needs_review"
 
+
+
+def test_a_row_finds_its_disagreement_by_any_records_scope(fields_yaml_path) -> None:  # type: ignore[no-untyped-def]
+    """RECONCILE groups an unscoped field's "total" with no scope, so a
+    disagreement can hold both, and ADJUDICATE gives its row the winning
+    record's scope, which need not be the first record's."""
+    _use_real_registry(fields_yaml_path)
+
+    def record(value: str, scope: str | None, page: int) -> FieldRecord:
+        r = FieldRecord(
+            field_id="blinding.placebo_matching", group="blinding_monitoring",
+            raw_value=value, quote=f"q p.{page}",
+            provenance=Provenance(doc_id="doc-am", doc_kind="amendment", page=page),
+            confidence=0.9, scope=scope,
+        )
+        r.value = value
+        return r
+
+    c = Contradiction(
+        field_id="blinding.placebo_matching",
+        records=[record("not_matching_stated", None, 53), record("matching_stated", "total", 3)],
+        verdict="reconcilable",
+    )
+    rf = ResolvedField(
+        field_id="blinding.placebo_matching", value="matching_stated", status="needs_review",
+        confidence=0.95, scope="total",
+    )
+    [out] = gate_node(RunState(run_id="t", resolved=[rf], contradictions=[c]))["resolved"]
+    assert out.status == "needs_review"
+    assert out.contradiction is c

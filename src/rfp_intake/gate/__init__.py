@@ -106,10 +106,15 @@ def gate_node(state: RunState) -> dict[str, Any]:
         if f.follows_conflict_of is not None
     }
 
+    # Every scope a record of the disagreement is written with, not only the
+    # first record's: ADJUDICATE gives a row its winning record's scope, or each
+    # record's own, and one disagreement can hold records whose scopes are
+    # spelled differently — "total" and none at all on a field the registry
+    # says is not scoped (reconcile/__init__.py:_scope_key).
     contradiction_by_key: dict[tuple[str, str | None], Contradiction] = {}
     for c in state.contradictions:
-        scope = c.records[0].scope if c.records else None
-        contradiction_by_key[(c.field_id, scope)] = c
+        for scope in dict.fromkeys(r.scope for r in c.records) if c.records else [None]:
+            contradiction_by_key[(c.field_id, scope)] = c
 
     gated = [
         _gate_field(

@@ -1,3 +1,4 @@
+import pytest
 
 
 class TestCollectionFieldsDoNotContradict:
@@ -285,3 +286,67 @@ class TestNotSpecifiedIsNotACompetingAnswer:
         [rf] = resolved
         assert rf.value == "not_specified"
         assert [p.page for p in rf.sources] == [18, 4]
+
+
+class TestTheWholeStudyAndNoScopeOnAnUnscopedField:
+    """Run r-20261123-oct29-run1: the amendment's placebo record had no scope and
+    the RFP's had "total", so RECONCILE grouped them apart and the disagreement
+    must-hold fact 6 looks for was two confirmed rows. On a field the registry
+    says is not `scoped`, the whole study and no scope are one group; on a
+    scoped field they stay apart, and other scopes stay apart on any field."""
+
+    @staticmethod
+    def _record(field_id: str, value: object, scope: str | None, doc: str, page: int):  # type: ignore[no-untyped-def]
+        from rfp_intake.domain.schemas import FieldRecord, Provenance
+
+        kind = "rfp" if doc == "rfp" else "amendment"
+        return FieldRecord(
+            field_id=field_id, group="g", raw_value=str(value), value=value,
+            quote=f"quote p.{page}",
+            provenance=Provenance(doc_id=doc, doc_kind=kind, page=page),  # type: ignore[arg-type]
+            confidence=0.9, status="found", scope=scope,
+        )
+
+    @pytest.mark.parametrize(
+        "field_id,scoped,first,second,clusters,rows",
+        [
+            # An unscoped enum: no scope against the whole study, two values,
+            # is one candidate cluster for ADJUDICATE.
+            ("blinding.placebo_matching", False,
+             ("not_matching_stated", None), ("matching_stated", "total"), 1, 0),
+            # The same with the values agreeing is one row citing both pages.
+            ("blinding.placebo_matching", False,
+             ("matching_stated", None), ("matching_stated", "Total"), 0, 1),
+            # "study" is the whole study too.
+            ("study.indication", False,
+             ("AL amyloidosis", None), ("Light chain amyloidosis", "study"), 1, 0),
+            # Another scope on an unscoped field stays apart.
+            ("study.indication", False,
+             ("AL amyloidosis", "arm:placebo"), ("Light chain amyloidosis", "total"), 0, 2),
+            # A scoped int field of the same shape keeps two groups.
+            ("ops.sites_total", True, (40, None), (52, "total"), 0, 2),
+        ],
+    )
+    def test_grouping(  # type: ignore[no-untyped-def]
+        self, fields_yaml_path, field_id, scoped, first, second, clusters, rows,
+    ) -> None:
+        import os
+
+        os.environ["RFP_INTAKE_FIELDS_YAML_PATH"] = str(fields_yaml_path)
+        from rfp_intake.domain.registry import get_registry
+        from rfp_intake.reconcile import _reconcile_field
+
+        get_registry.cache_clear()
+        field_def = get_registry().get_field(field_id)
+        assert field_def.scoped is scoped
+        records = [
+            self._record(field_id, first[0], first[1], "amendment", 53),
+            self._record(field_id, second[0], second[1], "rfp", 3),
+        ]
+        resolved, contradictions = _reconcile_field(field_def, records)
+        assert len(contradictions) == clusters
+        assert len(resolved) == rows
+        if clusters:
+            assert contradictions[0].records == records
+        if rows == 1:
+            assert [s.page for s in resolved[0].sources] == [53, 3]
