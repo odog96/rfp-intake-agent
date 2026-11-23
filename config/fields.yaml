@@ -840,10 +840,18 @@ fields:
     scoped: true
     aliases: ["QD", "BID", "TID", "QW", "Q2W", "Q3W", "Q4W", "once daily", "twice daily",
               "every 2 weeks", "every 3 weeks", "per cycle", "dosing regimen", "dosing schedule"]
+    # Angus Gray, 1 October 2026: "we need to know the dosing frequency"; how long an
+    # infusion lasts matters only when one dose runs over several days ("back-to-back
+    # 24-hour infusions"); detailed dosing-cycle information can be left out for now. Live
+    # run r-20261123-oct29-run2 wrote "Once every 28 days (initial infusion over 120 ±10
+    # minutes; subsequent infusions may be over 60 ±10 minutes); minimum 21 days between
+    # doses if logistics intervene".
     hint: >
-      Capture the schedule as stated. If dosing differs by cohort, arm, dose level or part,
-      emit ONE RECORD PER SCOPE with scope set (e.g. scope="cohort:Part B"). Never average
-      or merge differing regimens into one answer.
+      How often the study drug is given, as stated (for example "Once every 28 days"). Leave
+      out how long each infusion takes, unless one dose runs over several days in a row, and
+      leave out exceptions such as the shortest gap allowed between doses. If dosing differs
+      by cohort, arm, dose level or part, emit ONE RECORD PER SCOPE with scope set (e.g.
+      scope="cohort:Part B"). Never average or merge differing regimens into one answer.
     source_priority: protocol
     budget_driver: true
     # How the report prints a schedule read as an amount ({n, unit}): "Every 28 days"
