@@ -73,7 +73,6 @@ def _is_duration_field(field_id: str) -> bool:
     duration_fields = {
         "dosing.frequency",
         "timeline.total_duration",
-        "monitoring.frequency_spec",
     }
     return field_id in duration_fields
 

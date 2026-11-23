@@ -25,7 +25,18 @@ class FieldExtractionItem(BaseModel):
     status: Literal["found", "not_specified"] = "found"
     confidence: float = Field(ge=0.0, le=1.0)
     scope: str | None = Field(default=None, description="e.g. 'total', 'cohort:A', 'country:DE'")
-    page: int = Field(description="1-indexed page number within the excerpt")
+    # The page the quote is on, as the excerpt's "--- Page N ---" marker above it
+    # numbers it. Until 2026-11-23 this said "1-indexed page number within the
+    # excerpt", and Claude Opus 5 did what it said: it counted pages from the start
+    # of the excerpt, so a quote on page 98 came back as page 4 and every record
+    # outside the window was rejected (run r-20261123-opus5-base, 22 errors).
+    page: int = Field(
+        description=(
+            "The page number N from the '--- Page N ---' marker above the text the quote "
+            "is copied from: the page's number in the document, not its position in "
+            "the excerpt."
+        )
+    )
     notes: str | None = None
 
     @field_validator("raw_value", mode="before")

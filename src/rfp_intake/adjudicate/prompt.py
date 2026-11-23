@@ -24,7 +24,10 @@ value — "3" for the third candidate in the list. Several candidates often come
 from the same document and say different things, so naming a document is not \
 enough: name the record. If you cannot choose a single record, leave \
 winning_record unset and the highest-confidence record is used.
-- conflict: the values are genuinely incompatible and cannot both be correct. \
+- conflict: the values are genuinely incompatible and cannot both be correct. Two \
+different amounts for the same quantity at the same scope are a conflict even when \
+they are close or one says "approximately" (36 months against 30 months for the whole \
+study; 120 subjects against 110): a budget is built on one number, so a person must choose. \
 Do not set winning_record for a conflict verdict — a separate deterministic \
 precedence rule decides that, not you.
 
@@ -34,7 +37,10 @@ field (for example, an instruction for measuring a laboratory sample read as \
 a site monitoring strategy). Judge your verdict on the other records only, and \
 say in the explanation why each listed record is not about the field. A \
 record that is about the field but gives a different value is never \
-off-topic. Leave the list empty when every record is about the field.
+off-topic. But a record for a different quantity that uses the same words IS \
+off-topic: for example a sample size the statistical analysis needs (from a power \
+calculation) where the field asks for the number of subjects to be enrolled, which the \
+field's hint gives its own scope. Leave the list empty when every record is about the field.
 
 Your explanation must be complete enough for an analyst to act on without \
 re-reading the source documents: state both values, and name the specific \
