@@ -100,7 +100,9 @@ report_wording:
   precedence_why:
     recency: "the {doc} is the newer document"
     domain_authority: "this variable is normally taken from the {doc}"
-    specificity: "the {doc}'s passage had the highest confidence"
+    # Not "confidence": the report prints no confidence (Angus Gray, 29 October 2026). The
+    # rule takes the passage the extraction model rated as stating the value most clearly.
+    specificity: "the {doc} states it most clearly"
     default: "the {doc} normally takes precedence"
   # Where it did not:
   row_no_value_chosen: "No value chosen. See Disagreement {n}."
@@ -1039,7 +1041,8 @@ fields:
       schedule describes it: screening, run_in (also called lead-in), treatment, follow_up after
       treatment ends, open_label_extension, long_term_follow_up, and overall_participation - how
       long one patient takes part in all, from screening to their last visit. `label` names the
-      period as the document does. `duration` is how long it lasts ("28 days"). `start` and
+      period as the document does. `duration` is only its length ("28 days", "14-21 days"),
+      never the words around it. `start` and
       `end` are ONLY the day or visit that opens and closes it, as the document numbers them
       ("Day -28", "Day -1", "Month 1 Day 1", "Last dose", "End-of-treatment visit"): never a
       sentence, and never what happens on that day. Write "Day -1", not "prior to the first
@@ -1626,9 +1629,13 @@ fields:
     type: text
     aliases: ["monitoring plan", "monitoring strategy", "sponsor requirements", "RBM",
               "risk-based monitoring", "quality tolerance limits"]
+    # Live run r-20261123-oct29-run2 copied each monitoring visit type's count and time on
+    # site here, which printed six rows repeating the five visit rows.
     hint: >
       Any sponsor-mandated monitoring model, restriction, or required visit type not captured
       by the more specific fields above. Monitoring here means the sponsor's or CRO's oversight
-      of the sites. Instructions for measuring or handling subjects' samples (laboratory tests,
+      of the sites. Leave out the number of visits and the time on site of site selection,
+      initiation, interim monitoring, close-out and pharmacy monitoring visits: each has its own
+      field. Instructions for measuring or handling subjects' samples (laboratory tests,
       drug or antibody levels) are not site monitoring: leave them out.
     source_priority: rfp
