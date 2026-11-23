@@ -13,6 +13,8 @@ Pure Python, no LLM. See ARCHITECTURE.md §4.9.
 | field whose `follows_conflict_of` field has such a contradiction      | needs_review   |
 | budget_driver list field holding more than one value                  | needs_review   |
 |   … unless `one_answer_when_documents_agree` and the documents agree  | (rule skipped) |
+|   … unless a `periods` display whose every period reads the same in   |                |
+|     each document stating it (`_periods_agree`; not `from_schedule`)  | (rule skipped) |
 | row RECONCILE wrote a `review_note` on                                | needs_review   |
 | conf < CONFIDENCE_CONFIRMED                                           | needs_review   |
 | already not_specified / not_found / not_applicable                    | unchanged      |
@@ -51,10 +53,10 @@ from typing import Any
 
 import structlog
 
-from rfp_intake.domain.registry import FieldDef, get_registry
+from rfp_intake.domain.registry import FieldDef, PeriodsDisplay, get_registry
 from rfp_intake.domain.schemas import Contradiction, ResolvedField, RunState
 from rfp_intake.reconcile import scope_key
-from rfp_intake.reconcile.entries import merge_entry
+from rfp_intake.reconcile.entries import group_entries, merge_entry
 
 logger = structlog.get_logger()
 
@@ -126,6 +128,7 @@ def gate_node(state: RunState) -> dict[str, Any]:
             is_budget_driver=rf.field_id in budget_drivers,
             one_answer=one_answer.get(rf.field_id),
             listing=listing.get(rf.field_id, set()),
+            field_def=fields.get(rf.field_id),
         )
         for rf in state.resolved
     ]
@@ -175,6 +178,7 @@ def _gate_field(
     is_budget_driver: bool,
     one_answer: FieldDef | None = None,
     listing: set[str] | None = None,
+    field_def: FieldDef | None = None,
 ) -> ResolvedField:
     if rf.status in _TERMINAL_STATUSES:
         return rf
@@ -219,7 +223,10 @@ def _gate_field(
         and {r.provenance.doc_id for r in rf.statements} == (listing or set())
         and merge_entry(one_answer, rf.statements).one_answer(one_answer.may_word_differently)
     )
-    if is_budget_driver and isinstance(rf.value, list) and len(rf.value) > 1 and not agreed_entry:
+    if (
+        is_budget_driver and isinstance(rf.value, list) and len(rf.value) > 1
+        and not agreed_entry and not _periods_agree(rf, field_def)
+    ):
         return rf.model_copy(update={"status": "needs_review"})
 
     # RECONCILE found a difference between the documents a person should see:
@@ -231,6 +238,32 @@ def _gate_field(
         return rf.model_copy(update={"status": "confirmed"})
 
     return rf.model_copy(update={"status": "needs_review"})
+
+
+def _periods_agree(rf: ResolvedField, field_def: FieldDef | None) -> bool:
+    """Whether a `periods` display's entries are one answer: every period, as
+    the display groups them (`one_per`, reconcile/entries.py:group_entries),
+    reads the same in each document stating it — no key two or more documents
+    state for the same period reads differently (`differing([])`). A text key
+    one document alone states never differs: one document does not disagree
+    with itself, however it words a period twice.
+
+    Each entry of such a field is one stretch of the study (screening,
+    treatment, …), not a rival answer, so the several-values rule does not
+    apply to it. A field whose row the Schedule of Events replaces
+    (`from_schedule`) is the tool's count, not the documents', and keeps the
+    rule; so does a row with no entries to compare. Added 2026-11-23 for the
+    patient timeline (Angus Gray, 29 October 2026).
+    """
+    if (
+        field_def is None or not isinstance(field_def.display, PeriodsDisplay)
+        or field_def.from_schedule is not None or not rf.statements
+    ):
+        return False
+    return all(
+        not merge_entry(field_def, group).differing([])
+        for group in group_entries(rf.statements, field_def.display.one_per)
+    )
 
 
 def _documents_state_it(rf: ResolvedField, contradiction: Contradiction) -> bool:

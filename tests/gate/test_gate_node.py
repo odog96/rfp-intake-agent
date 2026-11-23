@@ -495,3 +495,118 @@ class TestARowFindsItsDisagreementByTheGroupingKey:
         out = self._gate("ops.sites_total", ["total", "total"], None)
         assert out.contradiction is None
         assert out.status == "confirmed"
+
+
+class TestAPeriodsDisplayIsOneAnswerWhenItsPeriodsAgree:
+    """The patient timeline: each entry is one stretch of the study, not a
+    rival answer, so a budget driver with a `periods` display is not held in
+    review for holding several values when every period reads the same in each
+    document stating it. Found by its display kind, as GATE finds it."""
+
+    @staticmethod
+    def _field(fields_yaml_path, *, from_schedule: bool):  # type: ignore[no-untyped-def]
+        _use_real_registry(fields_yaml_path)
+        from rfp_intake.domain.registry import PeriodsDisplay, get_registry
+
+        return next(
+            f for f in get_registry().fields
+            if isinstance(f.display, PeriodsDisplay) and f.budget_driver
+            and (f.from_schedule is not None) is from_schedule
+        )
+
+    @staticmethod
+    def _gate(field, entries: list[tuple[str, dict[str, object]]]) -> ResolvedField:  # type: ignore[no-untyped-def]
+        statements = []
+        for i, (doc, entry) in enumerate(entries):
+            r = FieldRecord(
+                field_id=field.id, group=field.group, raw_value=str(entry), quote=f"q{i}",
+                provenance=Provenance(
+                    doc_id=doc, doc_kind="rfp" if doc == "doc-rfp" else "amendment", page=i + 1,
+                ),
+                confidence=0.9,
+            )
+            r.value = entry
+            statements.append(r)
+        members: list[object] = []
+        for r in statements:
+            if r.value not in members:
+                members.append(r.value)
+        rf = ResolvedField(
+            field_id=field.id, value=members, status="needs_review", confidence=0.9,
+            statements=statements, sources=[r.provenance for r in statements],
+        )
+        [out] = gate_node(RunState(run_id="t", resolved=[rf]))["resolved"]
+        return out
+
+    def _key(self, field) -> str:  # type: ignore[no-untyped-def]
+        [key] = field.display.one_per
+        return str(key)
+
+    def test_one_document_stating_screening_and_treatment_confirms(self, fields_yaml_path) -> None:  # type: ignore[no-untyped-def]
+        field = self._field(fields_yaml_path, from_schedule=False)
+        key = self._key(field)
+        out = self._gate(field, [
+            ("doc-am", {key: "screening", "duration": "28 days"}),
+            ("doc-am", {key: "treatment", "duration": "52 weeks"}),
+        ])
+        assert out.status == "confirmed"
+
+    def test_two_screening_durations_from_two_documents_review(self, fields_yaml_path) -> None:  # type: ignore[no-untyped-def]
+        field = self._field(fields_yaml_path, from_schedule=False)
+        key = self._key(field)
+        out = self._gate(field, [
+            ("doc-am", {key: "screening", "duration": "28 days"}),
+            ("doc-rfp", {key: "screening", "duration": "21 days"}),
+            ("doc-am", {key: "treatment", "duration": "52 weeks"}),
+        ])
+        assert out.status == "needs_review"
+
+    def test_two_documents_agreeing_on_every_period_confirm(self, fields_yaml_path) -> None:  # type: ignore[no-untyped-def]
+        field = self._field(fields_yaml_path, from_schedule=False)
+        key = self._key(field)
+        out = self._gate(field, [
+            ("doc-am", {key: "screening", "duration": "28 days"}),
+            ("doc-rfp", {key: "screening", "duration": "28  Days"}),
+            ("doc-rfp", {key: "treatment", "duration": "52 weeks"}),
+        ])
+        assert out.status == "confirmed"
+
+    def test_one_document_wording_a_period_twice_confirms(self, fields_yaml_path) -> None:  # type: ignore[no-untyped-def]
+        """Text from one document never disagrees with itself."""
+        field = self._field(fields_yaml_path, from_schedule=False)
+        key = self._key(field)
+        out = self._gate(field, [
+            ("doc-am", {key: "screening", "duration": "28 days"}),
+            ("doc-am", {key: "screening", "duration": "28-day"}),
+        ])
+        assert out.status == "confirmed"
+
+    def test_the_schedule_counted_field_keeps_the_rule(self, fields_yaml_path) -> None:  # type: ignore[no-untyped-def]
+        """The row the Schedule of Events replaces is the tool's count."""
+        field = self._field(fields_yaml_path, from_schedule=True)
+        key = self._key(field)
+        out = self._gate(field, [
+            ("doc-am", {key: "screening", "frequency": "once"}),
+            ("doc-am", {key: "treatment", "frequency": "every 28 days"}),
+        ])
+        assert out.status == "needs_review"
+
+    def test_low_confidence_still_reviews(self, fields_yaml_path) -> None:  # type: ignore[no-untyped-def]
+        field = self._field(fields_yaml_path, from_schedule=False)
+        key = self._key(field)
+        rf = self._gate(field, [
+            ("doc-am", {key: "screening", "duration": "28 days"}),
+            ("doc-am", {key: "treatment", "duration": "52 weeks"}),
+        ])
+        low = rf.model_copy(update={"status": "needs_review", "confidence": 0.5})
+        [out] = gate_node(RunState(run_id="t", resolved=[low]))["resolved"]
+        assert out.status == "needs_review"
+
+    def test_entries_with_no_statements_keep_the_rule(self, fields_yaml_path) -> None:  # type: ignore[no-untyped-def]
+        field = self._field(fields_yaml_path, from_schedule=False)
+        rf = ResolvedField(
+            field_id=field.id, value=["Screening 28 days", "Treatment 52 weeks"],
+            status="needs_review", confidence=0.9,
+        )
+        [out] = gate_node(RunState(run_id="t", resolved=[rf]))["resolved"]
+        assert out.status == "needs_review"
