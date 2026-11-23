@@ -57,6 +57,70 @@ class TestNormalizeInt:
     def test_invalid(self, raw: str) -> None:
         assert normalize_int(raw) is None
 
+    # CLAUDE.md open item 10 (2026-10-19): a leading whole number followed only
+    # by words with no digits, or by a parenthetical, which may hold digits.
+    @pytest.mark.parametrize("raw,expected", [
+        ("20,800 CRF pages total", 20800),
+        ("Approximately 20,800 CRF pages total.", 20800),
+        ("20800", 20800),
+        ("260 (130 per arm)", 260),
+        ("260 (130 per arm), randomized", 260),
+        ("approximately 260 subjects (130 per arm, randomized 1:1)", 260),
+        ("260 patients (130 per arm)", 260),
+        ("260 randomized", 260),
+        ("260 total", 260),
+        ("3 (three)", 3),
+        ("75 sites (US & EU)", 75),
+        ("52 weeks (1 year)", 52),
+        ("260 subjects — randomized", 260),
+    ])
+    def test_a_number_followed_by_words_or_a_parenthetical(
+        self, raw: str, expected: int,
+    ) -> None:
+        assert normalize_int(raw) == expected
+
+    # What it accepted before the change and still accepts.
+    @pytest.mark.parametrize("raw,expected", [
+        ("approximately 260", 260),
+        ("up to 40 sites", 40),
+        ("about 30 sites across Europe", 30),
+        ("1,000,000", 1000000),
+        ("1 000", 1000),
+        ("120.0", 120),
+        ("120.0 sites", 120),
+        ("0", 0),
+        ("-5", -5),
+        ("forty (40)", 40),
+    ])
+    def test_still_accepted(self, raw: str, expected: int) -> None:
+        assert normalize_int(raw) == expected
+
+    @pytest.mark.parametrize("raw", [
+        # Words, then a second figure outside a parenthetical: two numbers.
+        "10 visits per site for a total of 750 visits",
+        "40 sites in 5 countries",
+        "forty sites in 5 countries",
+        "260 (130 per arm) randomised 1:1",
+        "260 subjects (130 per arm), 236 evaluable",
+        "10 to 12",
+        "10 or 12",
+        # A range, a fraction, a share, a rate: no whole count.
+        "200-260",
+        "200 - 260",
+        "1.5",
+        "1.5 years",
+        "40 %",
+        "10/site",
+        "260 + 20",
+        # Not a number followed by words or a whole parenthetical.
+        "260 (130 per arm",
+        "260pts",
+        "N=260",
+        "Total: 260",
+    ])
+    def test_still_none(self, raw: str) -> None:
+        assert normalize_int(raw) is None
+
 
 class TestNormalizeEnum:
     @pytest.mark.parametrize("raw,allowed,expected", [

@@ -52,3 +52,20 @@ def test_classify_node_no_documents():
     result = classify_node(state)
     assert result["documents"] == []
     assert result["errors"] == []
+
+
+def _definition(kind: str) -> str:
+    """One document type's definition in CLASSIFY's prompt, on one line."""
+    from rfp_intake.graph.nodes.classify import CLASSIFY_SYSTEM_PROMPT
+
+    lines = CLASSIFY_SYSTEM_PROMPT.split("\n- ")
+    [line] = [ln for ln in lines if ln.startswith(f"{kind}:")]
+    return " ".join(line.split())
+
+
+def test_an_amended_protocol_is_defined_as_an_amendment():
+    """Run r-20261123-opus5-base: the amended protocol was called a protocol."""
+    amendment = _definition("amendment")
+    assert "a full protocol that has been amended" in amendment
+    assert 'it is an amendment even when its cover calls it a "Study Protocol"' in amendment
+    assert "never been amended" in _definition("protocol")

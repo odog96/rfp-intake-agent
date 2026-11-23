@@ -243,8 +243,11 @@ class TestPipelineIntegration:
         assert sites.value == 75
         assert sites.status == "confirmed"
 
-        # visits.intensity_rating is derived and must always be needs_review
-        # or not_specified, never confirmed, regardless of confidence.
-        rating = next(r for r in resolved_fields if r.field_id == "visits.intensity_rating")
-        assert rating.status in ("needs_review", "not_specified")
-        assert rating.status != "confirmed"
+        # A row DERIVE worked out must always be needs_review or not_specified,
+        # never confirmed, regardless of confidence. No field is derived since
+        # 2026-11-23 (visits.intensity_rating was the example), and this run has
+        # no schedule to count, so DERIVE adds no row here.
+        assert [f.id for f in registry.fields if f.derived] == []
+        for row in resolved_fields:
+            if row.derived_from:
+                assert row.status in ("needs_review", "not_specified"), row.field_id

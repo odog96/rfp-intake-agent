@@ -114,3 +114,20 @@ class TestNormalizeNode:
         assert result["records"][0].value == 75
         assert result["records"][1].value == 120
         assert result["records"][2].value == "phase_3"
+
+
+def test_two_wordings_of_one_page_count_are_one_value(fields_yaml_path) -> None:  # type: ignore[no-untyped-def]
+    """CLAUDE.md open item 10: run r-20261019-prompt-c3 read RFP p.4's
+    "Approximately 20,800 CRF pages total." twice, as 20800 and as the words,
+    and RECONCILE saw two values where the document states one."""
+    import os
+    os.environ["RFP_INTAKE_FIELDS_YAML_PATH"] = str(fields_yaml_path)
+    from rfp_intake.domain.registry import get_registry
+    get_registry.cache_clear()
+
+    records = [
+        _make_record("ops.crf_pages", "operational_metrics", "20800"),
+        _make_record("ops.crf_pages", "operational_metrics", "20,800 CRF pages total"),
+    ]
+    result = normalize_node(RunState(run_id="test-run", records=records))
+    assert [r.value for r in result["records"]] == [20800, 20800]

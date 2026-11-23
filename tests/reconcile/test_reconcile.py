@@ -1,3 +1,7 @@
+import pytest
+
+# The list[enum] field these tests merge, and its group in config/fields.yaml.
+_FACTORS = ("monitoring.unblinded_factors", "blinding_monitoring")
 
 
 class TestCollectionFieldsDoNotContradict:
@@ -19,26 +23,27 @@ class TestCollectionFieldsDoNotContradict:
         )
 
     def test_list_enum_members_merge_into_one_answer(self) -> None:
-        # visits.intensity_evidence produced 38 of 158 rows in run
-        # r-20260827-205037, one per piece of evidence found.
+        # visits.intensity_evidence (removed 2026-11-23) produced 38 of 158 rows
+        # in run r-20260827-205037, one per piece of evidence found. The list
+        # field here has the same shape: list[enum], unscoped.
         from rfp_intake.domain.registry import get_registry
         from rfp_intake.reconcile import _reconcile_field
 
         registry = get_registry()
-        field_def = registry.get_field("visits.intensity_evidence")
+        field_def = registry.get_field("monitoring.unblinded_factors")
         records = [
-            self._record("visits.intensity_evidence", "visits", ["safety_labs"], 1),
-            self._record("visits.intensity_evidence", "visits", ["biomarker_sampling"], 2),
-            self._record("visits.intensity_evidence", "visits", ["questionnaires"], 3),
+            self._record(*_FACTORS, ["ip_accountability"], 1),
+            self._record(*_FACTORS, ["pharmacy_manual_requirements"], 2),
+            self._record(*_FACTORS, ["drug_preparation_requirements"], 3),
         ]
         resolved, contradictions = _reconcile_field(field_def, records)
 
         assert len(resolved) == 1, "three pieces of evidence are one answer"
         assert contradictions == [], "collection members never disagree"
         assert set(resolved[0].value) == {
-            "safety_labs",
-            "biomarker_sampling",
-            "questionnaires",
+            "ip_accountability",
+            "pharmacy_manual_requirements",
+            "drug_preparation_requirements",
         }
         assert len(resolved[0].sources) == 3, "every source is kept"
 
@@ -46,25 +51,25 @@ class TestCollectionFieldsDoNotContradict:
         from rfp_intake.domain.registry import get_registry
         from rfp_intake.reconcile import _reconcile_field
 
-        field_def = get_registry().get_field("visits.intensity_evidence")
+        field_def = get_registry().get_field("monitoring.unblinded_factors")
         records = [
-            self._record("visits.intensity_evidence", "visits", ["safety_labs"], 1),
-            self._record("visits.intensity_evidence", "visits", ["safety_labs"], 7),
+            self._record(*_FACTORS, ["ip_accountability"], 1),
+            self._record(*_FACTORS, ["ip_accountability"], 7),
         ]
         resolved, _ = _reconcile_field(field_def, records)
-        assert resolved[0].value == ["safety_labs"]
+        assert resolved[0].value == ["ip_accountability"]
 
     def test_members_keep_the_order_they_were_found_in(self) -> None:
         from rfp_intake.domain.registry import get_registry
         from rfp_intake.reconcile import _reconcile_field
 
-        field_def = get_registry().get_field("visits.intensity_evidence")
+        field_def = get_registry().get_field("monitoring.unblinded_factors")
         records = [
-            self._record("visits.intensity_evidence", "visits", ["ecgs"], 1),
-            self._record("visits.intensity_evidence", "visits", ["safety_labs"], 2),
+            self._record(*_FACTORS, ["blinded_vs_open_design"], 1),
+            self._record(*_FACTORS, ["ip_accountability"], 2),
         ]
         resolved, _ = _reconcile_field(field_def, records)
-        assert resolved[0].value == ["ecgs", "safety_labs"]
+        assert resolved[0].value == ["blinded_vs_open_design", "ip_accountability"]
 
     def test_a_single_valued_field_still_contradicts(self) -> None:
         # The change must not stop RECONCILE noticing a real disagreement:
@@ -163,10 +168,10 @@ class TestARecordsOwnNoteStaysOnTheRecord:
         from rfp_intake.domain.registry import get_registry
         from rfp_intake.reconcile import _reconcile_field
 
-        field_def = get_registry().get_field("visits.intensity_evidence")
+        field_def = get_registry().get_field("monitoring.unblinded_factors")
         records = [
-            self._record("visits.intensity_evidence", "visits", ["safety_labs"], 1),
-            self._record("visits.intensity_evidence", "visits", ["questionnaires"], 2),
+            self._record(*_FACTORS, ["ip_accountability"], 1),
+            self._record(*_FACTORS, ["drug_preparation_requirements"], 2),
         ]
         for record in records:
             record.notes = self._NOTE
@@ -285,3 +290,67 @@ class TestNotSpecifiedIsNotACompetingAnswer:
         [rf] = resolved
         assert rf.value == "not_specified"
         assert [p.page for p in rf.sources] == [18, 4]
+
+
+class TestTheWholeStudyAndNoScopeOnAnUnscopedField:
+    """Run r-20261123-oct29-run1: the amendment's placebo record had no scope and
+    the RFP's had "total", so RECONCILE grouped them apart and the disagreement
+    must-hold fact 6 looks for was two confirmed rows. On a field the registry
+    says is not `scoped`, the whole study and no scope are one group; on a
+    scoped field they stay apart, and other scopes stay apart on any field."""
+
+    @staticmethod
+    def _record(field_id: str, value: object, scope: str | None, doc: str, page: int):  # type: ignore[no-untyped-def]
+        from rfp_intake.domain.schemas import FieldRecord, Provenance
+
+        kind = "rfp" if doc == "rfp" else "amendment"
+        return FieldRecord(
+            field_id=field_id, group="g", raw_value=str(value), value=value,
+            quote=f"quote p.{page}",
+            provenance=Provenance(doc_id=doc, doc_kind=kind, page=page),  # type: ignore[arg-type]
+            confidence=0.9, status="found", scope=scope,
+        )
+
+    @pytest.mark.parametrize(
+        "field_id,scoped,first,second,clusters,rows",
+        [
+            # An unscoped enum: no scope against the whole study, two values,
+            # is one candidate cluster for ADJUDICATE.
+            ("blinding.placebo_matching", False,
+             ("not_matching_stated", None), ("matching_stated", "total"), 1, 0),
+            # The same with the values agreeing is one row citing both pages.
+            ("blinding.placebo_matching", False,
+             ("matching_stated", None), ("matching_stated", "Total"), 0, 1),
+            # "study" is the whole study too.
+            ("study.indication", False,
+             ("AL amyloidosis", None), ("Light chain amyloidosis", "study"), 1, 0),
+            # Another scope on an unscoped field stays apart.
+            ("study.indication", False,
+             ("AL amyloidosis", "arm:placebo"), ("Light chain amyloidosis", "total"), 0, 2),
+            # A scoped int field of the same shape keeps two groups.
+            ("ops.sites_total", True, (40, None), (52, "total"), 0, 2),
+        ],
+    )
+    def test_grouping(  # type: ignore[no-untyped-def]
+        self, fields_yaml_path, field_id, scoped, first, second, clusters, rows,
+    ) -> None:
+        import os
+
+        os.environ["RFP_INTAKE_FIELDS_YAML_PATH"] = str(fields_yaml_path)
+        from rfp_intake.domain.registry import get_registry
+        from rfp_intake.reconcile import _reconcile_field
+
+        get_registry.cache_clear()
+        field_def = get_registry().get_field(field_id)
+        assert field_def.scoped is scoped
+        records = [
+            self._record(field_id, first[0], first[1], "amendment", 53),
+            self._record(field_id, second[0], second[1], "rfp", 3),
+        ]
+        resolved, contradictions = _reconcile_field(field_def, records)
+        assert len(contradictions) == clusters
+        assert len(resolved) == rows
+        if clusters:
+            assert contradictions[0].records == records
+        if rows == 1:
+            assert [s.page for s in resolved[0].sources] == [53, 3]

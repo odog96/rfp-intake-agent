@@ -7,9 +7,14 @@ Pure Python, no LLM. See ARCHITECTURE.md §4.9.
 | derived field                                                         | needs_review   |
 | any contradiction whose verdict is not in DISMISSED_VERDICTS          | needs_review   |
 | budget_driver field with ANY contradiction, dismissed verdict or not  | needs_review   |
+|   … unless the verdict is dismissed and the documents state the row's |                |
+|     value: on-topic records from two or more documents, and each of   |                |
+|     those documents has an on-topic record giving the row's value     | (rule skipped) |
 | field whose `follows_conflict_of` field has such a contradiction      | needs_review   |
 | budget_driver list field holding more than one value                  | needs_review   |
 |   … unless `one_answer_when_documents_agree` and the documents agree  | (rule skipped) |
+|   … unless a `periods` display whose every period reads the same in   |                |
+|     each document stating it (`_periods_agree`; not `from_schedule`)  | (rule skipped) |
 | row RECONCILE wrote a `review_note` on                                | needs_review   |
 | conf < CONFIDENCE_CONFIRMED                                           | needs_review   |
 | already not_specified / not_found / not_applicable                    | unchanged      |
@@ -25,6 +30,15 @@ count changes the number DSB submits. Forcing review here doesn't fix a
 wrong verdict, but it guarantees a human sees it before it becomes a
 number in the report, rather than the disagreement being silently cleared.
 
+The one exception (`_documents_state_it`, asked for by Angus Gray on 29
+October 2026) needs no trust in the verdict: where two or more documents
+each give the row's value, checked in code against the records themselves,
+there is nothing for a person to settle about that value. The records the
+model called off-topic are left out of that check, so a statistical sample
+size of 236 beside an enrolment figure of 260 stated by both documents does
+not keep the 260 in review; but a document that states only a different value
+does, and so does any `conflict`.
+
 Quote validation ("quote validated" in the table) is already enforced by
 EXTRACT's post-call validation (ARCHITECTURE.md §4.4) before a record ever
 reaches state.records, so it is not re-checked here.
@@ -39,9 +53,10 @@ from typing import Any
 
 import structlog
 
-from rfp_intake.domain.registry import FieldDef, get_registry
+from rfp_intake.domain.registry import FieldDef, PeriodsDisplay, get_registry
 from rfp_intake.domain.schemas import Contradiction, ResolvedField, RunState
-from rfp_intake.reconcile.entries import merge_entry
+from rfp_intake.reconcile import scope_key
+from rfp_intake.reconcile.entries import group_entries, merge_entry
 
 logger = structlog.get_logger()
 
@@ -66,8 +81,10 @@ _TERMINAL_STATUSES = {"not_specified", "not_found", "not_applicable"}
 # A budget driver still goes to review (the rule below), so a wrong
 # "reconcilable" on a number the budget depends on is still seen by a person —
 # it moves from the Disagreements table to Flagged for review rather than being
-# cleared. A verdict of None means ADJUDICATE has not run or failed, which is
-# not a dismissal, so it is deliberately absent from this tuple.
+# cleared — unless the documents themselves state the row's value
+# (_documents_state_it; Angus Gray, 29 October 2026). A verdict of None means
+# ADJUDICATE has not run or failed, which is not a dismissal, so it is
+# deliberately absent from this tuple.
 DISMISSED_VERDICTS = ("not_a_conflict", "reconcilable")
 
 
@@ -92,18 +109,26 @@ def gate_node(state: RunState) -> dict[str, Any]:
         if f.follows_conflict_of is not None
     }
 
+    # Keyed by the group RECONCILE put the records in (reconcile/__init__.py:
+    # scope_key), under every record's scope, not only the first record's:
+    # ADJUDICATE gives a row its winning record's scope, or each record's own,
+    # and one disagreement can hold scopes spelled differently — "total" and
+    # none at all on a field the registry says is not scoped among them. A row
+    # is looked up by the same key, so the spelling never hides its disagreement.
+    fields = {f.id: f for f in registry.fields}
     contradiction_by_key: dict[tuple[str, str | None], Contradiction] = {}
     for c in state.contradictions:
-        scope = c.records[0].scope if c.records else None
-        contradiction_by_key[(c.field_id, scope)] = c
+        for scope in dict.fromkeys(r.scope for r in c.records) if c.records else [None]:
+            contradiction_by_key[(c.field_id, scope_key(fields.get(c.field_id), scope))] = c
 
     gated = [
         _gate_field(
             rf,
-            _contradiction_for(rf, contradiction_by_key, follows),
+            _contradiction_for(rf, contradiction_by_key, follows, fields),
             is_budget_driver=rf.field_id in budget_drivers,
             one_answer=one_answer.get(rf.field_id),
             listing=listing.get(rf.field_id, set()),
+            field_def=fields.get(rf.field_id),
         )
         for rf in state.resolved
     ]
@@ -117,6 +142,7 @@ def _contradiction_for(
     rf: ResolvedField,
     contradiction_by_key: dict[tuple[str, str | None], Contradiction],
     follows: dict[str, str],
+    fields: dict[str, FieldDef] | None = None,
 ) -> Contradiction | None:
     """This field's own disagreement, or the one config says it shares.
 
@@ -129,7 +155,8 @@ def _contradiction_for(
     picks up another's — otherwise a row would be marked with a disagreement
     that is not about the value it shows.
     """
-    own = contradiction_by_key.get((rf.field_id, rf.scope))
+    fields = fields or {}
+    own = contradiction_by_key.get((rf.field_id, scope_key(fields.get(rf.field_id), rf.scope)))
     if own is not None:
         return own
     leader = follows.get(rf.field_id)
@@ -138,9 +165,10 @@ def _contradiction_for(
     # The leader's disagreement at the same part of the study, falling back to an
     # unscoped one: a count stated once for the whole study is still the count
     # this row's entry belongs to.
-    return contradiction_by_key.get((leader, rf.scope)) or contradiction_by_key.get(
-        (leader, None)
-    )
+    leader_def = fields.get(leader)
+    return contradiction_by_key.get(
+        (leader, scope_key(leader_def, rf.scope))
+    ) or contradiction_by_key.get((leader, scope_key(leader_def, None)))
 
 
 def _gate_field(
@@ -150,6 +178,7 @@ def _gate_field(
     is_budget_driver: bool,
     one_answer: FieldDef | None = None,
     listing: set[str] | None = None,
+    field_def: FieldDef | None = None,
 ) -> ResolvedField:
     if rf.status in _TERMINAL_STATUSES:
         return rf
@@ -157,8 +186,14 @@ def _gate_field(
     if rf.derived_from:
         return rf.model_copy(update={"status": "needs_review"})
 
+    # Angus Gray, 29 October 2026, on report r-20261029-140643: why was 260
+    # subjects, a value both documents state, in Review? A budget driver's
+    # dismissed verdict no longer forces review where the documents themselves
+    # state the row's value (_documents_state_it). Review_note and the
+    # confidence threshold below still apply.
     disagreement = contradiction is not None and (
-        contradiction.verdict not in DISMISSED_VERDICTS or is_budget_driver
+        contradiction.verdict not in DISMISSED_VERDICTS
+        or (is_budget_driver and not _documents_state_it(rf, contradiction))
     )
     if disagreement:
         return rf.model_copy(update={"status": "needs_review", "contradiction": contradiction})
@@ -188,7 +223,10 @@ def _gate_field(
         and {r.provenance.doc_id for r in rf.statements} == (listing or set())
         and merge_entry(one_answer, rf.statements).one_answer(one_answer.may_word_differently)
     )
-    if is_budget_driver and isinstance(rf.value, list) and len(rf.value) > 1 and not agreed_entry:
+    if (
+        is_budget_driver and isinstance(rf.value, list) and len(rf.value) > 1
+        and not agreed_entry and not _periods_agree(rf, field_def)
+    ):
         return rf.model_copy(update={"status": "needs_review"})
 
     # RECONCILE found a difference between the documents a person should see:
@@ -200,3 +238,53 @@ def _gate_field(
         return rf.model_copy(update={"status": "confirmed"})
 
     return rf.model_copy(update={"status": "needs_review"})
+
+
+def _periods_agree(rf: ResolvedField, field_def: FieldDef | None) -> bool:
+    """Whether a `periods` display's entries are one answer: every period, as
+    the display groups them (`one_per`, reconcile/entries.py:group_entries),
+    reads the same in each document stating it — no key two or more documents
+    state for the same period reads differently (`differing([])`). A text key
+    one document alone states never differs: one document does not disagree
+    with itself, however it words a period twice.
+
+    Each entry of such a field is one stretch of the study (screening,
+    treatment, …), not a rival answer, so the several-values rule does not
+    apply to it. A field whose row the Schedule of Events replaces
+    (`from_schedule`) is the tool's count, not the documents', and keeps the
+    rule; so does a row with no entries to compare. Added 2026-11-23 for the
+    patient timeline (Angus Gray, 29 October 2026).
+    """
+    if (
+        field_def is None or not isinstance(field_def.display, PeriodsDisplay)
+        or field_def.from_schedule is not None or not rf.statements
+    ):
+        return False
+    return all(
+        not merge_entry(field_def, group).differing([])
+        for group in group_entries(rf.statements, field_def.display.one_per)
+    )
+
+
+def _documents_state_it(rf: ResolvedField, contradiction: Contradiction) -> bool:
+    """Whether the documents themselves state this row's value: the on-topic
+    records (those not in `off_topic_record_indexes`) come from at least two
+    documents, and each of those documents has an on-topic record whose
+    normalized value equals the row's value.
+
+    Values are compared with ==, as RECONCILE compares them
+    (reconcile/__init__.py:_group_by_canonical_value), so a list or a dict is
+    the same value only if it is equal. Only the row's own disagreement
+    counts: a row following another field's disagreement (`follows_conflict_of`)
+    holds a value that field's records do not give. A row with no value is
+    never stated. Asked for by Angus Gray on 29 October 2026.
+    """
+    if contradiction.field_id != rf.field_id or rf.value is None:
+        return False
+    off = set(contradiction.off_topic_record_indexes)
+    on_topic = [r for i, r in enumerate(contradiction.records, start=1) if i not in off]
+    documents = {r.provenance.doc_id for r in on_topic}
+    return len(documents) >= 2 and all(
+        any(r.value == rf.value for r in on_topic if r.provenance.doc_id == doc)
+        for doc in documents
+    )

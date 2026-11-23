@@ -76,27 +76,50 @@ def _build_field_description(field_def: FieldDef) -> str:
     return " | ".join(parts)
 
 
+def asked_in(field_def: FieldDef, doc_kind: str) -> bool:
+    """Whether EXTRACT asks for this field in a document of `doc_kind`: its
+    `only_from` in config/fields.yaml lists the kind, or is empty."""
+    return not field_def.only_from or doc_kind in field_def.only_from
+
+
+def fields_to_extract(
+    group_id: str, registry: Registry, doc_kind: str | None = None,
+) -> list[FieldDef]:
+    """The group's fields one extraction call asks for: every field that is not
+    derived, less those whose `only_from` leaves out `doc_kind`. With no kind,
+    every field that is not derived. The prompt's field list and the response
+    schema are both built from this list, so the two always agree."""
+    return [
+        f for f in registry.get_fields_for_group(group_id)
+        if not f.derived and (doc_kind is None or asked_in(f, doc_kind))
+    ]
+
+
 _model_cache: dict[str, type[BaseModel]] = {}
 
 
-def build_extraction_model(group_id: str, registry: Registry | None = None) -> type[BaseModel]:
+def build_extraction_model(
+    group_id: str, registry: Registry | None = None, doc_kind: str | None = None,
+) -> type[BaseModel]:
     """Generate a Pydantic model for extracting fields in the given group.
 
     Each non-derived field becomes an optional list of FieldExtractionItem
-    (list because scoped fields may emit multiple records per field).
+    (list because scoped fields may emit multiple records per field). With
+    `doc_kind`, a field whose `only_from` leaves that kind out is not in the
+    model, so the response schema of a call on that document cannot ask for it.
     """
     if registry is None:
         registry = get_registry()
 
-    cache_key = f"{group_id}:{registry.registry_version}"
-    if cache_key in _model_cache:
-        return _model_cache[cache_key]
-
     registry.get_group(group_id)  # validate group exists
 
-    fields_in_group = [
-        f for f in registry.get_fields_for_group(group_id) if not f.derived
-    ]
+    fields_in_group = fields_to_extract(group_id, registry, doc_kind)
+
+    cache_key = (
+        f"{group_id}:{registry.registry_version}:{','.join(f.id for f in fields_in_group)}"
+    )
+    if cache_key in _model_cache:
+        return _model_cache[cache_key]
 
     field_definitions: dict[str, Any] = {}
     for field_def in fields_in_group:
