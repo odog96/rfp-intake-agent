@@ -467,6 +467,17 @@ class FieldDef(BaseModel):
     plain: str | None = None
     scoped: bool = False
     source_priority: str | None = None
+    # The kinds of document EXTRACT asks for this field in, as CLASSIFY names
+    # them. A document of another kind is never asked: the field is left out of
+    # the extraction prompt's field list and of the response schema for that
+    # call, and a record the model still returns for it is rejected
+    # (extract/__init__.py). Empty, the default, means every kind. Added
+    # 2026-11-23 for timeline.budget_window, the time window the RFP asks the
+    # budget to cover (Angus Gray, 29 October 2026). Not on a derived field,
+    # which is never extracted.
+    only_from: list[Literal["rfp", "protocol", "amendment", "soa", "other"]] = Field(
+        default_factory=list
+    )
     budget_driver: bool = False
     derived: bool = False
     derived_from: list[str] | None = None
@@ -945,6 +956,14 @@ def _validate_registry(groups: list[GroupDef], fields: list[FieldDef]) -> None:
     for f in fields:
         if f.check_scopes_across_documents and f.derived:
             errors.append(f"Field {f.id} checks scopes across documents but is derived")
+
+    # EXTRACT reads only_from, and a derived field is never extracted; a kind
+    # named twice is a slip.
+    for f in fields:
+        if f.only_from and f.derived:
+            errors.append(f"Field {f.id} has only_from but is derived")
+        if len(f.only_from) != len(set(f.only_from)):
+            errors.append(f"Field {f.id} names a document kind twice in only_from")
 
     # A value's word names a value the field allows.
     for f in fields:

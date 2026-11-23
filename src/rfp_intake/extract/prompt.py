@@ -5,6 +5,7 @@ from __future__ import annotations
 import structlog
 from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
 
+from rfp_intake.domain.dynamic import fields_to_extract
 from rfp_intake.domain.registry import FieldDef, Registry
 from rfp_intake.domain.schemas import Document, ExtractionTask, Section, TableData
 from rfp_intake.extract.validate import comparable_text
@@ -66,7 +67,9 @@ def build_extract_prompt(
 ) -> list[BaseMessage]:
     """Build the extraction prompt messages for a single task."""
     group = registry.get_group(task.group)
-    fields = [f for f in registry.get_fields_for_group(task.group) if not f.derived]
+    # A field whose `only_from` leaves out this kind of document is not asked
+    # for; the response schema leaves it out the same way (extract/__init__.py).
+    fields = fields_to_extract(task.group, registry, doc.kind or "other")
 
     # System message
     fields_section = _render_fields_section(fields)
