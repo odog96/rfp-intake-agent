@@ -4,6 +4,222 @@ Every `### Done` entry that was in `CLAUDE.md`, moved here unedited on 2026-10-0
 entries were 74% of `CLAUDE.md` and were loaded into every session. Newest first. Nothing in this
 file is current state: `CLAUDE.md` holds current state, and where the two disagree, `CLAUDE.md` wins.
 
+### Done 2026-11-23: the report Angus Gray asked for on 29 October
+
+Oliver asked on the evening of 22 November for a report that answers every request Angus Gray has
+made, above all on the 29 October call (report `r-20261029-140643`, transcript
+GMT20261029-142148), with the workflow still deployable on Cloudera AI. The list of Angus's asks
+this work was checked against (131 asks from the four call transcripts, the meeting notes, his
+variable list and his deck) is `angus-asks.md` in the project's shared files, not in the
+repository, because it quotes the customer's calls.
+
+**Model.** Oliver chose an Opus model on Bedrock for the working prototype; `config/models.yaml`
+names it for all four roles. The newer Opus on Bedrock refuses the forced tool choice that native
+structured output relies on (`llm/structured.py`), so it is not used. The first run on the chosen
+model, `r-20261123-opus5-base` (the 19 October code), passed 5 of the 14 must-hold facts. Three
+prompt wordings were the cause and were changed in `b5e54a4`: the extraction schema called the page
+"1-indexed page number within the excerpt", which the model followed literally; CLASSIFY's
+definitions let it call the amended protocol a protocol; and ADJUDICATE judged 42 against 40 months
+reconcilable and kept the statistical sample size of 236 beside the enrolment figure of 260.
+
+**Registry (`config/fields.yaml`), 45 variables in the 29 October report, 42 fields now.**
+- Removed: `visits.intensity_evidence` and `visits.intensity_rating` (visit intensity),
+  `blinding.placebo_assumption` (the tool's own placebo guess), `monitoring.frequency_requested`,
+  `monitoring.frequency_basis`, `monitoring.sdv_expectation`, `monitoring.sdr_expectation`. The
+  blinding group's `block` is gone: every variable is its own row.
+- New: `study.title` (first row), `timeline.budget_window` ("Time window to budget for"),
+  `monitoring.pharmacy_frequency` ("Pharmacy monitoring frequency"),
+  `monitoring.source_data_expectations` (SDV, SDR and CRF percentages in one row, no arithmetic).
+- Changed: `timeline.periods` is the one "Patient timeline"; `timeline.total_duration` ("Whole
+  study duration") and `timeline.budget_window` are printed as lines under it; the requested
+  monitoring frequency is the RFP's own words, not a number of days; the pharmacy visits row moved
+  to the top of the blinding group with its frequency after it, and placebo matching sits directly
+  under the blinding design; placebo matching gained `no_placebo` and the words Yes / No / N/A; the
+  phase and population group, with the title, comes first, in the protocol synopsis's order.
+- Hints changed after reading live runs: the timeline asks for day ranges, a length as "28 days",
+  no phone calls to patients who stopped treatment and no statistical accrual assumptions; the
+  budget window leaves out the enrolment period; "Multi-part study" says when to answer No; the
+  monitoring guidance and the unblinded-monitoring reason no longer repeat the visit counts; the
+  dosing frequency leaves out infusion lengths and exceptions; the design summary leaves out the
+  stratification factors; the drug form is never read from what the drug is ("an investigational
+  monoclonal antibody" gave "Another route" in run 3); a sentence referring to the schedule of
+  activities is no evidence that the document lacks one (run 3 answered "no" from Amendment p.13).
+- New registry keys, each validated in `domain/registry.py`: `shown_under` (a field printed as a
+  line under another field's row), `only_from` (the document kinds EXTRACT asks a field of),
+  periods `always`, `when_stated` and `may_word_differently`, and a schedule consideration's `show`
+  (premedication and chemotherapy are left out of Key considerations but still out of the
+  Assessments count). `docs/ARCHITECTURE.md` §4.2, §4.9 and §4.10 describe them.
+
+**Pipeline.**
+- RECONCILE, GATE and ADJUDICATE share one scope rule, `reconcile.scope_key`: on a field that is
+  not `scoped`, "total" and no scope are one group. Run `r-20261123-oct29-run1` kept the
+  amendment's "not matching" placebo (no scope) apart from the RFP's "matching" (scope "total"),
+  so must-hold fact 6 failed and four variables printed twice.
+- GATE: a budget driver whose disagreement was dismissed is Confirmed where the on-topic records
+  come from two or more documents and every one of them gives the row's value
+  (`documents_state_it`), which answers Angus's question about the 260 subjects. The patient
+  timeline is one answer where no period's length reads two ways, in one document or two
+  (`periods_agree`, `MergedEntry.stated_two_ways`); one document may word a day, a visit or the
+  period's own name two ways, two documents only where they share one wording (changed after
+  run 4, below).
+- ADJUDICATE writes one row where every on-topic record gives the same value; the same answer in
+  other words is now described as reconcilable (one row, "worded differently"); a call that fails
+  is tried once more, and a disagreement still not judged is shown as a disagreement for a person
+  to settle, never as "Not found" (`r-20261123-oct29-run2` lost the 42 against 40 months that way).
+  The guided parse reads only a response's text blocks. The candidate list no longer shows the
+  model each record's confidence, so Appendix B quotes none.
+- NORMALIZE reads "20,800 CRF pages total" as 20800 and "260 (130 per arm)" as 260 (CLAUDE.md open
+  item 10). It now gives None, and keeps the raw text, for a number followed by words and then
+  more digits outside parentheses: "10 visits per site for a total of 750 visits", "40 sites in 5
+  countries" and "260 subjects (130 per arm), 236 evaluable" gave 10, 40 and 260 before. A length
+  written as one hyphenated word ("28-day") reads as a number and a unit ("28 days").
+- EXTRACT asks a document CLASSIFY could not label for every field, and asks for the budget window
+  in an RFP and in any document labelled `other` (an email), not in a protocol, an amendment or a
+  schedule of activities.
+- DERIVE has no rubric left: the visit-intensity and placebo-assumption rubrics are removed.
+
+**Report.** Every row is Variable | Value | Status | Where, with every page reference in Where.
+Status is Confirmed or Review only; no confidence figure is printed anywhere, in `report.pdf` or
+`report.xlsx`. A disagreement row reads "Documents disagree — see Disagreement N", with one line
+per document under it, each with its own pages. Grey notes and review reasons sit under the pages.
+A patient-timeline line takes its words from one passage where one passage gives them all and cites
+every passage whose words it prints; an open-label extension or long-term follow-up line starts
+with the document's own name for it ("Separate open-label extension study of NEOD001, from study
+completion"); a length stated two ways is printed under its line with each value's pages. A
+flagged timeline is one row of Flagged for review, in its lines' words. The visit table's footnote
+page moved from the timing cell to the Where column. A budget driver Flagged for review because
+ADJUDICATE dismissed a difference now reads "Budget driver; the passages differ, but the tool's
+check found no contradiction — see Appendix B." instead of "the documents word it differently". Run
+4 printed an intermediate wording, "the documents answer differently", beside the grey note "Worded
+differently; checked, the same answer" on the same row ("Schedule of activities present",
+"Unblinded monitoring likely required"); the two contradict each other.
+`scripts/check_review_2026_10_07.py` no longer applies (its table signatures include the Confidence
+column); `scripts/check_review_2026_10_29.py` checks Angus's 29 October asks on `report.pdf`.
+`scripts/check_flag_reasons.py` counts `reconcilable` as a dismissed verdict, as GATE does, skips the
+schedule's own rows and finds a row whose scope the report capitalises or leaves out: 13 of 13 on
+run 4.
+
+**Reviewers.** pipeline-rules-reviewer and plan-conformance-reviewer read `6615f70..761bc0a` after
+run 3. pipeline-rules-reviewer found three breaches of `docs/ARCHITECTURE.md`: GATE confirmed 260
+beside an amendment's on-topic 280 on one model call (§4.9; fixed: every on-topic record must give
+the value); `only_from` let CLASSIFY's label decide which fields are attempted (§4.2; narrowed, the
+choice between narrowing and removing is Oliver's); and GATE confirmed a timeline one document
+states two ways (fixed: `may_word_differently`). It also noted that ADJUDICATE stores an unjudged
+candidate as `conflict`, not None (recorded in §4.7). plan-conformance-reviewer found 8 of 39 items
+short: timeline lines citing one page while their words came from several (fixed), the placebo row
+not directly under the blinding design (fixed), a confidence figure in Appendix B (fixed), a
+flagged timeline printing raw keys (fixed), the footnote page in a value cell (fixed), a test
+comparing quotes with trailing spaces (fixed); the "Whole study" line inside the timeline and the
+schedule-against-text check wait for Angus's answers.
+
+**After run 4: the reviewers' second reading and the report fixes.** pipeline-rules-reviewer and
+plan-conformance-reviewer read `761bc0a..60e968c`, and report-usability-reviewer and
+run-comparison-reviewer read run 4. What changed:
+- GATE's predicates are public (`documents_state_it`, `periods_agree`, `rival_values`,
+  `entry_listings`), and `render/report_model.py` calls them to print why a row is in review, so
+  the printed reason is GATE's own rule; `scripts/check_flag_reasons.py` gives 13 of 13 on run 4.
+- `MergedEntry.stated_two_ways` lets one document word a period's name, start or end two ways.
+  Two documents may word it differently only where they share one wording: an `end` can hold the
+  event a treatment runs until, and "approximately 300 primary endpoint events" in one document
+  against "approximately 250" in the other is a difference; "Month 1-Day 1" in both, with "Day -1"
+  as well in one, is not. "24 months after the last subject is randomized" against "first" is a
+  difference, whatever the lengths say.
+- `normalize/duration.py:amounts_in` reads a range by both ends, so "1-2 years" and "2 years" are
+  two lengths; a number after "Day " or a hyphen is not a range's start. It also reads the
+  number words one to nineteen and the tens, alone or with a unit ("twenty-eight days" is 28
+  days, not a range from twenty, and was "eight days" before), digits with thousands separators
+  ("1,000 days" read as 0 days before, so 1,000 and 2,000 days agreed), and ranges written with
+  "or", "and" and "between" ("1 or 2 years", "between 1 and 2 years"). "hundred" is not read:
+  "two hundred days" gives no amount and is compared by its words, rather than read as 100 days.
+- A patient-timeline line takes the period's name from the passage it cites, and where several
+  passages give the line, its words come from one whose quote states them.
+- Within one document, the record shown for an entry's key is one whose own quote states the key
+  (at least half of the key's words, `reconcile/entries.py:quote_states`), then the more
+  confident. EXTRACT checks an entry's counts against its quote but not its text, and run 4's arms
+  showed "Dose: administered intravenously" from a p.15 record whose quote is about enrolment; they
+  now show "NEOD001 (24 mg/kg) IV infusion" and "normal saline IV infusion", from p.19 and p.20.
+  GATE reads no shown value, so no status moves. An arm row in review now prints the rule GATE
+  used for it (the documents list the arms differently), not the general reason.
+- The report: page 1 names each document's file and page count; a review reason is one line;
+  "provisional" is worded one way on the row and in the Disagreements table, with the rule that
+  chose the value ("the tool read the amendment's passage as the clearest"); "the reviewer" is "the
+  tool" or "the tool's check"; no blank page before Appendix A. A hedge before a number
+  ("approximately 42 months") is the same value as the bare amount (`_value_key`), so
+  Disagreement 2 lists the amendment once, citing p.15 and p.24, and Appendix A marks p.24 "Shown
+  in the report" rather than "Not used". Where an Appendix A line cites several pages, it names the
+  page the quote is from (`_Docs.quote_page`): run 4's "Study Phase Phase 3" sat beside "Amendment
+  p.11; RFP p.2". ADJUDICATE's text reads "the amendment", not "the amendment Amendment", and the
+  report's words, not code words such as `not_matching_stated`; an entry's code words
+  (`follow_up`) read as words. Appendix B gives each passage ADJUDICATE names by number its
+  document and page ("Record 3 (RFP p.3)"); the reader is never shown the numbers otherwise. A
+  budget driver in review because a difference was dismissed lists the other values under its
+  pages ("Also stated: Yes, in an appendix — Amendment p.111 (printed p.109)."), so the reason
+  says what to check. Appendix A prints no "[Total]" before a whole-study passage. Page 1 gives
+  the date in words and no longer prints the registry's id.
+- Hints (these take effect from run 5): no hint names a person, because ADJUDICATE is shown the
+  hint and run 4's Appendix B told Angus the stratification factors were left out "as Angus Gray
+  asked"; "Reason / trigger for unblinded monitoring" no longer answers whether the placebo
+  matches, which run 4 printed as Confirmed beside a disagreement on exactly that.
+- `scripts/rerender_report.py` reads the run's input PDFs, so a re-rendered report names the files
+  and the quote pages as a live run's does.
+
+Today's GATE, run again over runs 3 and 4, changes no status, so the re-rendered run 4 report is
+what the current code makes of run 4's extraction.
+
+**Runs** (all on `Example protocol 2.pdf` and `Synthetic_RFP_NEOD001.pdf`):
+
+| Run | Code | Must-hold facts | 29 October check | Clusters | EXTRACT errors | What it showed |
+| --- | --- | --- | --- | --- | --- | --- |
+| `r-20261123-opus5-base` | `6615f70`, the 19 October code | 5 of 14 | not yet written | 14 | 22 | the three prompt wordings fixed in `b5e54a4` |
+| `r-20261123-oct29-run1` | the new registry and pipeline | 13 of 14 (fact 6 fails) | not kept | 9 | 5 | placebo "matching" (scope "total") kept apart from "not matching" (no scope): `scope_key` |
+| `r-20261123-oct29-run2` | run 1's fixes | 11 of 14 (facts 5, 6, 9 fail) | not kept | 10 | 2 | a failed ADJUDICATE call lost the 42 against 40 months to "Not found": retry and the unjudged fallback |
+| `r-20261123-oct29-run3` | `761bc0a` | 14 of 14 | 18 pass, 1 look (after the check script stopped counting a disagreement's sides as rows) | 11 | 4 | 429 s; the reviewers' findings and the content fixes of `60e968c` |
+| `r-20261123-oct29-run4` | `60e968c` | 14 of 14 | 19 pass, 0 fail, 0 look | 10 | 2 | 398 s; "Values found for 41 of 42 variables"; the reviewers' second reading and report-usability-reviewer's reading of it gave the fixes "After run 4" |
+| `r-20261123-oct29-run5` | the fixes after run 4 | 14 of 14 | 19 pass, 0 fail, 0 look | 10 | 2 | 393 s; the unblinded-monitoring reason no longer restates the placebo, and Appendix B no longer names Angus; but the treatment line read the power assumption "a treatment/follow-up period of 18 months" (Amendment p.24) as its length, printed Confirmed, and the open-label extension read "from At the time of study completion": the timeline hint changed |
+| `r-20261123-oct29-run6` | run 5's code with the new timeline hint | 14 of 14 | 19 pass, 0 fail, 0 look | 11 | 3 | 410 s; the final run, "Values found for 41 of 42 variables"; the treatment line reads "From Month 1-Day 1 until approximately 156 primary endpoint events" and the extension "…, from study completion". EXTRACT scoped the 236 subjects "total" and ADJUDICATE called it off-topic, so the "Statistical minimum: 236" line of runs 4 and 5 is only in Appendices A and B (decision 2 in CLAUDE.md). The report to send is its `report-rerender.pdf`: two Appendix B wording fixes were made while it ran |
+
+**Must-hold fact 9 is translated, to be confirmed by Oliver.** It was "40 of 44 fields have a
+value": three fields these documents never give (healthy-volunteer scope, SDV, SDR) and one field
+of slack. SDV and SDR are now one field, so the same one field of slack is 39 of 42
+(`eval/golden/sample_pair_must_hold.yaml`).
+
+**Still open after this work**, in Angus's terms:
+- Not testable on this document pair: whether a visit type the RFP does not specify reads "not
+  specified" (M2), the on-site or remote split per visit type (M4), placebo N/A on an open-label
+  study (B3), take-home tablets (S13).
+- Not built: rows for booster, remote, centralised and co-monitoring visits (M15, asked as a
+  question); marking which words of a quote a value relies on (L12); a check that the schedule of
+  activities matches the text (S16, asked as a question in the follow-up email); several studies
+  in one RFP (V22) and scanned pages (P10), both deferred by agreement.
+- Waiting for Angus: whether the whole-study duration belongs inside the patient timeline (T8;
+  on 1 October he said to ignore the 42 months).
+- `eval/golden/Synthetic_RFP_NEOD001.json` still names `monitoring.frequency_requested`, and
+  `scripts/rerender_report.py --rederive` keeps an old run's derived rows; a re-render of a run
+  made before 2026-11-23 leaves out variables the registry no longer defines.
+- Read in run 4 and not fixed: the population row cites Amendment p.12 for a summary also drawn
+  from p.20; the treatment line's start ("Month 1-Day 1") is from p.13, which the line does not
+  cite; Table 1 gives 7 assessments to each of the Month 1 visits on Days 8, 15 and 22, where the
+  table's PK marks differ; "Factors driving unblinded monitoring" lost one item between runs 3
+  and 4. The first two are EXTRACT's choice of passage, the third READ_SCHEDULE's, the fourth the
+  model's. ("Reason / trigger for unblinded monitoring" restating the placebo is fixed from run 5.)
+- Run to run, the extraction model's choices move: run 5 took a power assumption as the treatment
+  length, which the hint now forbids; run 6 scoped the 236 subjects as a total, which the hint
+  already forbids. The must-hold facts and the 29 October checks both passed run 5, because
+  neither checked a period's length. Check 5 of `scripts/check_review_2026_10_29.py` now fails a
+  treatment line that gives a fixed length beside an end that is a number of events: run 5 now
+  gives 18 pass, 1 fail; runs 4 and 6 still give 19 pass. A must-hold fact for the same thing is
+  Oliver's to add.
+- Recorded by pipeline-rules-reviewer's third reading, not changed: `quote_states` counts every
+  word, so an enrolment quote naming "NEOD001", "IV" and "infusion" counts as stating the dose
+  "NEOD001 (24 mg/kg) IV infusion", and across documents `_shown` still ranks without it;
+  `amount_count` reads "twenty-eight days" as the one amount "eight days" (it only counts);
+  `amounts_in` reads "3 and 6 months" as the range 3-6 and "Month 1 to 12 months" as 1-12;
+  `scripts/check_flag_reasons.py` imports GATE's predicates, so its 13 of 13 shows the report
+  prints the rule GATE applied, not that GATE's rules are right; `_name_values` swaps a value word
+  in quotation marks even where ADJUDICATE was quoting the document's own word.
+- `report.xlsx` still prints raw values and `rf.sources[0]` (CLAUDE.md open item 6); none of the
+  report fixes above reached it.
+
 ### Done 2026-10-12: one row per arm, matched across documents by treatment
 
 Run `r-20261009-225414` listed four arms for a two-arm study under "Cohorts / arms / dose levels /

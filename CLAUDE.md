@@ -68,7 +68,61 @@ Source: `/home/cdsw/how_to_resond.txt`, adapted for this project.
 19. **When told "unclear" or "too dense", rewrite with the missing pieces filled in.**
     Do not defend the original or apologise at length.
 
-## Current status (as of 2026-10-13)
+## Current status (as of 2026-11-23)
+
+**The report follows Angus Gray's call of 29 October 2026 (report `r-20261029-140643`, transcript
+GMT20261029-142148), built overnight on 22 to 23 November 2026 on branch
+`claude/project-thread-iz8zht`, not yet merged.** Read the 2026-11-23 entry in `docs/JOURNAL.md` for
+every change and the reason for it. In short: `config/fields.yaml` holds 42 variables (the 29 October
+report printed 45); every row of the report reads Variable | Value | Status | Where, with Status
+Confirmed or Review only and no confidence figure anywhere; the patient timeline is one row with a line
+per period; and the workflow model is an Opus model on Bedrock, named in `config/models.yaml` (testing
+only, rule 5).
+
+The final live run is `r-20261123-oct29-run6` (410 s, 11 contradiction clusters, 3 EXTRACT
+errors): 14 of 14 must-hold facts pass, `scripts/check_review_2026_10_29.py` gives 19 pass, 0 fail,
+0 look, `scripts/check_flag_reasons.py` 13 of 13, and `report.pdf` reads "Values found for 41 of 42
+variables". The report to send Angus is that run's `report-rerender.pdf`: the same extraction
+re-rendered after two Appendix B wording fixes made while it ran. Run 5 put the protocol's power
+assumption ("a treatment/follow-up period of 18 months") on the treatment line as Confirmed; the
+timeline hint now forbids it, and check 5 of the 29 October script now fails it. `runs/` is not in
+git.
+
+Both gate reviewers ran on the branch three times on 2026-11-23. The first reading found 3 breaches
+of `docs/ARCHITECTURE.md` and 8 asks only partly met; each was fixed before run 4, or is recorded in
+ARCHITECTURE.md as a deviation waiting for Oliver. The second reading, and report-usability-reviewer's
+and run-comparison-reviewer's reading of run 4, were answered after run 4 ("After run 4" in the
+JOURNAL entry). pipeline-rules-reviewer's third reading found no breach of the ten rules and one of
+§3 (an Appendix B page reference without its printed page), fixed; the risks it recorded are listed
+in the JOURNAL entry. **Four decisions wait for Oliver:**
+1. Whether `only_from` stays, narrowed so a document CLASSIFY could not label is asked for every
+   field, or goes, as pipeline-rules-reviewer proposed (ARCHITECTURE.md §4.2).
+2. Whether a budget driver should stay in review whenever ADJUDICATE called any record off-topic.
+   That would keep "260 subjects" in review on the test pair, against Angus's ask (§4.9).
+3. Must-hold fact 9 is translated from "40 of 44 fields have a value" to 39 of 42
+   (`eval/golden/sample_pair_must_hold.yaml`): the same one field of slack, now that SDV and SDR are
+   one field and the registry is smaller.
+4. ADJUDICATE stores a candidate no model judged as `conflict`, not None, so the report shows it as a
+   disagreement (§4.7).
+
+Open items 1 to 9 of the 2026-10-13 section below still stand; item 10 is fixed, and item 6
+(`report.xlsx`) now also lacks every report fix of 2026-11-23 after run 4. Still open from Angus's
+asks: whether a visit type the RFP does not specify reads "not specified", the on-site or remote split
+per visit type, placebo N/A on an open-label study and take-home tablets, none testable on this
+document pair; rows for booster, remote, centralised and co-monitoring visits (asked as a question in
+the follow-up email); marking which words of a quote a value relies on; a check that the schedule of
+activities matches the text (asked as a question); several studies in one RFP and scanned pages, both
+deferred by agreement; whether the amended protocol should be called "Protocol" rather than
+"Amendment" (13 May notes, never asked). Read in run 4 and not fixed: three rows cite one page for
+words read from another; the JOURNAL entry lists them. In run 6 the "Statistical minimum: 236" line
+under the subjects row is only in Appendices A and B, because EXTRACT scoped the 236 as a total and
+ADJUDICATE called it off-topic (decision 2 above). `eval/golden/Synthetic_RFP_NEOD001.json` still
+names the removed field `monitoring.frequency_requested`.
+
+`tests/test_launch_app.py` fails (6 tests) on a machine that also has `/home/cdsw/rfp-intake-agent`,
+because the launcher finds that copy first; nothing in this work touched it.
+
+## Status as of 2026-10-13 (history; the 2026-11-23 section above wins)
 
 **The eleven fixes of the 2026-10-12 brief are built in six stages and committed (`feaeb39` to
 `81cd71b`), but not confirmed in a live report.** `docs/OVERNIGHT_2026-10-12.md` has every decision
@@ -215,7 +269,10 @@ one row of several was item 1 until it was fixed on 2026-10-11; see `docs/JOURNA
    production run that reaches rung 2 or 3 on a machine without the cache would make the same
    outbound calls. Before production the models must be installed with the deployment and loaded
    from a local path, with downloads switched off.
-10. **"20800" and "20,800 CRF pages total" are not normalised to the same number** (recorded
+10. ~~**"20800" and "20,800 CRF pages total" are not normalised to the same number**~~ **Fixed
+   2026-11-23** in `normalize/types.py:normalize_int`: "20,800 CRF pages total" gives 20800 and "260 (130
+   per arm)" gives 260, and a number followed by words and then more digits outside parentheses ("10
+   visits per site for a total of 750 visits") now gives None and keeps the raw text. (Recorded
    2026-10-19, Oliver). In live run `r-20261019-prompt-c3` the model extracted RFP p.4's "Approximately
    20,800 CRF pages total." twice for `ops.crf_pages`, scope "total": once as `20800`, once as the
    string "20,800 CRF pages total". `normalize/types.py:normalize_int` strips a unit word only when
@@ -223,8 +280,8 @@ one row of several was item 1 until it was fixed on 2026-10-11; see `docs/JOURNA
    "20,800 CRF pages" gives None, and `normalize/__init__.py:66` then keeps the raw string as the
    value. The two records then differ, so RECONCILE sends them to ADJUDICATE, which called them
    `not_a_conflict` (severity high), and GATE's budget-driver rule turned the total row from
-   `confirmed` (in `r-20261019-prompt-c2`) into `needs_review`. Not fixed; the fix belongs in
-   NORMALIZE, which rule 7 keeps pure and table-tested.
+   `confirmed` (in `r-20261019-prompt-c2`) into `needs_review`. The fix is in NORMALIZE, which rule 7
+   keeps pure and table-tested (`tests/normalize/test_types.py`).
 
 Phases 0–4 of ARCHITECTURE.md §10 are done, and stages 1, 2, 3, 4 and 5 of `docs/PLAN_2026-10-02.md`.
 **Stage 5's two live criteria failed on 2026-10-02 and still fail after the 2026-10-03 fix**, though for
@@ -254,7 +311,10 @@ pipeline and writes `extraction.json`, `report.pdf` and `report.xlsx`, and the a
 and reports the outcome. Verified 2026-08-27 with job run `pde6ypjc38gypgy2`.
 
 ### Current model
-Claude Sonnet 4.6 on AWS Bedrock (`us.anthropic.claude-sonnet-4-6`), `privacy_mode: mixed`.
+Since 2026-11-23, an Opus model on AWS Bedrock for all four roles, chosen by Oliver for the working
+prototype; `config/models.yaml` names it. The newer Opus on Bedrock rejects the forced tool choice that
+`strategy: native` relies on (`llm/structured.py`), so it is not used. Before 2026-11-23, Claude Sonnet
+4.6 on AWS Bedrock (`us.anthropic.claude-sonnet-4-6`). `privacy_mode: mixed`.
 **Testing only** — Bedrock is outside the customer boundary, so synthetic and publicly-registered
 documents only, per non-negotiable rule 5 below. Production is CAII and `privacy_mode: private`.
 
@@ -341,7 +401,8 @@ recorded inline in its own section rather than only here. The load-bearing ones:
 4. **`audit.json` (§6.4) and the janitor job (§6.5) are not built.** Without the janitor, a run whose
    job process dies leaves `status.json` saying "running" forever.
 5. **`python -m rfp_intake.eval` does not exist.** Only the library functions in `eval/` are built.
-6. **The confidence percentage is not calibrated and the report now says so.** It is the extraction
+6. **The confidence percentage is not calibrated, and since 2026-11-23 the report prints none** (Angus
+   Gray, 29 October 2026: confirmed or review only). GATE still compares it to 0.80. It is the extraction
    model's own rating of how clearly a document stated the value, plus `CORROBORATION_BOOST_PER_SOURCE`
    (0.05) for each extra passage that agreed, capped at 1.0. Nothing checks it against hand-marked
    answers, so it is not a probability of being correct, and GATE only compares it to

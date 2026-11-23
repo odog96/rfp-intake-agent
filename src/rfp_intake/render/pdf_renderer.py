@@ -45,7 +45,7 @@ from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.lib.units import inch
 from reportlab.pdfbase.pdfmetrics import stringWidth
 from reportlab.platypus import (
-    PageBreak,
+    CondPageBreak,
     Paragraph,
     SimpleDocTemplate,
     Spacer,
@@ -154,7 +154,9 @@ def build_report_pdf(state: RunState, registry: Registry, *, generated_at: str) 
     story += _disagreements(model, styles)
     story += _flagged(model, styles)
     story += _schedules(model, styles)
-    story.append(PageBreak())
+    # A new page for the appendices only where less than a third of one is left:
+    # a forced break left page 6 of run r-20261123-oct29-run4 holding one row.
+    story.append(CondPageBreak(3 * inch))
     story += _evidence_appendix(model, styles)
     story += _reasoning_appendix(model, styles)
     story += _removed_appendix(model, styles)
@@ -182,6 +184,17 @@ def build_report_pdf(state: RunState, registry: Registry, *, generated_at: str) 
 # --------------------------------------------------------------------------- #
 
 
+def _reading_date(generated_at: str) -> str:
+    """An ISO timestamp as "23 November 2026, 06:50 UTC"; anything else as given."""
+    from datetime import UTC, datetime
+
+    try:
+        when = datetime.fromisoformat(generated_at).astimezone(UTC)
+    except ValueError:
+        return generated_at
+    return f"{when.day} {when:%B %Y, %H:%M} UTC"
+
+
 def _header_block(model: ReportModel, generated_at: str, styles: dict) -> list:  # type: ignore[type-arg]
     """Title, the documents, the counts, and how to read what follows.
 
@@ -190,9 +203,10 @@ def _header_block(model: ReportModel, generated_at: str, styles: dict) -> list: 
     """
     story: list[object] = [
         Paragraph("RFP Intake Summary", styles["title"]),
+        # A date a reader can read; the registry version that made the report is
+        # in extraction.json (report-usability-reviewer, 23 November 2026).
         Paragraph(
-            f"Run {escape(model.run_id)} · generated {escape(generated_at)} · "
-            f"field registry {escape(model.registry_version)}",
+            f"Run {escape(model.run_id)} · {escape(_reading_date(generated_at))}",
             styles["meta"],
         ),
         Spacer(1, 6),
@@ -279,9 +293,9 @@ def _disagreements(model: ReportModel, styles: dict) -> list:  # type: ignore[ty
         return story
     story.append(Paragraph(
         "Each row is one variable where the documents say different things. Pick the value that "
-        "belongs in the budget, or ask the sponsor. The tool does not choose for you — where it "
-        "shows a provisional value, that is only which document normally takes precedence. The "
-        "reviewer's full reasoning for each is in Appendix B.",
+        "belongs in the budget, or ask the sponsor. The tool does not choose for you: where it "
+        "shows a provisional value, it says which fixed rule picked it. The tool's reasoning "
+        "for each is in Appendix B.",
         styles["body"],
     ))
     story.append(Spacer(1, 3))
@@ -305,8 +319,8 @@ def _decision_table(decisions: list[Decision], styles: dict) -> Table:  # type: 
         )
         if d.provisional:
             assessment += (
-                f"<br/><font size=\"7.5\">Provisional, by document precedence: "
-                f"{escape(_clip(d.provisional, 80))}</font>"
+                f"<br/><font size=\"7.5\">Provisional: "
+                f"{escape(_clip(d.provisional, 120))}</font>"
             )
         else:
             assessment += '<br/><font size="7.5">No value chosen.</font>'
@@ -555,9 +569,9 @@ def _flagged(model: ReportModel, styles: dict) -> list:  # type: ignore[type-arg
         "tool never clears one by itself. What the reasons mean: "
         "<b>budget driver holding more than one value</b> — which of them belongs in a budget is a "
         "person's judgement, so the tool will not pick; "
-        "<b>budget driver, the documents answer differently, and the reviewer found no "
-        "contradiction</b> — Appendix B gives the reviewer's reasoning, and a person still "
-        "confirms which answer belongs in the budget; "
+        "<b>budget driver, the passages differ, but the tool's check found no "
+        "contradiction</b> — Appendix B gives the tool's reasoning, and a person still confirms "
+        "the value before it goes in the budget; "
         "<b>the document does not state it clearly</b> — read the quoted passage in Appendix A "
         "before using it.",
         styles["body"],
@@ -620,8 +634,7 @@ def _glossary(model: ReportModel, styles: dict) -> list:  # type: ignore[type-ar
     return [
         Paragraph("Words used in this report", styles["section"]),
         Paragraph(
-            "Written for a reader without a clinical background. The wording lives in "
-            "config/fields.yaml and can be corrected there.",
+            "What each variable means, in plain words.",
             styles["meta"],
         ),
         Spacer(1, 3),
@@ -708,6 +721,9 @@ def _evidence_appendix(model: ReportModel, styles: dict) -> list:  # type: ignor
         head = head.strip()
         line = f"• {head + ' ' if head else ''}<font color=\"#757575\">{cited}</font>"
         if e.quote:
+            # Where the line cites several pages, the one the quote is from.
+            if e.quote_from:
+                line += f'<font color="#757575">; quote from {escape(e.quote_from)}</font>'
             line += f': <i>"{escape(e.quote)}"</i>'
         if e.derived_from:
             line += f" <font color=\"#757575\">Derived from {escape(', '.join(e.derived_from))}"
@@ -776,12 +792,14 @@ def _removed_appendix(model: ReportModel, styles: dict) -> list:  # type: ignore
     if not model.removed:
         return []
     story: list[object] = [
+        # Never the heading alone at the foot of a page.
+        CondPageBreak(1.5 * inch),
         Paragraph("Appendix C — Text read as describing a different study", styles["section"]),
         Paragraph(
             "A protocol often describes earlier studies of the same drug. A number taken "
             "from one of those is a wrong number, so these passages were not read when the "
             "variables above were extracted. Each says where it is in the documents, so it "
-            "can be checked. The full text of each is in extraction.json.",
+            "can be checked. The full text of each is kept with the run.",
             styles["meta"],
         ),
     ]

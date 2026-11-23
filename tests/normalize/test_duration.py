@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from rfp_intake.normalize.duration import amount_count, normalize_duration
+from rfp_intake.normalize.duration import amount_count, amounts_in, normalize_duration
 
 
 class TestQNotation:
@@ -122,3 +122,63 @@ class TestAWordingWithTwoAmountsIsNotShortened:
     ])
     def test_amounts_are_counted(self, raw: str, count: int) -> None:
         assert amount_count(raw) == count
+
+
+class TestAmountsIn:
+    """The lengths a wording gives, as the patient timeline compares them
+    (reconcile/entries.py:length_key): a range by both its ends, a day named by
+    its number never read as an amount, nothing converted."""
+
+    @pytest.mark.parametrize("raw,expected", [
+        ("28 days", [(28, 28, "days")]),
+        ("a 28-day period", [(28, 28, "days")]),
+        ("28-35 days", [(28, 35, "days")]),
+        ("28 to 35 days", [(28, 35, "days")]),
+        ("28 \u2013 35 days", [(28, 35, "days")]),
+        ("within 28-35 days after the last study drug administration", [(28, 35, "days")]),
+        ("1-2 years", [(1, 2, "years")]),
+        ("2 years", [(2, 2, "years")]),
+        ("3.5-4 years", [(3.5, 4, "years")]),
+        ("4 years", [(4, 4, "years")]),
+        ("one to two years", [(1, 2, "years")]),
+        ("4 weeks", [(4, 4, "weeks")]),
+        ("every 28 days for 24 months", [(28, 28, "days"), (24, 24, "months")]),
+        ("Day 1 to 28 days after the last dose", [(28, 28, "days")]),
+        ("Day -28 to 14 days", [(14, 14, "days")]),
+        ("Day -28 to Day -1", []),
+        ("approximately 300 primary endpoint events", []),
+        # A number word's own hyphen is not a range (second reading, 23 November).
+        ("twenty-four months", [(24, 24, "months")]),
+        ("fifty-two weeks", [(52, 52, "weeks")]),
+        ("twenty to thirty days", [(20, 30, "days")]),
+        ("1 or 2 years", [(1, 2, "years")]),
+        ("between 1 and 2 years", [(1, 2, "years")]),
+        ("6 and 12 months", [(6, 12, "months")]),
+        # Any tens word with its unit, and digits with thousands separators
+        # (third reading, 23 November).
+        ("twenty-eight days", [(28, 28, "days")]),
+        ("thirty one days", [(31, 31, "days")]),
+        ("seventeen weeks", [(17, 17, "weeks")]),
+        ("seventy days", [(70, 70, "days")]),
+        ("1,000 days", [(1000, 1000, "days")]),
+        ("1,000-2,000 days", [(1000, 2000, "days")]),
+        ("two hundred days", []),
+    ])
+    def test_amounts_in(self, raw: str, expected: list[tuple[float, float, str]]) -> None:
+        assert amounts_in(raw) == expected
+
+    @pytest.mark.parametrize("a,b", [
+        ("1-2 years", "2 years"),
+        ("3.5-4 years", "4 years"),
+        ("28-35 days", "35 days"),
+        ("28 days", "4 weeks"),
+        ("between 1 and 2 years", "2 years"),
+        ("1 or 2 years", "2 years"),
+        ("1,000 days", "2,000 days"),
+        ("twenty-eight days", "eight days"),
+    ])
+    def test_a_range_is_not_its_upper_end(self, a: str, b: str) -> None:
+        assert amounts_in(a) != amounts_in(b)
+
+    def test_a_number_word_reads_as_the_number(self) -> None:
+        assert amounts_in("twenty-four months") == amounts_in("24 months")

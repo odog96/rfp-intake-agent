@@ -218,6 +218,14 @@ def check_event_driven(report: c7.Report) -> Result:
     if treat is None or not re.search(r"event", _value(treat), re.I):
         return Result("T7", title, "FAIL", "the Treatment line does not say it runs until events",
                       notes)
+    # Run r-20261123-oct29-run5 printed "18 months, Month 1-Day 1 to approximately 156
+    # primary endpoint events have been reached": a power assumption's length beside an
+    # end that is a number of events. Treatment that runs until events has no fixed length.
+    if re.match(r"\s*(?:approximately\s+|about\s+|~\s*)?\d+(?:\.\d+)?(?:\s*[-\u2013]\s*\d+)?"
+                r"\s+(?:days?|weeks?|months?|years?)\b", _value(treat), re.I):
+        return Result("T7", title, "FAIL",
+                      "the Treatment line gives a fixed length beside an end that is a number of "
+                      "events", notes)
     if window is None:
         return Result("T7", title, "FAIL", "no Time window to budget for line", notes)
     if "Not found" in _value(window) or "RFP" not in window.cell("Where"):

@@ -615,9 +615,7 @@ class TestReportWording:
 
     def test_the_real_registry_carries_the_three_phrases(self, fields_yaml_path: Path) -> None:
         wording = load_registry(fields_yaml_path).report_wording
-        assert wording.shown_provisional == (
-            "Shown in the report (provisional, by document precedence)"
-        )
+        assert wording.shown_provisional == "Shown in the report (provisional)"
         assert wording.not_used == "Not used — see Disagreement {n}"
         assert wording.no_value_chosen == "No value chosen — see Disagreement {n}"
 

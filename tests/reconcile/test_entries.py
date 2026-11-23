@@ -112,6 +112,26 @@ def test_within_one_document_the_most_confident_record_is_shown() -> None:
     assert merged.shown_records == [high]
 
 
+def test_within_one_document_the_record_whose_quote_states_the_key_is_shown() -> None:
+    """Run r-20261123-oct29-run4: the p.15 record gave the NEOD001 arm a dose its
+    passage, about enrolment, never states, and was shown for being the more
+    confident."""
+    enrolment = _rec({"dose": "administered intravenously", "n_subjects": 130},
+                     "d-am", "amendment", 15, confidence=0.95)
+    enrolment.quote = (
+        "Up to 260 subjects will be enrolled in the study, with approximately 130 subjects "
+        "per arm."
+    )
+    drug = _rec({"dose": "NEOD001 (24 mg/kg) IV infusion"}, "d-am", "amendment", 19,
+                confidence=0.85)
+    drug.quote = "Study drug consists of NEOD001 (24 mg/kg) or placebo."
+    for order in ([enrolment, drug], [drug, enrolment]):
+        merged = merge_entry(_parts(), order)
+        assert merged.value("dose") == "NEOD001 (24 mg/kg) IV infusion"
+        # The count is still the enrolment passage's, which states it.
+        assert merged.keys["n_subjects"].shown is enrolment
+
+
 def test_a_record_that_is_not_an_entry_states_no_key() -> None:
     merged = merge_entry(_parts(), [
         _rec("Arm A: NEOD001", "d-rfp", "rfp", 3),

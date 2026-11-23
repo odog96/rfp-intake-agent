@@ -15,9 +15,10 @@ is the artefact the Cloudera AI Application offers for download and the record o
 what that run actually produced.
 
 Two things it does not reproduce:
-- `extraction.json` does not record which file each doc_id came from, so a
-  re-rendered report names documents by kind ("Protocol", "RFP") rather than by
-  filename. report_model.py:_Docs says the same. Nothing else differs.
+- `extraction.json` does not record which file each doc_id came from. Since
+  2026-11-23 each PDF in runs/<run_id>/inputs/ is matched to the document id
+  whose quotes are on its pages (`_doc_id_for`), so page 1 names the files as the
+  run's own report.pdf does; a document no input matches is named by its id.
 - Only resolved values and contradictions are read back. The graph's other state
   (excerpts, the extraction plan) is not in extraction.json and the report does
   not use it.
@@ -91,7 +92,35 @@ def load_run_state(run_path: Path) -> tuple[RunState, str]:
         state.schedules = [Schedule.model_validate(s) for s in doc["schedules"]]
     else:
         state.schedules = read_schedules_from_inputs(run_path, state)
+    state.documents = input_documents(run_path, state)
     return state, str(doc.get("generated_at", "unknown"))
+
+
+def input_documents(run_path: Path, state: RunState) -> list[Document]:
+    """The run's input PDFs as the documents report.pdf names on page 1, each
+    under the id whose quotes are on its pages, with the kind its records give
+    and each page's text, from which Appendix A names the page a quote is from.
+    Text is read with the first parsing method only, which is in-process."""
+    from rfp_intake.ingest.parsers.rung1 import Rung1Parser
+
+    inputs = run_path / "inputs"
+    if not inputs.is_dir():
+        return []
+    kinds = {
+        p.doc_id: p.doc_kind for rf in state.resolved for p in rf.sources if p.doc_kind
+    }
+    documents: list[Document] = []
+    for pdf in sorted(inputs.glob("*.pdf")):
+        parsed = Rung1Parser().parse(pdf).to_document("doc-unmatched")
+        doc_id = _doc_id_for(parsed, state)
+        if doc_id is None or any(d.id == doc_id for d in documents):
+            continue
+        kind = kinds.get(doc_id)
+        documents.append(Document(
+            id=doc_id, path=str(pdf), pages=parsed.pages, page_texts=parsed.page_texts,
+            kind=kind if kind in ("rfp", "protocol", "amendment", "soa", "other") else None,
+        ))
+    return documents
 
 
 def read_schedules_from_inputs(run_path: Path, state: RunState) -> list[Schedule]:

@@ -385,7 +385,7 @@ class PeriodsDisplay(BaseModel):
     # document may word two ways and still give one answer ("Day -1", "Month
     # 1-Day 1"). Every other key, a length above all, must read the same in
     # every record of the stretch, whichever document states it, for GATE to
-    # confirm the variable (gate/__init__.py:_periods_agree), and a key that
+    # confirm the variable (gate/__init__.py:periods_agree), and a key that
     # does not is printed with each of its values under the line.
     may_word_differently: list[str] = Field(default_factory=list)
 

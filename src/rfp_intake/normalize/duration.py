@@ -171,14 +171,73 @@ def amount_count(raw: str) -> int:
     return len(_ANY_AMOUNT_PATTERN.findall(raw))
 
 
-def amounts_in(raw: str) -> list[tuple[int | float, str]]:
-    """Every amount (a number and a unit of time) a wording holds, in order, the
-    unit in its plural: [(28, "days")] for "28 days" and for "a 28-day period",
-    [(4, "years")] for "3.5-4 years". Nothing is converted or added up: 4 weeks
-    and 28 days are two different amounts."""
-    out: list[tuple[int | float, str]] = []
-    for number, unit in _ANY_AMOUNT_PATTERN.findall(raw):
-        n = _parse_number(number)
-        if n is not None:
-            out.append((n, _normalize_unit(unit)))
+# An amount as amounts_in reads it: a range's lower end, when it is one ("1" of
+# "1-2 years", "28" of "28 to 35 days"), then the number and the unit. A number
+# after "Day " or a minus sign names a day, not the start of a range ("Day 1 to
+# 28 days after the last dose" holds the one amount 28 days).
+# The number words it reads: one to nineteen, and the tens alone or with a unit
+# ("twenty", "twenty-eight", "thirty one"), the tens first so "seventy" is not
+# read as "seven". "hundred" is not read, so "two hundred days" gives no amount
+# rather than 100 days; a wording with no amount is compared by its words
+# (pipeline-rules-reviewer, third reading, 23 November 2026).
+_SMALL_WORDS: dict[str, int] = {
+    w: n for w, n in _WORD_NUMBERS.items() if n < 20 and "-" not in w
+}
+_TENS_WORDS: dict[str, int] = {
+    "twenty": 20, "thirty": 30, "forty": 40, "fifty": 50,
+    "sixty": 60, "seventy": 70, "eighty": 80, "ninety": 90,
+}
+_NUMBER_WORDS = (
+    r"(?:" + "|".join(_TENS_WORDS) + r")"
+    r"(?:[-\s](?:one|two|three|four|five|six|seven|eight|nine)\b)?"
+    r"|" + "|".join(sorted(_SMALL_WORDS, key=len, reverse=True))
+)
+# A number in digits, with thousands separators read as one number: "1,000
+# days" is 1000 days, not 0.
+_DIGITS = r"\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d+(?:\.\d+)?"
+
+# A range's sign: a hyphen or dash only between digits, as a number word's own
+# hyphen ("twenty-four months") is not one; "to", "or" and "and" between any
+# two numbers, so "1 or 2 years" and "between 1 and 2 years" are ranges like
+# "1-2 years" (pipeline-rules-reviewer, second reading, 23 November 2026).
+_AMOUNT_OR_RANGE_PATTERN = re.compile(
+    r"(?<![\w.,\-])(?<![Dd]ay )(?:between\s+)?"
+    r"(?:(" + _DIGITS + r")\s*(?:-|\u2013|to\b|or\b|and\b)\s*"
+    r"|(" + _NUMBER_WORDS + r")\s+(?:to|or|and)\s+)?"
+    r"(" + _DIGITS + r"|" + _NUMBER_WORDS + r")(?:\s+|-)"
+    r"(days?|weeks?|months?|years?|hours?|wks?|mos?|yrs?|hrs?)\b",
+    re.IGNORECASE,
+)
+
+
+def _amount_number(s: str) -> int | float | None:
+    """A number amounts_in read, in digits ("1,000", "3.5") or in words
+    ("twenty-eight", "thirty one")."""
+    s = s.strip().lower()
+    if s[:1].isdigit():
+        return _parse_number(s.replace(",", ""))
+    total = 0
+    for part in re.split(r"[-\s]+", s):
+        n = _TENS_WORDS.get(part, _SMALL_WORDS.get(part))
+        if n is None:
+            return None
+        total += n
+    return total
+
+
+def amounts_in(raw: str) -> list[tuple[int | float, int | float, str]]:
+    """Every amount (a number and a unit of time) a wording holds, in order, as
+    its lower end, its upper end and its unit in the plural: (28, 28, "days")
+    for "28 days" and for "a 28-day period", (3.5, 4, "years") for "3.5-4
+    years". A range is read by both its ends, so "1-2 years" and "2 years" are
+    two amounts (pipeline-rules-reviewer, 23 November 2026). Nothing is
+    converted or added up: 4 weeks and 28 days are two different amounts."""
+    out: list[tuple[int | float, int | float, str]] = []
+    for low_digits, low_word, number, unit in _AMOUNT_OR_RANGE_PATTERN.findall(raw):
+        n = _amount_number(number)
+        if n is None:
+            continue
+        low = low_digits or low_word
+        lo = _amount_number(low) if low else n
+        out.append((n if lo is None else lo, n, _normalize_unit(unit)))
     return out

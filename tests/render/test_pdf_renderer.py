@@ -173,7 +173,8 @@ def _conflict_state() -> RunState:
 
     conflict = Contradiction(
         field_id="interim.count", verdict="conflict", severity="high",
-        explanation="The RFP (d-rfp) plans an interim analysis; the protocol (d-prot) does not.",
+        explanation="The RFP (d-rfp) plans an interim analysis; the protocol (d-prot) does not; "
+                    "d-rfp p.4 says so.",
         records=[rec(0, 98, "d-prot", "protocol"), rec(1, 4, "d-rfp", "rfp")],
     )
     dismissed = Contradiction(
@@ -183,7 +184,7 @@ def _conflict_state() -> RunState:
         # with the internal document id in it: the renderer has to swap that for
         # the report's own name. See
         # `test_reasoning_and_dismissed_entries_are_in_the_appendix`.
-        explanation="Both records name the same disease; the protocol (d-prot) abbreviates it.",
+        explanation="Both records name the same disease; d-prot abbreviates it.",
         records=[
             FieldRecord(field_id="study.indication", group="phase_population", raw_value=v,
                         value=v, quote=v, confidence=0.9,
@@ -451,7 +452,9 @@ class TestReportText:
         text = _pdf_text(build_report_pdf(_conflict_state(), _registry(), generated_at="t"))
         assert "Appendix B" in text
         # Document ids in the adjudicator's reasoning are replaced by names.
-        assert "The RFP (RFP) plans an interim analysis; the protocol (Protocol) does not." in text
+        # An id just after the document's own name is dropped, not doubled.
+        assert ("The RFP plans an interim analysis; the protocol does not; RFP p.4 says so."
+                in text)
         assert "Checked and dismissed (1)" in text
         assert "Light chain amyloidosis" in text
         # The dismissed pair carries its reason too, and that reason is renamed
@@ -460,7 +463,7 @@ class TestReportText:
         # then printed, but unrenamed, so Appendix B of
         # r-20261008-review2-run3 showed the analyst "doc-2ea4cd79".
         assert (
-            "Both records name the same disease; the protocol (Protocol) abbreviates it."
+            "Both records name the same disease; Protocol abbreviates it."
             in text
         )
         # Scoped to the appendix: the header block on page 1 names both document

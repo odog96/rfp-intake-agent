@@ -622,6 +622,59 @@ class TestAPeriodsDisplayIsOneAnswerWhenItsPeriodsAgree:
         ])
         assert out.status == "needs_review"
 
+    @pytest.mark.parametrize(("first", "second"), [
+        ("1-2 years", "2 years"),
+        ("3.5-4 years", "4 years"),
+    ])
+    def test_a_range_and_its_upper_end_review(  # type: ignore[no-untyped-def]
+        self, fields_yaml_path, first: str, second: str,
+    ) -> None:
+        """pipeline-rules-reviewer, second reading, 23 November 2026: a range was
+        read by its upper end only, so "1-2 years" confirmed beside "2 years"."""
+        field = self._field(fields_yaml_path, from_schedule=False)
+        key = self._key(field)
+        out = self._gate(field, [
+            ("doc-am", {key: "treatment", "duration": first}),
+            ("doc-rfp", {key: "treatment", "duration": second}),
+        ])
+        assert out.status == "needs_review"
+
+    @pytest.mark.parametrize(("name", "first", "second"), [
+        ("end", "approximately 300 primary endpoint events",
+         "approximately 250 primary endpoint events"),
+        ("end", "Month 24", "Month 36"),
+        ("start", "Day 1", "Week 4"),
+        # The same length, a different event: compared word for word (second
+        # reading, 23 November 2026).
+        ("end", "24 months after the last subject is randomized",
+         "24 months after the first subject is randomized"),
+    ])
+    def test_two_documents_ending_a_period_differently_review(  # type: ignore[no-untyped-def]
+        self, fields_yaml_path, name: str, first: str, second: str,
+    ) -> None:
+        """pipeline-rules-reviewer, second reading, 23 November 2026: a start or
+        an end may be worded two ways within one document, not between two, as
+        an `end` can hold the event a treatment runs until."""
+        field = self._field(fields_yaml_path, from_schedule=False)
+        key = self._key(field)
+        out = self._gate(field, [
+            ("doc-am", {key: "treatment", "start": "Day 1", name: first}),
+            ("doc-rfp", {key: "treatment", "start": "Day 1", name: second}),
+        ])
+        assert out.status == "needs_review"
+
+    def test_two_documents_sharing_a_wording_agree(self, fields_yaml_path) -> None:  # type: ignore[no-untyped-def]
+        """The amendment words the end of screening two ways; an RFP giving one
+        of those wordings agrees with it."""
+        field = self._field(fields_yaml_path, from_schedule=False)
+        key = self._key(field)
+        out = self._gate(field, [
+            ("doc-am", {key: "screening", "duration": "28 days", "end": "Day -1"}),
+            ("doc-am", {key: "screening", "duration": "28 days", "end": "Month 1-Day 1"}),
+            ("doc-rfp", {key: "screening", "duration": "28 days", "end": "day -1"}),
+        ])
+        assert out.status == "confirmed"
+
     def test_two_unlisted_periods_are_not_one_period(self, fields_yaml_path) -> None:  # type: ignore[no-untyped-def]
         """An enrolment period and an end of treatment visit, neither in the
         component list, are two stretches as the report prints them

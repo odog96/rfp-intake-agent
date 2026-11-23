@@ -84,7 +84,7 @@ version: 1
 report_wording:
   # Appendix A, under each passage behind a numbered Disagreement (CLAUDE.md open item 3).
   # On every passage stating the value the report shows, where precedence chose one:
-  shown_provisional: "Shown in the report (provisional, by document precedence)"
+  shown_provisional: "Shown in the report (provisional)"
   # On every other passage of that disagreement:
   not_used: "Not used — see Disagreement {n}"
   # On every passage, where precedence could not choose and the report shows no value:
@@ -102,7 +102,7 @@ report_wording:
     domain_authority: "this variable is normally taken from the {doc}"
     # Not "confidence": the report prints no confidence (Angus Gray, 29 October 2026). The
     # rule takes the passage the extraction model rated as stating the value most clearly.
-    specificity: "the {doc} states it most clearly"
+    specificity: "the tool read the {doc}'s passage as the clearest"
     default: "the {doc} normally takes precedence"
   # Where it did not:
   row_no_value_chosen: "No value chosen. See Disagreement {n}."
@@ -533,7 +533,7 @@ fields:
       headache symptoms. There the population is "healthy volunteers" and the indication is "acute
       headache". State the population in one or two sentences (e.g. "adults 18-75 with moderate to
       severe ulcerative colitis who have failed conventional therapy"). Do NOT enumerate the full
-      inclusion/exclusion criteria list — Angus has flagged that as out of scope.
+      inclusion/exclusion criteria list: it is out of scope.
       The analysis populations of the statistics section (intent-to-treat, ITT, safety,
       per-protocol, full analysis set) are not the study population: they say which subjects'
       data an analysis uses, not who takes part. Leave them out, and leave scope empty.
@@ -554,8 +554,8 @@ fields:
       the synopsis and the body state it in different words, prefer the body and note the synopsis
       wording in `notes`. Secondary and exploratory objectives are out of scope and are set aside.
     plain: >
-      What this study is mainly trying to find out, in the document's own words. Angus asked for it
-      written out rather than summarised, so that the report can be read beside the protocol.
+      What this study is mainly trying to find out, in the document's own words: written out
+      rather than summarised, so that the report can be read beside the protocol.
     source_priority: protocol
 
 # --- Group 2: Study Design and Structure ------------------------------------
@@ -568,8 +568,10 @@ fields:
       Brief factual overview of the overall design. State the design type (e.g. randomised,
       double-blind, placebo-controlled, dose-escalation, crossover), and whether the study is
       single-part or multi-part. 2-4 sentences maximum, drawn only from the document. Leave
-      out the stratification factors ("I don't really care about the stratification factors",
-      Angus Gray, 1 October 2026).
+      out the stratification factors.
+    # "I don't really care about the stratification factors" (Angus Gray, 1 October 2026). The
+    # hint names no person: ADJUDICATE is shown the hint, and run r-20261123-oct29-run4's
+    # Appendix B repeated "which Angus Gray asked be omitted" to Angus.
     source_priority: protocol
 
   - id: design.is_multipart
@@ -1019,7 +1021,7 @@ fields:
     hint: >
       Whether a schedule of activities exists in this document and WHERE. "yes_body" when the table
       sits in the numbered body of the document; "yes_appendix" when it sits in an appendix or
-      attachment, which is common and is where Angus says to look when the body has none; "no" when
+      attachment, which is common and is where to look when the body has none; "no" when
       the document says it has no such table, or lists what it contains and the list has none. A
       contents-page entry or a sentence referring to the table ("described in the Schedule of
       Events (Table 1)") is not the table and does not show the table is missing either: omit
@@ -1052,6 +1054,10 @@ fields:
     # accrual period, which is the study's recruitment and not a patient's time. Telephone
     # follow-up of patients who stopped treatment is left out (Angus Gray, 1 October 2026:
     # "I would ignore that... I don't think the tool needs to extract stuff like that").
+    # Run r-20261123-oct29-run5 read the synopsis's power assumption, "a treatment/follow-up
+    # period of 18 months", as the treatment's length, and printed "18 months, Month 1-Day 1 to
+    # approximately 156 primary endpoint events" as Confirmed; and wrote an open-label
+    # extension's start as "At the time of study completion".
     hint: >
       One entry per period of ONE PATIENT'S time in the study, as the study design or the
       schedule describes it: screening, run_in (also called lead-in), treatment, follow_up after
@@ -1060,10 +1066,11 @@ fields:
       period as the document does. `duration` is only its length, as a number and a unit
       ("28 days", "14-21 days", also where the document writes "a 28-day period"), never the
       words around it. `start` and
-      `end` are ONLY the day or visit that opens and closes it, as the document numbers them
-      ("Day -28", "Day -1", "Month 1 Day 1", "Last dose", "End-of-treatment visit"): never a
-      sentence, and never what happens on that day. Write "Day -1", not "prior to the first
-      administration of study drug on Day 1".
+      `end` are ONLY the day, visit or event that opens and closes it, as the document numbers
+      or names them ("Day -28", "Day -1", "Month 1 Day 1", "Last dose", "End-of-treatment
+      visit", "study completion"): never a sentence or the words around it, and never what
+      happens on that day. Write "Day -1", not "prior to the first administration of study drug
+      on Day 1"; "study completion", not "At the time of study completion".
       Where treatment has no fixed length - it runs until a number of events has occurred, or
       until the study ends - leave `duration` out and put that condition in `end`, in the
       document's words ("approximately 300 primary endpoint events"). A follow-up visit set a
@@ -1073,9 +1080,10 @@ fields:
       about 4 years for patients who enrol first, about 2 years for those who enrol last"):
       give it in `duration` as the document does.
       Leave out: the enrolment or accrual period, study start-up, database lock and the final
-      analysis, which are stages of the study, not of a patient's time; the accrual and
-      follow-up times a sample-size or statistical section assumes ("an accrual period of 30
-      months and a follow-up period of 12 months"), which describe the whole study; telephone or
+      analysis, which are stages of the study, not of a patient's time; every length a
+      sample-size, power or statistical section assumes ("an accrual period of 30 months and a
+      follow-up period of 12 months"), whatever it calls the period, treatment included, which
+      describes the whole study and not one patient's time; telephone or
       vital-status calls to patients who have stopped treatment; single visits ("Month 1",
       "Day 8"), which are the visit schedule; and the whole study's duration, which is
       timeline.total_duration. Omit periods the document does not mention.
@@ -1106,9 +1114,10 @@ fields:
         long_term_follow_up: Long-term follow-up
       # The keys that name a day, a visit or the period itself, which one document may word
       # two ways and still give one answer ("Day -1", "Month 1-Day 1" for the end of
-      # screening). A length must read the same in every passage stating it, or the timeline
-      # is reviewed and each length is printed under its line with its pages
-      # (pipeline-rules-reviewer, 23 November 2026).
+      # screening). Two documents wording one of them differently are reviewed, as an `end`
+      # can hold the event a treatment runs until. A length must read the same in every
+      # passage stating it, or the timeline is reviewed and each length is printed under its
+      # line with its pages (pipeline-rules-reviewer, 23 November 2026).
       may_word_differently: [label, start, end]
       # The first alternative whose keys are all stated, so the longer ones come first.
       lines: ["{duration}, {start} to {end}", "{duration}, from {start}",
@@ -1366,13 +1375,17 @@ fields:
     # request belongs at the top, and drug details shown elsewhere "just [don't] need to be
     # repeated here". Live run r-20261123-oct29-run2 wrote this row for the RFP from its
     # "Pharmacy Monitoring Frequency" line, repeating "4 per site, 300 total".
+    # Run r-20261123-oct29-run4 ended this row "A matching placebo is not provided.", one
+    # document's side of the placebo-matching disagreement, in a row the report marked Confirmed
+    # (report-usability-reviewer, 23 November 2026). Whether the placebo matches is
+    # blinding.placebo_matching's question, so this row no longer answers it.
     hint: >
       The reason the document itself gives for needing unblinded staff or unblinded monitoring,
       in a sentence or two: for example, that only unblinded pharmacy staff may prepare the study
-      drug, or that the placebo does not look like the study drug as supplied. Record only a
-      reason the document states. Never repeat here the number or frequency of pharmacy
-      monitoring visits, or the drug's form and route: those have rows of their own. A document
-      that lists pharmacy visits but gives no reason: omit the field.
+      drug or keep the drug accountability records. Record only a reason the document states.
+      Never repeat here whether the placebo matches the study drug, the number or frequency of
+      pharmacy monitoring visits, or the drug's form and route: those have rows of their own. A
+      document that lists pharmacy visits but gives no reason: omit the field.
     source_priority: any
 
 # --- Group 8: Operational Metrics and Volumes -------------------------------

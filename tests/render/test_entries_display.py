@@ -441,7 +441,7 @@ class TestTimeline:
         printed = _printed(row)
         # Confirmed: every period here comes from one document and none is worded
         # two ways, so GATE reads the display as one answer (gate/__init__.py,
-        # _periods_agree).
+        # periods_agree).
         assert printed[1] == (
             "Screening", "28 days before first dose", "Confirmed", "Amendment p.13")
         assert printed[2] == ("Run-in", "Not found in the documents", "Review", "")
@@ -546,6 +546,48 @@ class TestTimeline:
         ole = lines.index("Open-label extension: OLE study, up to 2 years")
         assert lines[ole + 1].startswith("Overall patient participation")
         assert not any(line.startswith("Long-term follow-up") for line in lines)
+
+    def test_a_line_takes_the_periods_name_from_the_passage_it_cites(self) -> None:
+        """pipeline-rules-reviewer, 23 November 2026: the name came from the
+        merged value and the rest of the line from one passage, so a line could
+        print the amendment's name beside the RFP's length, citing the RFP
+        only. Two documents naming the period and its start differently are
+        also printed under the line, each with its page."""
+        _, model = _report(_timeline() + [
+            _rec("timeline.periods", {
+                "component": "open_label_extension",
+                "label": "Separate open-label extension study of NEOD001",
+                "start": "study completion",
+            }, None, AM, 20, "a separate open-label extension study of NEOD001"),
+            _rec("timeline.periods", {
+                "component": "open_label_extension", "label": "OLE study",
+                "duration": "12 months", "start": "end of treatment",
+            }, None, RFP, 3, "OLE study 12 months from end of treatment"),
+        ])
+        printed = _printed(_row(model, "timeline.periods"))
+        assert ("Open-label extension", "OLE study, 12 months", "Review", "RFP p.3") in printed
+        assert not any("NEOD001, 12 months" in p[1] for p in printed)
+        assert ("", "Label: documents differ — Separate open-label extension study of NEOD001",
+                "Review", "Amendment p.20") in printed
+
+    def test_a_line_takes_its_words_from_a_passage_that_states_them(self) -> None:
+        """pipeline-rules-reviewer, 23 November 2026: the more confident record
+        gave the treatment a start its passage, about enrolment, never states,
+        and the line printed it citing that page."""
+        records = [
+            _rec("timeline.periods", {"component": "treatment", "label": "Treatment",
+                                      "duration": "18 months", "start": "Day 1"},
+                 None, AM, 15, "Up to 260 subjects will be enrolled in the study."),
+            _rec("timeline.periods", {"component": "treatment", "label": "Treatment",
+                                      "duration": "18 months", "start": "randomization"},
+                 None, AM, 19, "Treatment lasts 18 months from randomization."),
+        ]
+        records[1].confidence = 0.85
+        _, model = _report(records)
+        printed = _printed(_row(model, "timeline.periods"))
+        [treatment] = [p for p in printed if p[0] == "Treatment"]
+        assert "randomization" in treatment[1] and "Day 1" not in treatment[1]
+        assert treatment[3] == "Amendment p.19"
 
     def test_a_stated_start_and_end_are_printed_beside_the_duration(self) -> None:
         _, model = _report([_rec(
