@@ -84,7 +84,7 @@ version: 1
 report_wording:
   # Appendix A, under each passage behind a numbered Disagreement (CLAUDE.md open item 3).
   # On every passage stating the value the report shows, where precedence chose one:
-  shown_provisional: "Shown in the report (provisional, by document precedence)"
+  shown_provisional: "Shown in the report (provisional)"
   # On every other passage of that disagreement:
   not_used: "Not used — see Disagreement {n}"
   # On every passage, where precedence could not choose and the report shows no value:
@@ -100,7 +100,9 @@ report_wording:
   precedence_why:
     recency: "the {doc} is the newer document"
     domain_authority: "this variable is normally taken from the {doc}"
-    specificity: "the {doc}'s passage had the highest confidence"
+    # Not "confidence": the report prints no confidence (Angus Gray, 29 October 2026). The
+    # rule takes the passage the extraction model rated as stating the value most clearly.
+    specificity: "the tool read the {doc}'s passage as the clearest"
     default: "the {doc} normally takes precedence"
   # Where it did not:
   row_no_value_chosen: "No value chosen. See Disagreement {n}."
@@ -160,6 +162,47 @@ report_wording:
   # Appendix A's marker on a passage the adjudicating reviewer said is not about the
   # variable (fix 5); the reviewer's reason is printed in Appendix B.
   off_topic: "Not about this variable — see Appendix B"
+  # Under a stretch of the patient timeline that its `always` list prints and no document
+  # gives, so "Not found in the documents" says what it refers to (angus-asks L13).
+  period_not_found: "No passage in the documents describes this stage."
+  # Under a row whose passage is also one document's side of another variable's numbered
+  # Disagreement: the RFP's "40 month study duration" is the time window to budget for and
+  # its side of the whole study's disagreement (report-usability-reviewer, 23 November 2026).
+  same_passage: "The {doc}'s side of Disagreement {n} quotes the same passage."
+  # In place of the quote on a side printed under a row (a value of a dismissed difference)
+  # whose passage is another row's own: the RFP's pharmacy monitoring request is the
+  # "Pharmacy monitoring visits" row at the top of its section, and is not repeated
+  # (angus-asks B8; plan-conformance-reviewer, 23 November 2026).
+  side_same_row: 'read from the same passage as "{label}"'
+  # A line under a row in review giving another value the tool read in the passages, which
+  # is not one document's side of a disagreement (report-usability-reviewer, 23 November
+  # 2026: "RFP: Likely needed" read as if the RFP said so).
+  side_also: "Also read in the {doc}: {value}"
+  # Under the pages of a row or a side citing several pages and printing one quote: the
+  # quote's page, as no page reference is printed in the Value cell.
+  quote_from: "The quote is from {page}."
+  # Abbreviations the documents use that the report prints in quotes and values, explained
+  # in "Words used in this report" after the variables. Page 1 says the abbreviations are
+  # there; run r-20261123-oct29-run6 printed EOT, IXRS and IP with no entry
+  # (report-usability-reviewer, 23 November 2026), and IV, CRO, DSMB and PM, the last two in
+  # Appendix B (plan-conformance-reviewer, the same day).
+  # CRF is not here: "Number of CRF pages" above already explains it.
+  terms:
+    CEC: Clinical Events Committee, the independent group that decides whether a death or
+      hospital stay counts as an event the study measures.
+    CRO: Contract research organization, the company a sponsor hires to run the study.
+    DSMB: Data Safety Monitoring Board, the independent group that reviews safety data while the
+      study runs.
+    EOT: End of treatment, the visit after a participant's last dose of study drug.
+    ETD: Early treatment discontinuation, stopping the study drug early; the ETD visit follows.
+    IP: Investigational product, the study drug or the placebo given in its place.
+    IV: Intravenous, given into a vein; here the study drug is an IV infusion.
+    IXRS: Interactive response system, the phone or web system that randomizes each participant
+      and assigns the study drug supply (IWRS is the web-only kind).
+    PM: Project management, the CRO's work running the study, which grows with its length.
+    # RFP: page 1 names the RFP's file and never spelled the word out
+    # (plan-conformance-reviewer, final reading, 23 November 2026).
+    RFP: Request for proposal, the sponsor's document asking a CRO to plan and price the study.
   # Words a label the documents worded may start with that are never given a capital
   # letter, because they are units and "Mg" is not "mg" (Prompt B item 8). The report
   # capitalises the first word of such a label only when it is all lower case, so "mL"
@@ -194,8 +237,9 @@ schedule_table:
     where: Where
     each: "{n} each"
     # A column whose header gives no timing, timed by the header's own footnote
-    # (decision B of Prompt C).
-    footnote: "From the footnote on {pages}: {text}"
+    # (decision B of Prompt C). The footnote's page is in the row's Where column, with the
+    # table's, so no page reference sits in a value (Angus Gray, 29 October 2026).
+    footnote: "From the footnote: {text}"
     # A schedule under a `not_counted_headings` heading. `{name}` is its heading up
     # to the first colon ("Appendix 3").
     not_counted: "Not counted: patients who stop treatment early follow {name}, {pages},
@@ -287,6 +331,9 @@ schedule_table:
       label: Premedication
       wording: [premedication, pre medication]
       assessment: false
+      # Not listed under Key considerations (Angus Gray, 1 October 2026); still left out of
+      # the Assessments count, which the must-hold facts 10 and 11 check.
+      show: false
     # Not the bare word "administration" (Oliver, 2026-10-17): it matched
     # "Premedication Administration".
     - id: study_drug_administration
@@ -297,22 +344,16 @@ schedule_table:
       label: Chemotherapy
       wording: [chemotherapy]
       assessment: false
+      show: false
 
 groups:
-  - id: study_design
-    label: Study Design and Structure
-    plain: What kind of study this is, and how it is split into separate parts or groups.
-    search_hints:
-      headings: ["Study Design", "Overall Design", "Trial Design", "Synopsis", "Study Schema",
-                 "Overview of Study Design", "Description of Study", "Study Parts", "Study Overview"]
-      keywords: ["single-part", "multi-part", "Part A", "Part B", "cohort", "dose escalation",
-                 "arm", "treatment group", "dose level", "first-in-human", "FIH",
-                 "healthy volunteer", "healthy subject", "randomised", "randomized", "crossover",
-                 "parallel group", "open-label", "double-blind", "sentinel dosing"]
-
   - id: phase_population
-    label: Study Phase and Population
-    plain: How far along the drug's development this study sits, and who takes part in it.
+    label: Study Title, Phase and Population
+    # First in the report, in the protocol synopsis's order: title, phase, indication, then
+    # the rest (Angus Gray, 1 October 2026).
+    plain: >
+      The study's official title, how far along the drug's development it sits, and who takes
+      part in it.
     search_hints:
       # NOT "Background" or "Rationale". Both were here until 2026-10-02 and both
       # pointed this group at section 1.3 of the sample protocol, whose subsection
@@ -326,6 +367,17 @@ groups:
       keywords: ["Phase I", "Phase 1", "Phase II", "Phase III", "Phase IV", "Phase 1/2",
                  "indication", "target population", "patients with", "subjects with",
                  "adult", "paediatric", "pediatric", "adolescent", "elderly"]
+
+  - id: study_design
+    label: Study Design and Structure
+    plain: What kind of study this is, and how it is split into separate parts or groups.
+    search_hints:
+      headings: ["Study Design", "Overall Design", "Trial Design", "Synopsis", "Study Schema",
+                 "Overview of Study Design", "Description of Study", "Study Parts", "Study Overview"]
+      keywords: ["single-part", "multi-part", "Part A", "Part B", "cohort", "dose escalation",
+                 "arm", "treatment group", "dose level", "first-in-human", "FIH",
+                 "healthy volunteer", "healthy subject", "randomised", "randomized", "crossover",
+                 "parallel group", "open-label", "double-blind", "sentinel dosing"]
 
   - id: interim_analyses
     label: Interim Analyses and Decision Points
@@ -352,9 +404,9 @@ groups:
                  "loading dose", "maintenance dose", "titration"]
 
   - id: visits
-    label: Subject Visit Schedule and Intensity
+    label: Subject Visit Schedule
     plain: >
-      How often a participant comes into the clinic and how much is done at each appointment.
+      How often a participant comes into the clinic and what is done at each appointment.
       These are the participant's visits, not the monitor's visits to the site.
     search_hints:
       headings: ["Schedule of Events", "Schedule of Assessments", "Schedule of Activities", "SoA",
@@ -378,8 +430,10 @@ groups:
     top_k: 4
 
   - id: timelines
-    label: Study Timelines
-    plain: How long the whole study runs, and how long each stage of it lasts.
+    label: Patient Timeline
+    plain: >
+      How long one patient takes part in the study, stage by stage, then the time window to
+      budget for and how long the whole study runs.
     search_hints:
       headings: ["Study Duration", "Study Timelines", "Timeline", "Study Period", "Milestones",
                  "Recruitment", "Enrolment", "Enrollment", "Project Schedule", "Deliverables"]
@@ -391,25 +445,13 @@ groups:
   - id: blinding_monitoring
     label: Blinding and Unblinded Monitoring
     plain: >
-      Who is allowed to know which treatment a participant was given, and whether keeping that
-      secret forces a second, separately staffed monitor onto the study.
-    # One row for the question these six variables answer between them, whether unblinded
-    # staff have to be paid for: as six rows they read as unconnected answers (fix 9 of the
-    # 2026-10-12 brief). Each of the six stays in extraction.json, Appendix A and the review
-    # list; the factors and the reason are in Appendix A only.
-    block:
-      label: Unblinded staff and monitoring
-      headline: monitoring.unblinded_required
-      replaces: [blinding.placebo_matching, blinding.unblinded_staff_stated,
-                 monitoring.unblinded_required, monitoring.unblinded_factors,
-                 monitoring.unblinded_rationale, blinding.placebo_assumption]
-      lines:
-        - field: blinding.unblinded_staff_stated
-          label: Stated in the documents
-        - field: blinding.placebo_matching
-        - field: blinding.placebo_assumption
-        - field: ops.visits_pharmacy_monitoring
-          wording: "{doc} asks for pharmacy monitoring visits: {value} ({pages})."
+      The pharmacy monitoring the RFP asks for; then who is allowed to know which treatment a
+      participant was given, and whether keeping that secret needs separately staffed, unblinded
+      monitoring.
+    # Each variable is its own row (Angus Gray, 29 October 2026): until then one block row
+    # held six of them, with references in the middle of it. The RFP's pharmacy monitoring
+    # request comes first, as he asked, so ops.visits_pharmacy_monitoring and
+    # monitoring.pharmacy_frequency are in this group.
     search_hints:
       # "Placebo" as a heading and "placebo"/"matching" as keywords are what make protocol
       # section "6.3 Placebo" reachable. Before 2026-10-02 that section scored 0.000 for this
@@ -441,7 +483,8 @@ groups:
     label: Operational Metrics and Volumes
     plain: >
       The counts a budget is built from: how many hospitals or clinics, how many participants,
-      how many forms, how many monitoring visits.
+      how many forms, how many monitoring visits. Pharmacy monitoring visits are under Blinding
+      and Unblinded Monitoring, beside the pharmacy monitoring frequency.
     search_hints:
       headings: ["Number of Sites", "Number of Subjects", "Sample Size", "Countries",
                  "Scope of Work", "Assumptions", "Budget Assumptions", "Study Scope",
@@ -457,8 +500,8 @@ groups:
   - id: clinical_monitoring
     label: Clinical Monitoring Requirements
     plain: >
-      How often the sponsor expects someone to visit each site to check the work, and how much of
-      the recorded data that person has to check against the site's own records.
+      How often the sponsor expects a monitor to visit each site, and how much of the site's own
+      records the monitor has to check against the study data.
     search_hints:
       headings: ["Monitoring", "Clinical Monitoring", "Monitoring Plan", "Site Monitoring",
                  "Source Data Verification", "Risk Based Monitoring", "Quality Management",
@@ -471,7 +514,92 @@ groups:
 # =============================================================================
 fields:
 
-# --- Group 1: Study Design and Structure ------------------------------------
+# --- Group 1: Study Title, Phase and Population ----------------------------
+  - id: study.title
+    group: phase_population
+    label: Official study title
+    type: text
+    aliases: ["official title", "study title", "protocol title", "title of study", "title"]
+    # First in the report, word for word ("the official title is good to have", Angus Gray,
+    # 1 October 2026, who also asked for the protocol synopsis's order, title first).
+    hint: >
+      The study's full official title, copied word for word as the title page, the synopsis or
+      the RFP prints it. Only this study's title, never the title of another study the document
+      mentions, and never a section heading.
+    plain: >
+      The study's official title, word for word, so the report can be matched to the protocol.
+    source_priority: protocol
+
+  - id: study.phase
+    group: phase_population
+    label: Study phase
+    type: enum
+    values: [phase_1, phase_1_2, phase_2, phase_2_3, phase_3, phase_3_4, phase_4, not_specified, other]
+    aliases: ["Phase I", "Phase 1", "Ph I", "Phase Ib", "Phase I/II", "Phase 1/2", "Phase IIa", "Phase IIb"]
+    hint: >
+      Map to the closest enum value. "Phase Ib" -> phase_1. "Phase IIa"/"Phase IIb" -> phase_2.
+      Combined phases map to the combined enum. Record the verbatim phase text in raw_value.
+    plain: >
+      How far along the drug's testing this study is. Phase 1 is the earliest and smallest; Phase 3
+      is the large study that supports approval.
+    source_priority: protocol
+    budget_driver: true
+
+  - id: study.indication
+    group: phase_population
+    label: Disease type / indication
+    type: text
+    aliases: ["indication", "disease", "therapeutic area", "condition", "disease under study"]
+    hint: >
+      THE DISEASE THE DRUG IS MEANT TO TREAT — not who takes part in this study. That is
+      study.population, a separate field. A new headache drug has the indication "acute headache"
+      even when its first study is run in healthy people without headaches. State the disease, not
+      the eligibility criteria.
+    plain: >
+      The disease the drug is meant to treat. Not the same question as who takes part in this
+      study — see the population field above.
+    source_priority: protocol
+
+  - id: study.population
+    group: phase_population
+    label: Patient / subject population
+    type: text
+    aliases: ["study population", "target population", "subject population", "patient population",
+              "eligible subjects"]
+    hint: >
+      WHO ACTUALLY TAKES PART IN THIS STUDY — not the disease the drug is for. That is
+      study.indication, a separate field. The two are often the same and sometimes are not: a new
+      headache drug has the indication "acute headache", but its first study may give it to healthy
+      people who do not have a headache, so that the drug's side effects are not mistaken for
+      headache symptoms. There the population is "healthy volunteers" and the indication is "acute
+      headache". State the population in one or two sentences (e.g. "adults 18-75 with moderate to
+      severe ulcerative colitis who have failed conventional therapy"). Do NOT enumerate the full
+      inclusion/exclusion criteria list: it is out of scope.
+      The analysis populations of the statistics section (intent-to-treat, ITT, safety,
+      per-protocol, full analysis set) are not the study population: they say which subjects'
+      data an analysis uses, not who takes part. Leave them out, and leave scope empty.
+    plain: >
+      Who takes part in this study. Not the same question as which disease the drug is for: an early
+      study of a headache drug may be run in healthy people who have no headache.
+    source_priority: protocol
+
+  - id: study.primary_objective
+    group: phase_population
+    label: Primary objective
+    type: text
+    aliases: ["primary objective", "primary aim", "objective", "primary study objective"]
+    hint: >
+      Copy the primary objective VERBATIM, as the document writes it, in one record. Do not
+      summarise it, do not shorten it and do not merge several objectives into one. If the document
+      numbers or labels it ("Primary Objective", "1.1"), take the text under that label only. Where
+      the synopsis and the body state it in different words, prefer the body and note the synopsis
+      wording in `notes`. Secondary and exploratory objectives are out of scope and are set aside.
+    plain: >
+      What this study is mainly trying to find out, in the document's own words: written out
+      rather than summarised, so that the report can be read beside the protocol.
+    source_priority: protocol
+
+# --- Group 2: Study Design and Structure ------------------------------------
   - id: design.overview
     group: study_design
     label: General study design / structure
@@ -480,7 +608,11 @@ fields:
     hint: >
       Brief factual overview of the overall design. State the design type (e.g. randomised,
       double-blind, placebo-controlled, dose-escalation, crossover), and whether the study is
-      single-part or multi-part. 2-4 sentences maximum, drawn only from the document.
+      single-part or multi-part. 2-4 sentences maximum, drawn only from the document. Leave
+      out the stratification factors.
+    # "I don't really care about the stratification factors" (Angus Gray, 1 October 2026). The
+    # hint names no person: ADJUDICATE is shown the hint, and run r-20261123-oct29-run4's
+    # Appendix B repeated "which Angus Gray asked be omitted" to Angus.
     source_priority: protocol
 
   - id: design.is_multipart
@@ -488,7 +620,14 @@ fields:
     label: Multi-part study
     type: bool
     aliases: ["single-part", "multi-part", "study parts", "Part A / Part B", "stages"]
-    hint: True if the study is explicitly divided into parts, stages, or phases of conduct.
+    # Angus Gray's variable list (section 1) asks whether the study has parts. Live run
+    # r-20261123-oct29-run2 left this out for a two-arm study, because the hint asked only
+    # when to answer True.
+    hint: >
+      True if the document divides the study into parts or stages of conduct (Part A and
+      Part B, a dose-escalation stage then an expansion stage). False where the design
+      describes one study with no parts, such as a two-arm parallel-group study: quote the
+      sentence describing the design. Arms or cohorts that run side by side are not parts.
     source_priority: protocol
     budget_driver: true
 
@@ -633,6 +772,9 @@ fields:
       Whether some participants are healthy people rather than patients who have the disease being
       treated. Healthy-volunteer groups are usually run at different sites.
     source_priority: protocol
+    # The answer with the phrase that proves it, "No — subjects with AL amyloidosis" (Angus
+    # Gray, 1 October 2026; docs/ANALYST_PROCEDURE_PROTOCOL.md section 2).
+    show_quote: true
 
   - id: design.healthy_volunteer_scope
     group: study_design
@@ -649,76 +791,6 @@ fields:
         because: >
           No healthy volunteers take part, so no cohort or part includes them. Read from
           whether healthy volunteers are included, not from a passage about this question.
-
-# --- Group 2: Study Phase and Population ------------------------------------
-  - id: study.phase
-    group: phase_population
-    label: Study phase
-    type: enum
-    values: [phase_1, phase_1_2, phase_2, phase_2_3, phase_3, phase_3_4, phase_4, not_specified, other]
-    aliases: ["Phase I", "Phase 1", "Ph I", "Phase Ib", "Phase I/II", "Phase 1/2", "Phase IIa", "Phase IIb"]
-    hint: >
-      Map to the closest enum value. "Phase Ib" -> phase_1. "Phase IIa"/"Phase IIb" -> phase_2.
-      Combined phases map to the combined enum. Record the verbatim phase text in raw_value.
-    plain: >
-      How far along the drug's testing this study is. Phase 1 is the earliest and smallest; Phase 3
-      is the large study that supports approval.
-    source_priority: protocol
-    budget_driver: true
-
-  - id: study.population
-    group: phase_population
-    label: Patient / subject population
-    type: text
-    aliases: ["study population", "target population", "subject population", "patient population",
-              "eligible subjects"]
-    hint: >
-      WHO ACTUALLY TAKES PART IN THIS STUDY — not the disease the drug is for. That is
-      study.indication, a separate field. The two are often the same and sometimes are not: a new
-      headache drug has the indication "acute headache", but its first study may give it to healthy
-      people who do not have a headache, so that the drug's side effects are not mistaken for
-      headache symptoms. There the population is "healthy volunteers" and the indication is "acute
-      headache". State the population in one or two sentences (e.g. "adults 18-75 with moderate to
-      severe ulcerative colitis who have failed conventional therapy"). Do NOT enumerate the full
-      inclusion/exclusion criteria list — Angus has flagged that as out of scope.
-      The analysis populations of the statistics section (intent-to-treat, ITT, safety,
-      per-protocol, full analysis set) are not the study population: they say which subjects'
-      data an analysis uses, not who takes part. Leave them out, and leave scope empty.
-    plain: >
-      Who takes part in this study. Not the same question as which disease the drug is for: an early
-      study of a headache drug may be run in healthy people who have no headache.
-    source_priority: protocol
-
-  - id: study.indication
-    group: phase_population
-    label: Disease type / indication
-    type: text
-    aliases: ["indication", "disease", "therapeutic area", "condition", "disease under study"]
-    hint: >
-      THE DISEASE THE DRUG IS MEANT TO TREAT — not who takes part in this study. That is
-      study.population, a separate field. A new headache drug has the indication "acute headache"
-      even when its first study is run in healthy people without headaches. State the disease, not
-      the eligibility criteria.
-    plain: >
-      The disease the drug is meant to treat. Not the same question as who takes part in this
-      study — see the population field above.
-    source_priority: protocol
-
-  - id: study.primary_objective
-    group: phase_population
-    label: Primary objective
-    type: text
-    aliases: ["primary objective", "primary aim", "objective", "primary study objective"]
-    hint: >
-      Copy the primary objective VERBATIM, as the document writes it, in one record. Do not
-      summarise it, do not shorten it and do not merge several objectives into one. If the document
-      numbers or labels it ("Primary Objective", "1.1"), take the text under that label only. Where
-      the synopsis and the body state it in different words, prefer the body and note the synopsis
-      wording in `notes`. Secondary and exploratory objectives are out of scope and are set aside.
-    plain: >
-      What this study is mainly trying to find out, in the document's own words. Angus asked for it
-      written out rather than summarised, so that the report can be read beside the protocol.
-    source_priority: protocol
 
 # --- Group 3: Interim Analyses ----------------------------------------------
   # `interim.planned` — "Interim analyses planned", yes or no — was removed on
@@ -794,9 +866,13 @@ fields:
     aliases: ["IP", "IMP", "study drug", "investigational product", "test article", "study medication"]
     hint: >
       Multiple forms allowed (e.g. IV loading dose then SC maintenance). Route of administration
-      determines the form for injectables. Use `other` with a note for anything unlisted.
-      Quote the sentence that states the route ("administered by intravenous infusion"), not
-      one that only names the drug.
+      determines the form for injectables. Use `other` with a note only for a form or route the
+      document states that is not in the list. Quote the sentence that states the route
+      ("administered by intravenous infusion"), not one that only names the drug. What the drug
+      is ("an investigational monoclonal antibody", "a small molecule") is not a form: where a
+      passage gives only that, omit the field.
+    # Run r-20261123-oct29-run3 answered `other` from RFP p.3's "NEOD001, an investigational
+    # monoclonal antibody", and the report read "IV infusion; Another route".
     # Fix 11 of the 2026-10-12 brief: run r-20261012-angus read an IV infusion from RFP p.1,
     # which names only an antibody. A record giving infusion_iv with a quote saying none of
     # these words is rejected by EXTRACT (extract/validate.py:answers_field).
@@ -815,10 +891,18 @@ fields:
     scoped: true
     aliases: ["QD", "BID", "TID", "QW", "Q2W", "Q3W", "Q4W", "once daily", "twice daily",
               "every 2 weeks", "every 3 weeks", "per cycle", "dosing regimen", "dosing schedule"]
+    # Angus Gray, 1 October 2026: "we need to know the dosing frequency"; how long an
+    # infusion lasts matters only when one dose runs over several days ("back-to-back
+    # 24-hour infusions"); detailed dosing-cycle information can be left out for now. Live
+    # run r-20261123-oct29-run2 wrote "Once every 28 days (initial infusion over 120 ±10
+    # minutes; subsequent infusions may be over 60 ±10 minutes); minimum 21 days between
+    # doses if logistics intervene".
     hint: >
-      Capture the schedule as stated. If dosing differs by cohort, arm, dose level or part,
-      emit ONE RECORD PER SCOPE with scope set (e.g. scope="cohort:Part B"). Never average
-      or merge differing regimens into one answer.
+      How often the study drug is given, as stated (for example "Once every 28 days"). Leave
+      out how long each infusion takes, unless one dose runs over several days in a row, and
+      leave out exceptions such as the shortest gap allowed between doses. If dosing differs
+      by cohort, arm, dose level or part, emit ONE RECORD PER SCOPE with scope set (e.g.
+      scope="cohort:Part B"). Never average or merge differing regimens into one answer.
     source_priority: protocol
     budget_driver: true
     # How the report prints a schedule read as an amount ({n, unit}): "Every 28 days"
@@ -871,7 +955,7 @@ fields:
     values: [yes, no, not_specified]
     source_priority: protocol
 
-# --- Group 5: Visit Schedule and Intensity ----------------------------------
+# --- Group 5: Subject Visit Schedule ---------------------------------------
   - id: visits.frequency_by_period
     group: visits
     label: Visit frequency by study period
@@ -970,15 +1054,22 @@ fields:
     # beside two string values — see the note on
     # `blinding.unblinded_staff_stated` below.
     values: [yes_body, yes_appendix, "no"]
+    value_words:
+      yes_body: Yes, in the main text
+      yes_appendix: Yes, in an appendix
+      "no": "No"
     aliases: ["schedule of activities", "schedule of events", "schedule of assessments", "SoA",
               "SoE", "study flow chart", "study calendar", "table of assessments"]
+    # Run r-20261123-oct29-run3 answered "no" from Amendment p.13's "Assessment and visit windows
+    # are described in the Schedule of Events (Table 1)", a reference to a table on p.26.
     hint: >
       Whether a schedule of activities exists in this document and WHERE. "yes_body" when the table
       sits in the numbered body of the document; "yes_appendix" when it sits in an appendix or
-      attachment, which is common and is where Angus says to look when the body has none; "no" when
-      the document has no such table at all. A contents-page entry or a cross-reference to a table
-      that is not in this document is not the table: answer "no" and say so in `notes`. The quote
-      must be the table's own heading or caption, not a mention of it elsewhere.
+      attachment, which is common and is where to look when the body has none; "no" when
+      the document says it has no such table, or lists what it contains and the list has none. A
+      contents-page entry or a sentence referring to the table ("described in the Schedule of
+      Events (Table 1)") is not the table and does not show the table is missing either: omit
+      the field for that passage. The quote must be the table's own heading or caption.
     plain: >
       Whether the document contains the grid showing what happens at each appointment, and whether
       it is in the main text or tucked into an appendix. It is the single most useful table for
@@ -986,104 +1077,156 @@ fields:
     source_priority: protocol
     budget_driver: true
 
-  - id: visits.intensity_evidence
-    group: visits
-    label: Evidence of visit intensity
-    type: list[enum]
-    values: [multiple_assessments_per_visit, long_visit_windows, complex_procedures,
-             pk_pd_sampling, biomarker_sampling, imaging, ecgs, safety_labs, questionnaires,
-             infusion_observation_period, frequent_early_visits, overnight_stay, none_found]
-    # The phrases the visit intensity rating's "Why" line is built from (fix 8 of
-    # the 2026-10-12 brief), and the words this row prints.
-    value_words:
-      multiple_assessments_per_visit: Several assessments per visit
-      long_visit_windows: Long visit windows
-      complex_procedures: Complex procedures
-      pk_pd_sampling: PK/PD sampling
-      biomarker_sampling: Biomarker samples
-      imaging: Imaging
-      ecgs: ECGs
-      safety_labs: Safety labs
-      questionnaires: Questionnaires
-      infusion_observation_period: IV infusion with an observation period
-      frequent_early_visits: Frequent visits early in the study
-      overnight_stay: Overnight stay
-      none_found: None found
-    hint: >
-      Flag each factor the document provides concrete evidence for. This feeds the derived
-      intensity rating — each flag must have its own quote.
-    plain: >
-      What the document names that makes an appointment long or demanding: repeated blood sampling,
-      scans, heart tracings, an overnight stay. These drive the rating below.
-    source_priority: protocol
-
-  - id: visits.intensity_rating
-    group: visits
-    label: Subject visit intensity
-    type: enum
-    values: [low, moderate, high, not_specified]
-    derived: true
-    derived_from: [visits.intensity_evidence, visits.frequency_by_period, visits.total_count]
-    hint: >
-      DERIVED — computed by the rubric in ARCHITECTURE.md §4.8, never extracted by the model.
-      The report must show the contributing evidence alongside the rating so a reviewer can
-      disagree with it.
-    plain: >
-      A low / moderate / high rating of how demanding each appointment is. No document states this:
-      the tool works it out from the procedures it found, so it is a starting point, not a fact.
-    budget_driver: true
-    # The rating combines every row of its inputs except those about patients who
-    # stopped treatment early. docs/ANALYST_PROCEDURE_PROTOCOL.md section 9: their
-    # separate follow-up schedule must not be added to the main count, because
-    # IQVIA budgets dropouts separately. Narrower rows about the main patients,
-    # such as "Months 1-3", still count. Approved by Oliver on 2026-10-11.
-    #
-    # The phrases name the patients or the time after they stop, never the
-    # "End of Treatment / Early Treatment Discontinuation" visit on its own:
-    # every patient has that visit, completers included, so it belongs to the
-    # main schedule. That is why bare "early termination" and "early treatment
-    # discontinuation" are not here — "End of Treatment / Early Termination" is
-    # how the synthetic pair names that visit. The phrases were chosen against
-    # every scope written in runs/ up to r-20261011-fix1.
-    #
-    # Known edge: "early discontinuation" is kept bare because scopes such as
-    # "Early discontinuation (Appendix 3): Months 3-12" need it, but it would
-    # also hold back a scope worded "End of Treatment / Early Discontinuation
-    # visit". No run has written that wording; if one does, the note names the
-    # row, so a reviewer will see it.
-    leave_out_scopes:
-      reason: >
-        it is about patients who stopped treatment early, whose visits follow a separate schedule
-        that is budgeted apart from the main count
-      phrases:
-        - early discontinuation
-        - early discontinuers
-        - early drug discontinuation
-        - early treatment discontinuation subjects
-        - etd subjects
-        - early termination subjects
-        - discontinue study drug
-        - discontinued study drug
-        - discontinuing study drug
-        - stopped treatment early
-        - post etd
-        - post discontinuation
-
-# --- Group 6: Study Timelines -----------------------------------------------
-  - id: timeline.total_duration
+# --- Group 6: Patient Timeline ----------------------------------------------
+  - id: timeline.periods
     group: timelines
-    label: Overall study duration
-    type: text
-    aliases: ["study duration", "total duration", "overall duration", "study period",
-              "duration of participation"]
+    label: Patient timeline
+    type: object[]
+    schema:
+      component: enum[screening, run_in, treatment, follow_up, open_label_extension,
+                      long_term_follow_up, overall_participation, other]
+      label: text            # the period as the document names it: "Screening period"
+      duration: text
+      start: text
+      end: text
+    aliases: ["screening period", "run-in period", "lead-in period", "treatment period",
+              "treatment duration", "follow-up period", "open-label extension", "OLE",
+              "long-term follow-up", "LTFU", "duration of participation", "time on study"]
+    # One variable since 29 October 2026 (Angus Gray): "Overall study duration" and
+    # "Timeline components" are not different variables. A line per period of one patient's
+    # time, each laid out as the screening line was ("28 days, Day -28 to Day 1"), and no
+    # accrual period, which is the study's recruitment and not a patient's time. Telephone
+    # follow-up of patients who stopped treatment is left out (Angus Gray, 1 October 2026:
+    # "I would ignore that... I don't think the tool needs to extract stuff like that").
+    # Run r-20261123-oct29-run5 read the synopsis's power assumption, "a treatment/follow-up
+    # period of 18 months", as the treatment's length, and printed "18 months, Month 1-Day 1 to
+    # approximately 156 primary endpoint events" as Confirmed; and wrote an open-label
+    # extension's start as "At the time of study completion".
     hint: >
-      Distinguish OVERALL STUDY duration (first patient in to database lock) from PER-SUBJECT
-      duration (an individual's time on study). If both are present, emit both with
-      scope="study" and scope="subject" respectively. Conflating them is a known failure mode.
+      One entry per period of ONE PATIENT'S time in the study, as the study design or the
+      schedule describes it: screening, run_in (also called lead-in), treatment, follow_up after
+      treatment ends, open_label_extension, long_term_follow_up, and overall_participation - how
+      long one patient takes part in all, from screening to their last visit. `label` names the
+      period as the document does. `duration` is only its length, as a number and a unit
+      ("28 days", "14-21 days", also where the document writes "a 28-day period"), never the
+      words around it. `start` and
+      `end` are ONLY the day, visit or event that opens and closes it, as the document numbers
+      or names them ("Day -28", "Day -1", "Month 1 Day 1", "Last dose", "End-of-treatment
+      visit", "study completion"): never a sentence or the words around it, and never what
+      happens on that day. Write "Day -1", not "prior to the first administration of study drug
+      on Day 1"; "study completion", not "At the time of study completion".
+      Where treatment has no fixed length - it runs until a number of events has occurred, or
+      until the study ends - leave `duration` out and put that condition in `end`, in the
+      document's words ("approximately 300 primary endpoint events"). A follow-up visit set a
+      time after the last dose is follow_up: `duration` that time ("14-21 days"), `start` "Last
+      dose", `end` that visit's name.
+      overall_participation for such a study often depends on when the patient enrols ("up to
+      about 4 years for patients who enrol first, about 2 years for those who enrol last"):
+      give it in `duration` as the document does.
+      Leave out: the enrolment or accrual period, study start-up, database lock and the final
+      analysis, which are stages of the study, not of a patient's time; every length a
+      sample-size, power or statistical section assumes ("an accrual period of 30 months and a
+      follow-up period of 12 months"), whatever it calls the period, treatment included, which
+      describes the whole study and not one patient's time; telephone or
+      vital-status calls to patients who have stopped treatment; single visits ("Month 1",
+      "Day 8"), which are the visit schedule; and the whole study's duration, which is
+      timeline.total_duration. Omit periods the document does not mention.
     source_priority: any
     budget_driver: true
-    # One row, the whole study first: as two rows, a confirmed "subject" row sat above the
-    # disagreement on study length and read as settling it (Angus Gray, 2026-10-12).
+    # One row: a line per period in the order of `component`'s values, each under its own
+    # name in bold, with its own status and pages (Angus Gray, 29 October 2026).
+    display:
+      kind: periods
+      order_key: component
+      one_per: [component]
+      heading: ["{label}"]
+      # The periods every patient timeline names, printed whether or not a document states
+      # them ("Not found in the documents" where none does), under these names. Angus Gray,
+      # 29 October 2026: screening, run-in, treatment and follow-up, "and then any additional
+      # timelines, whether there's an open-label extension, or a long-term follow-up", and
+      # then the overall patient participation. So the two additional periods are printed
+      # only where a document states them (`when_stated`), in the same order. `other` is
+      # printed only where a document states one, under its own label.
+      always:
+        screening: Screening
+        run_in: Run-in
+        treatment: Treatment
+        follow_up: Follow-up
+        overall_participation: Overall patient participation
+      when_stated:
+        open_label_extension: Open-label extension
+        long_term_follow_up: Long-term follow-up
+      # The keys that name a period or the day or visit it starts or ends at, which one
+      # document may word two ways and still give one answer ("Day -1", "Month 1-Day 1" for the
+      # end of screening). Two documents wording one of them differently are reviewed, as an
+      # `end` can hold the event a treatment runs until. A length must read the same in every
+      # passage stating it, or the timeline is reviewed and each length is printed under its
+      # line with its pages (pipeline-rules-reviewer, 23 November 2026).
+      may_word_differently: [label, start, end]
+      # A period's own name, which documents word freely ("Screening", "Screening Period"),
+      # is no difference where `always` gives the period a heading, which the report prints
+      # instead of the document's name (plan-conformance-reviewer, 23 November 2026), and
+      # another of its keys is stated by two documents, so the two passages are compared on
+      # something: a "Treatment Period" of 24 months and a "Study drug treatment" until 156
+      # events share no key but the name (pipeline-rules-reviewer, the same day). Any other
+      # period's line starts with the document's name, so there two names are two answers
+      # ("a separate open-label extension study" is not this study's budget).
+      names: [label]
+      # The first alternative whose keys are all stated, so the longer ones come first.
+      lines: ["{duration}, {start} to {end}", "{duration}, from {start}",
+              "{duration}, until {end}", "{duration}", "From {start} until {end}",
+              "From {start}", "Until {end}"]
+
+  - id: timeline.budget_window
+    group: timelines
+    label: Time window to budget for
+    type: text
+    aliases: ["for budgeting purposes", "budget assumption", "assume a treatment duration",
+              "study duration", "planned study duration"]
+    # Angus Gray, 29 October 2026: where treatment runs until a number of events, the budget
+    # still needs a time window ("We need to put a time window on these things"), which "would
+    # be in either one of the documents. Or maybe an email".
+    hint: >
+      The length of time the sponsor asks the CRO to plan and cost the study or its treatment
+      for, in the document's own words: a budgeting assumption ("for budgeting purposes, assume
+      48 months of treatment") or the study duration the RFP states ("36 month study
+      duration"). Copy only the words that give that time: leave out an enrolment or accrual
+      period given beside it. Read it from an RFP or another request addressed to the CRO only.
+    plain: >
+      How long the sponsor wants the study, or its treatment, budgeted for. It matters most where
+      treatment has no fixed length and runs until a number of events has occurred.
+    source_priority: rfp
+    budget_driver: true
+    # Not asked of a protocol, an amendment or a schedule of activities: their durations are the
+    # study's own plan, which the timeline and the whole-study duration record. Asked of an RFP
+    # and of any other document, which is how CLASSIFY labels an email or a scope of work ("Or
+    # maybe an email", Angus Gray, 29 October 2026). A document CLASSIFY could not label is
+    # asked for every field (extract/__init__.py), so a failed classification never leaves the
+    # window unread (docs/ARCHITECTURE.md §4.2).
+    only_from: [rfp, other]
+    shown_under: timeline.periods
+    # Where no window is found, the row says to ask the sponsor before the budget is built. It
+    # does not say the RFP is silent: "not found" can also mean the tool could not read the
+    # passage (rule 3).
+    when_not_found:
+      lines: ["Ask the sponsor what time window to budget for."]
+
+  - id: timeline.total_duration
+    group: timelines
+    label: Whole study duration
+    type: text
+    aliases: ["study duration", "total duration", "overall duration", "total study duration",
+              "overall study duration"]
+    hint: >
+      The WHOLE STUDY's duration, from the first patient in to the end of the study, with
+      scope="study". How long one patient takes part is not this field: it is the
+      overall_participation period of timeline.periods, so do not record it here.
+    source_priority: any
+    budget_driver: true
+    # Printed under "Patient timeline" as its "Whole study" line, not as a row of its own
+    # (Angus Gray, 29 October 2026). It stays its own variable, so a disagreement on it is
+    # still numbered and listed in the Disagreements table.
+    shown_under: timeline.periods
     display:
       kind: scopes
       scopes:
@@ -1092,48 +1235,60 @@ fields:
         - phrases: ["subject"]
           label: Time each patient spends in the study
 
-  - id: timeline.periods
-    group: timelines
-    label: Timeline components
-    type: object[]
-    schema:
-      component: enum[start_up, screening, recruitment, treatment, end_of_treatment, follow_up,
-                      long_term_follow_up, database_lock, final_analysis, other]
-      label: text            # the component as the document names it: "Accrual period"
-      duration: text
-      start: text
-      end: text
-    aliases: ["start-up", "recruitment period", "enrolment period", "screening period",
-              "treatment period", "follow-up", "LTFU", "database lock", "DBL", "final analysis"]
-    # The exclusions are fix 7 of the 2026-10-12 brief: run r-20261012-angus listed Month 1,
-    # Month 2 and other single visits here, which are the visit schedule.
-    hint: >
-      One entry per component of the study's timeline the document states: start-up,
-      enrolment (recruitment), screening, treatment, the end-of-treatment visit window,
-      follow-up after the last dose, database lock, final analysis. `label` names the
-      component as the document does; `duration` is how long it lasts, `start` and `end` when
-      it begins and ends, each in the document's words. Leave out single visits ("Month 1",
-      "Day 8") — they are the visit schedule — and the overall study duration, which is its
-      own variable. Omit components not mentioned.
-    source_priority: any
-    budget_driver: true
-    # One row, a line per component in the order of `component`'s values (fix 7).
-    display:
-      kind: periods
-      order_key: component
-      one_per: [component]
-      heading: ["{label}", "{component}"]
-      # The first alternative whose keys are all stated, so the longer ones come first.
-      lines: ["{heading}: {duration} ({start} to {end})", "{heading}: {duration}, from {start}",
-              "{heading}: {duration}, until {end}", "{heading}: {duration}",
-              "{heading}: {start} to {end}", "{heading}: from {start}", "{heading}: until {end}"]
-      see_also:
-        - field: timeline.total_duration
-          wording: "Whole study: see {label}"
-          # "42 vs 40 months (Disagreement 2)", Oliver's wording of 2026-10-12.
-          disagree: "Whole study: {values} (Disagreement {n})"
-
 # --- Group 7: Blinding and Unblinded Monitoring -----------------------------
+  - id: ops.visits_pharmacy_monitoring
+    group: blinding_monitoring
+    label: Pharmacy monitoring visits
+    type: text
+    aliases: ["pharmacy monitoring visit", "pharmacy visit", "drug accountability visit",
+              "IP accountability visit", "unblinded pharmacy visit"]
+    hint: >
+      ANSWER IN ONE ROW, IN THE DOCUMENT'S OWN WORDS. Say how many pharmacy monitoring visits the document states,
+      copying the figure exactly as written — a number of visits, a per-site figure, or a
+      percentage such as "75% of sites" — and then the sentence or table entry it came from,
+      including any split between visits done on site and visits done remotely. DO NO ARITHMETIC:
+      never turn a percentage into a count and never multiply a per-site figure by the number of
+      sites. If the document states both a per-site figure and a total, give both as it gives them.
+      THE VALUE MUST CARRY EVERY FIGURE THE DOCUMENT GIVES FOR THIS VISIT TYPE in the one table
+      entry or sentence that states it: the per-site figure, the total, the hours or days on site
+      per visit, and any split between visits done on site and visits done remotely. A value that
+      gives the count and drops the hours has lost half of what the visit is costed from.
+      QUOTE THE SHORTEST UNBROKEN RUN OF THE DOCUMENT'S OWN CHARACTERS THAT CONTAINS THE FIGURE.
+      These figures usually sit in a two-column table whose label and figure are on separate lines,
+      so do not join text across the two columns, do not re-order lines and do not tidy the spacing
+      — a quote that is not in the text character for character is thrown away and the row is lost.
+      A SHORT EXACT FRAGMENT IS BETTER THAN A LONG TIDY ONE: where you cannot reproduce the whole
+      entry character for character, quote only the few words around the figure, as they appear.
+      The value may read as one tidy sentence; the quote may not.
+      Where the document says the sponsor will do pharmacy monitoring visits itself, say that in the document's own
+      words. Leave the field out only where no document mentions pharmacy monitoring visits at all.
+    plain: >
+      Visits to a site's pharmacy to check the study drug — how much is there, how it was stored
+      and where each dose went. On a blinded study these are often done by a different monitor
+      from the one who visits the rest of the site.
+    source_priority: rfp
+    budget_driver: true
+
+  - id: monitoring.pharmacy_frequency
+    group: blinding_monitoring
+    label: Pharmacy monitoring frequency
+    type: text
+    aliases: ["pharmacy monitoring frequency", "pharmacy visit frequency",
+              "pharmacy monitoring visits every", "IP accountability visit frequency"]
+    # Its own row beside the pharmacy visits since 29 October 2026 (Angus Gray), where it
+    # had been a line "Pharmacy monitoring" under the requested monitoring frequency.
+    hint: >
+      How often the sponsor asks for pharmacy monitoring visits, copied in the document's own
+      words with every condition it gives ("every 8 weeks or per every 2 subjects enrolled").
+      Do not convert units and do not calculate. Only the pharmacy visits' frequency: the
+      frequency of the other monitoring visits is monitoring.frequency_spec, and the number of
+      pharmacy visits is ops.visits_pharmacy_monitoring.
+    plain: >
+      How often a monitor visits each site's pharmacy to check the study drug, as the sponsor
+      asks.
+    source_priority: rfp
+    budget_driver: true
+
   - id: blinding.design
     group: blinding_monitoring
     label: Blinding design
@@ -1147,9 +1302,13 @@ fields:
       partially_blinded: Partly blinded
     aliases: ["open-label", "single-blind", "double-blind", "double-masked", "triple-blind",
               "blinded", "unblinded study"]
+    # Not "so separate staff are needed": a placebo that matches as supplied needs none, and
+    # Angus Gray put the need on the drug not matching when it arrives (1 October 2026;
+    # report-usability-reviewer, 23 November 2026, on run r-20261123-oct29-run6's word list).
     plain: >
       Who is kept from knowing which treatment a participant is on. Open-label: everyone knows.
-      Double-blind: neither the participant nor the site staff does, so separate staff are needed.
+      Double-blind: neither the participant nor the site staff knows. Whether separate, unblinded
+      staff are needed depends on the rows below it, such as whether the placebo matches.
     source_priority: protocol
     budget_driver: true
 
@@ -1157,22 +1316,26 @@ fields:
     group: blinding_monitoring
     label: Placebo matches the study drug
     type: enum
-    values: [matching_stated, not_matching_stated, not_specified]
+    values: [matching_stated, not_matching_stated, no_placebo, not_specified]
+    # Yes, No or N/A, as Angus Gray asked on 29 October 2026; "as supplied" keeps apart a
+    # placebo that differs in the carton from one that only looks the same once prepared.
     value_words:
-      matching_stated: Matching
-      not_matching_stated: Not matching
+      matching_stated: Yes, matching as supplied
+      not_matching_stated: No, not matching as supplied
+      no_placebo: N/A (open-label, or no placebo)
     aliases: ["matching placebo", "identical placebo", "placebo", "matched placebo",
               "placebo comparator", "visually identical"]
     hint: >
       MATCHING MEANS MATCHING AS SUPPLIED TO THE SITE, in the vial, bottle or carton the site
-      receives. Text saying the prepared infusion looks identical — "the saline bag will look
-      identical to the drug infusion bag" — describes the drug AFTER unblinded pharmacy staff have
+      receives. Text saying the prepared infusion looks identical - "the saline bag will look
+      identical to the drug infusion bag" - describes the drug AFTER unblinded pharmacy staff have
       made it up, and is NOT matching: answer not_specified for that sentence alone, or
       not_matching_stated if the document also says the supplies do not match. Use
       matching_stated only where the document says the placebo as supplied matches or is identical.
       Use not_matching_stated where it says the placebo does not match or will not be provided.
-      Use not_specified where the document is silent. Never infer from the route of administration
-      here — that inference belongs to blinding.placebo_assumption, which is derived.
+      Use no_placebo where the document says the study is open-label or has no placebo arm.
+      Use not_specified where the document is silent. Never infer from the route of
+      administration: the tool does not guess about the placebo.
     plain: >
       Whether the dummy treatment arrives at the hospital looking the same as the real drug. If it
       does not, someone who is allowed to know which is which has to prepare it, and that person has
@@ -1190,11 +1353,7 @@ fields:
     # field in this file already uses `true`/`false` — design.first_in_human,
     # design.healthy_volunteers, dosing.varies_by_cohort,
     # monitoring.unblinded_required, monitoring.frequency_requested — so making
-    # this one the exception would be the surprise, not the fix. The
-    # blinding.placebo_assumption rubric reads this value, and
-    # tests/derive/test_rubric.py asserts the registry still offers the value the
-    # rubric looks for, so renaming the enum fails a test instead of quietly
-    # switching the contradiction rule off.
+    # this one the exception would be the surprise, not the fix.
     values: ["true", "false", not_specified]
     # Quoted for the same reason as the values: YAML would read the keys as booleans.
     value_words:
@@ -1224,8 +1383,7 @@ fields:
       about unblinded staff, return status "not_found" and no value. Never quote a sentence that
       does not mention staff, unblinding or drug handling in support of "not_specified".
       This field is deliberately narrower than monitoring.unblinded_required, which may answer
-      "likely" from a trigger: this one records what the document actually says, so that
-      blinding.placebo_assumption can tell a stated fact from an inference.
+      "likely" from a trigger: this one records what the document actually says.
     plain: >
       Whether the document says in writing that staff who are allowed to know the treatment are
       needed. A separate question from whether the tool thinks they will be.
@@ -1238,7 +1396,7 @@ fields:
     type: enum
     values: [yes, likely, no, not_specified]
     # Quoted: YAML reads unquoted yes and no as booleans, and the registry stores the
-    # values above as "true" and "false". The block on this group prints these.
+    # values above as "true" and "false". The report prints these.
     value_words:
       "true": Needed
       likely: Likely needed
@@ -1264,31 +1422,40 @@ fields:
              pharmacy_manual_requirements, separate_blinded_unblinded_staff,
              drug_preparation_requirements, treatment_allocation_visibility,
              sponsor_specific_requirements, protocol_or_rfp_instruction]
+    # Run r-20261123-oct29-run6 printed "Separate blinded unblinded staff" and "Blinded vs
+    # open design" (report-usability-reviewer, 23 November 2026).
+    value_words:
+      blinded_vs_open_design: Blinded design
+      ip_accountability: Study drug accountability
+      randomisation_blinding_procedures: Randomization and blinding procedures
+      pharmacy_manual_requirements: Pharmacy manual requirements
+      separate_blinded_unblinded_staff: Separate blinded and unblinded staff
+      drug_preparation_requirements: Drug preparation requirements
+      treatment_allocation_visibility: Who can see the treatment allocation
+      sponsor_specific_requirements: The sponsor's own requirements
+      protocol_or_rfp_instruction: An instruction in the protocol or RFP
     source_priority: any
 
   - id: monitoring.unblinded_rationale
     group: blinding_monitoring
     label: Reason / trigger for unblinded monitoring
     type: text
-    source_priority: any
-
-  - id: blinding.placebo_assumption
-    group: blinding_monitoring
-    label: What to assume about the placebo
-    type: text
-    derived: true
-    derived_from: [blinding.design, ip.form, blinding.placebo_matching,
-                   blinding.unblinded_staff_stated]
+    # Angus Gray, 29 October 2026, on the unblinded section: the RFP's pharmacy monitoring
+    # request belongs at the top, and drug details shown elsewhere "just [don't] need to be
+    # repeated here". Live run r-20261123-oct29-run2 wrote this row for the RFP from its
+    # "Pharmacy Monitoring Frequency" line, repeating "4 per site, 300 total".
+    # Run r-20261123-oct29-run4 ended this row "A matching placebo is not provided.", one
+    # document's side of the placebo-matching disagreement, in a row the report marked Confirmed
+    # (report-usability-reviewer, 23 November 2026). Whether the placebo matches is
+    # blinding.placebo_matching's question, so this row no longer answers it.
     hint: >
-      DERIVED — the rubric in derive/rubric.py applies docs/ANALYST_PROCEDURE_PROTOCOL.md section 6
-      rules 1 to 4 and the rule 6 contradiction, never extracted by the model. The explanation must
-      name the inputs it used.
-    plain: >
-      The tool's reading of whether a dummy treatment that matches the real drug can be assumed, and
-      so whether separately paid unblinded staff should be priced in. No document states this: it is
-      worked out from the blinding, the way the drug is given and what the document says about the
-      placebo, so it is a starting point for a person to accept or overrule.
-    budget_driver: true
+      The reason the document itself gives for needing unblinded staff or unblinded monitoring,
+      in a sentence or two: for example, that only unblinded pharmacy staff may prepare the study
+      drug or keep the drug accountability records. Record only a reason the document states.
+      Never repeat here whether the placebo matches the study drug, the number or frequency of
+      pharmacy monitoring visits, or the drug's form and route: those have rows of their own. A
+      document that lists pharmacy visits but gives no reason: omit the field.
+    source_priority: any
 
 # --- Group 8: Operational Metrics and Volumes -------------------------------
   - id: ops.sites_total
@@ -1527,98 +1694,59 @@ fields:
     source_priority: rfp
     budget_driver: true
 
-  - id: ops.visits_pharmacy_monitoring
-    group: operational_metrics
-    label: Pharmacy monitoring visits
-    type: text
-    aliases: ["pharmacy monitoring visit", "pharmacy visit", "drug accountability visit",
-              "IP accountability visit", "unblinded pharmacy visit"]
-    hint: >
-      ANSWER IN ONE ROW, IN THE DOCUMENT'S OWN WORDS. Say how many pharmacy monitoring visits the document states,
-      copying the figure exactly as written — a number of visits, a per-site figure, or a
-      percentage such as "75% of sites" — and then the sentence or table entry it came from,
-      including any split between visits done on site and visits done remotely. DO NO ARITHMETIC:
-      never turn a percentage into a count and never multiply a per-site figure by the number of
-      sites. If the document states both a per-site figure and a total, give both as it gives them.
-      THE VALUE MUST CARRY EVERY FIGURE THE DOCUMENT GIVES FOR THIS VISIT TYPE in the one table
-      entry or sentence that states it: the per-site figure, the total, the hours or days on site
-      per visit, and any split between visits done on site and visits done remotely. A value that
-      gives the count and drops the hours has lost half of what the visit is costed from.
-      QUOTE THE SHORTEST UNBROKEN RUN OF THE DOCUMENT'S OWN CHARACTERS THAT CONTAINS THE FIGURE.
-      These figures usually sit in a two-column table whose label and figure are on separate lines,
-      so do not join text across the two columns, do not re-order lines and do not tidy the spacing
-      — a quote that is not in the text character for character is thrown away and the row is lost.
-      A SHORT EXACT FRAGMENT IS BETTER THAN A LONG TIDY ONE: where you cannot reproduce the whole
-      entry character for character, quote only the few words around the figure, as they appear.
-      The value may read as one tidy sentence; the quote may not.
-      Where the document says the sponsor will do pharmacy monitoring visits itself, say that in the document's own
-      words. Leave the field out only where no document mentions pharmacy monitoring visits at all.
-    plain: >
-      Visits to a site's pharmacy to check the study drug — how much is there, how it was stored
-      and where each dose went. On a blinded study these are often done by a different monitor
-      from the one who visits the rest of the site.
-    source_priority: rfp
-    budget_driver: true
-
 # --- Group 9: Clinical Monitoring Requirements ------------------------------
-  - id: monitoring.frequency_requested
-    group: clinical_monitoring
-    label: Specific monitoring frequency requested
-    type: enum
-    values: [yes, no, not_specified]
-    source_priority: rfp
-    budget_driver: true
-
   - id: monitoring.frequency_spec
     group: clinical_monitoring
     label: Requested monitoring frequency
     type: text
     scoped: true
     aliases: ["monitoring frequency", "every X weeks", "every X patients", "visit interval",
-              "monitoring interval"]
+              "monitoring interval", "interim monitoring frequency"]
+    # One row since 29 October 2026 (Angus Gray): "Specific monitoring frequency requested" is
+    # gone, and the frequency is printed in the document's own words, not as a number of days
+    # ("Approximately every 6 weeks", not "Every 42 days").
     hint: >
-      Capture as stated (e.g. "every 8 weeks", "after every 3rd subject enrolled",
-      "risk-based, triggered"). If frequency varies by country, site tier, phase or cohort,
-      emit one record per scope.
-    source_priority: rfp
-    budget_driver: true
-    # As dosing.frequency: "every 8 weeks" read as an amount prints "Every 8 weeks".
-    amount_wording: "Every {amount}"
-
-  - id: monitoring.frequency_basis
-    group: clinical_monitoring
-    label: Basis of monitoring frequency
-    type: list[enum]
-    values: [time_based, enrolment_based, visit_based, risk_based, country_specific,
-             site_specific, phase_specific, cohort_specific, not_specified]
-    source_priority: rfp
-
-  # `monitoring.onsite_remote_mix` — "On-site vs remote monitoring mix" — was
-  # removed on 2026-10-07 by change 5 of that day's review. It held a split
-  # without saying which visit type the split was about, which is unusable in a
-  # budget. Each of the five visit-type rows in operational_metrics now carries
-  # its own on-site versus remote wording.
-
-  - id: monitoring.sdv_expectation
-    group: clinical_monitoring
-    label: Source data verification expectations
-    type: text
-    aliases: ["SDV", "source data verification", "100% SDV", "targeted SDV", "partial SDV"]
+      How often the sponsor asks for the site's monitoring visits, copied in the document's own
+      words with every condition it gives ("Approximately every 6 weeks or per every 1-2 subjects
+      enrolled", "risk-based, triggered"). Do not convert units and do not calculate. Pharmacy
+      monitoring visits have their own field, monitoring.pharmacy_frequency: leave their
+      frequency out of this one. If the frequency differs by country, site tier, phase or
+      cohort, emit one record per scope. Where the document says no frequency is set, use
+      status not_specified.
     plain: >
-      SDV means source data verification: a monitor checks what the site typed into the study
-      database against the site's own records. Checking everything costs far more than a sample.
+      How often a monitor visits each site, as the sponsor asks.
     source_priority: rfp
     budget_driver: true
 
-  - id: monitoring.sdr_expectation
+  - id: monitoring.source_data_expectations
     group: clinical_monitoring
-    label: Source data review expectations
+    label: Source data monitoring expectations
     type: text
-    aliases: ["SDR", "source data review"]
+    aliases: ["SDV", "SDR", "source data verification", "source data review",
+              "source document verification", "source document review", "100% SDV",
+              "targeted SDV", "partial SDV", "reduced SDV", "percentage of CRFs",
+              "data points verified"]
+    # One variable since 29 October 2026 (Angus Gray): it replaces "Source data verification
+    # expectations" and "Source data review expectations". Sponsors rarely give SDV and SDR
+    # percentages apart, and the budget takes one percentage, so the tool looks for both and
+    # reports what the document says, with no arithmetic.
+    hint: >
+      What the sponsor expects a monitor to check of the site's source records: source data
+      verification (SDV), source data review (SDR), source data monitoring, or a percentage of
+      CRFs, CRF pages or data points to be checked. Copy the document's words, with every
+      percentage it gives, in one record: SDV and SDR together where the document gives both.
+      Do not calculate, combine or convert percentages.
     plain: >
-      SDR means source data review: a monitor reads the site's records for problems, rather than
-      comparing them field by field with the database. Lighter work than SDV above.
+      How much of the site's own records a monitor checks against the study data: source data
+      verification (SDV) compares them field by field, source data review (SDR) reads them for
+      problems. Checking everything costs far more than a sample.
     source_priority: rfp
+    budget_driver: true
+    # Says what was looked for when nothing is found (Angus Gray, 7 October 2026: a row that
+    # says nothing was specified should say what it refers to). It does not say the documents
+    # are silent: "not found" can also mean the tool could not read the passage (rule 3).
+    when_not_found:
+      lines: ["The tool looked for source data verification (SDV), source data review (SDR) and CRF percentages."]
 
   - id: monitoring.strategy_guidance
     group: clinical_monitoring
@@ -1626,9 +1754,13 @@ fields:
     type: text
     aliases: ["monitoring plan", "monitoring strategy", "sponsor requirements", "RBM",
               "risk-based monitoring", "quality tolerance limits"]
+    # Live run r-20261123-oct29-run2 copied each monitoring visit type's count and time on
+    # site here, which printed six rows repeating the five visit rows.
     hint: >
       Any sponsor-mandated monitoring model, restriction, or required visit type not captured
       by the more specific fields above. Monitoring here means the sponsor's or CRO's oversight
-      of the sites. Instructions for measuring or handling subjects' samples (laboratory tests,
+      of the sites. Leave out the number of visits and the time on site of site selection,
+      initiation, interim monitoring, close-out and pharmacy monitoring visits: each has its own
+      field. Instructions for measuring or handling subjects' samples (laboratory tests,
       drug or antibody levels) are not site monitoring: leave them out.
     source_priority: rfp

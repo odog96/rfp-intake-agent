@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Literal
 
 from rfp_intake.adjudicate import (
+    UNJUDGED_EXPLANATION,
     AdjudicationResult,
     _handle_conflict,
     _handle_not_a_conflict,
@@ -158,6 +159,121 @@ class TestHandleNotAConflict:
         ]).model_copy(update={"verdict": "not_a_conflict", "explanation": "x"})
         _, fields = _handle_not_a_conflict(c, text_field, _not_a_conflict())
         assert len(fields) == 2
+
+
+class TestOneRowWhenEveryRecordAgrees:
+    """Added 2026-11-23. Where every on-topic record has the same scope and the
+    same normalized value, a not_a_conflict verdict gives one row, whatever the
+    field's type, citing every on-topic record's page."""
+
+    @staticmethod
+    def _subjects(value: int, doc_kind: DocKind, page: int, confidence: float = 0.9,
+                  scope: str | None = "total") -> FieldRecord:
+        r = FieldRecord(
+            field_id="ops.subjects_total", group="operational_metrics", raw_value=str(value),
+            quote=f"quote p.{page}",
+            provenance=Provenance(doc_id=doc_kind, doc_kind=doc_kind, page=page),
+            confidence=confidence, scope=scope,
+        )
+        r.value = value
+        return r
+
+    def _field(self, fields_yaml_path: Path, field_id: str = "ops.subjects_total"):  # type: ignore[no-untyped-def]
+        _use_real_registry(fields_yaml_path)
+        from rfp_intake.domain.registry import get_registry
+
+        return get_registry().get_field(field_id)
+
+    def test_three_records_of_260_beside_an_off_topic_236_are_one_row(
+        self, fields_yaml_path: Path,
+    ) -> None:
+        field_def = self._field(fields_yaml_path)
+        assert field_def.type == "int"
+        c = Contradiction(field_id="ops.subjects_total", records=[
+            self._subjects(260, "amendment", 15, 0.95),
+            self._subjects(236, "amendment", 24, 0.9),
+            self._subjects(260, "amendment", 43, 0.9),
+            self._subjects(260, "rfp", 4, 0.9),
+        ]).model_copy(update={
+            "verdict": "not_a_conflict", "explanation": "236 is the power calculation",
+            "off_topic_record_indexes": [2],
+        })
+
+        contradiction, [row] = _handle_not_a_conflict(c, field_def, _not_a_conflict())
+
+        assert (row.value, row.scope, row.quote) == (260, "total", "quote p.15")
+        assert [(s.doc_kind, s.page) for s in row.sources] == [
+            ("amendment", 15), ("amendment", 43), ("rfp", 4),
+        ]
+        assert row.status == "needs_review"
+        assert row.contradiction is contradiction
+        assert contradiction.winning_record_index == 1
+        assert contradiction.resolved_value == 260
+        assert (row.notes or "").startswith("NOT_A_CONFLICT")
+
+    def test_the_record_the_model_named_gives_the_quote(self, fields_yaml_path: Path) -> None:
+        field_def = self._field(fields_yaml_path)
+        c = Contradiction(field_id="ops.subjects_total", records=[
+            self._subjects(260, "amendment", 15, 0.95),
+            self._subjects(260, "rfp", 4, 0.9),
+        ]).model_copy(update={"verdict": "not_a_conflict", "explanation": "x"})
+        contradiction, [row] = _handle_not_a_conflict(c, field_def, _not_a_conflict(2))
+        assert row.quote == "quote p.4"
+        assert contradiction.winning_record_index == 2
+
+    def test_different_values_keep_one_row_per_record(self, fields_yaml_path: Path) -> None:
+        field_def = self._field(fields_yaml_path)
+        c = Contradiction(field_id="ops.subjects_total", records=[
+            self._subjects(260, "amendment", 15),
+            self._subjects(236, "amendment", 24),
+            self._subjects(260, "rfp", 4),
+        ]).model_copy(update={"verdict": "not_a_conflict", "explanation": "x"})
+        contradiction, fields = _handle_not_a_conflict(c, field_def, _not_a_conflict())
+        assert [f.value for f in fields] == [260, 236, 260]
+        assert [[s.page for s in f.sources] for f in fields] == [[15], [24], [4]]
+        assert contradiction.winning_record_index is None
+
+    def test_one_value_at_different_scopes_keeps_one_row_per_record(
+        self, fields_yaml_path: Path,
+    ) -> None:
+        field_def = self._field(fields_yaml_path)
+        c = Contradiction(field_id="ops.subjects_total", records=[
+            self._subjects(130, "amendment", 15, scope="arm A"),
+            self._subjects(130, "amendment", 16, scope="arm B"),
+        ]).model_copy(update={"verdict": "not_a_conflict", "explanation": "x"})
+        _, fields = _handle_not_a_conflict(c, field_def, _not_a_conflict())
+        assert [f.scope for f in fields] == ["arm A", "arm B"]
+
+    def test_a_text_field_with_one_wording_is_one_row(self, fields_yaml_path: Path) -> None:
+        _use_real_registry(fields_yaml_path)
+        from rfp_intake.domain.registry import get_registry
+
+        text_field = next(f for f in get_registry().fields if f.type == "text")
+        c = Contradiction(field_id=text_field.id, records=[
+            _schedule("one wording", "amendment", 26, 1.0),
+            _schedule("one wording", "rfp", 3, 0.9),
+        ]).model_copy(update={"verdict": "not_a_conflict", "explanation": "x"})
+        _, [row] = _handle_not_a_conflict(c, text_field, _not_a_conflict())
+        assert row.value == "one wording"
+        assert [s.page for s in row.sources] == [26, 3]
+
+    def test_equal_amounts_are_one_value_and_unequal_amounts_are_not(
+        self, fields_yaml_path: Path,
+    ) -> None:
+        _use_real_registry(fields_yaml_path)
+        from rfp_intake.domain.registry import get_registry
+
+        text_field = next(f for f in get_registry().fields if f.type == "text")
+        same = Contradiction(field_id=text_field.id, records=[
+            _schedule("x", "amendment", 26, 1.0), _schedule("x", "rfp", 3, 0.9),
+        ])
+        same.records[0].value = {"n": 28, "unit": "days"}
+        same.records[1].value = {"n": 28, "unit": "days"}
+        _, rows = _handle_not_a_conflict(same, text_field, _not_a_conflict())
+        assert len(rows) == 1
+        same.records[1].value = {"n": 28, "unit": "weeks"}
+        _, rows = _handle_not_a_conflict(same, text_field, _not_a_conflict())
+        assert len(rows) == 2
 
 
 class TestHandleReconcilable:
@@ -465,3 +581,143 @@ class TestAdjudicateNode:
         adjudicated = result["contradictions"][0]
         assert adjudicated.verdict == "not_a_conflict"
         assert len(result["resolved"]) == 2  # one ResolvedField per original record
+
+
+class _Failing:
+    """A structured-output stand-in whose first `failures` calls raise."""
+
+    def __init__(self, failures: int, result: AdjudicationResult) -> None:
+        self.failures = failures
+        self.calls = 0
+        self.result = result
+
+    def extract(self, schema, messages):  # type: ignore[no-untyped-def]
+        self.calls += 1
+        if self.calls <= self.failures:
+            raise ValueError("Failed to parse guided response")
+        return self.result
+
+
+class TestAModelThatCannotAnswer:
+    """Run r-20261123-oct29-run2: one malformed answer printed "Whole study
+    duration" as Not found, with no disagreement listed."""
+
+    def _run(self, fields_yaml_path, monkeypatch, failures: int):  # type: ignore[no-untyped-def]
+        _use_real_registry(fields_yaml_path)
+        import rfp_intake.adjudicate as adjudicate
+
+        fake = _Failing(failures, AdjudicationResult(verdict="conflict", explanation="real"))
+        monkeypatch.setattr(adjudicate, "get_structured_output_for_role", lambda llm, role: fake)
+        records = [_record(75, "amend", "amendment"), _record(80, "rfp", "rfp")]
+        state = RunState(run_id="t", contradictions=[_candidate(records)])
+        return adjudicate_node(state), fake
+
+    def test_one_failure_is_tried_again(self, fields_yaml_path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+        result, fake = self._run(fields_yaml_path, monkeypatch, failures=1)
+        assert fake.calls == 2
+        assert result["contradictions"][0].explanation == "real"
+        assert result["errors"] == []
+
+    def test_a_budget_drivers_conflict_is_high_whatever_the_model_rated(
+        self, fields_yaml_path, monkeypatch,
+    ) -> None:  # type: ignore[no-untyped-def]
+        # config/precedence.yaml: high is "field has budget_driver: true". Run
+        # r-20261123-oct29-run6 stored "medium" for the placebo-matching conflict.
+        _use_real_registry(fields_yaml_path)
+        import rfp_intake.adjudicate as adjudicate
+
+        fake = _Failing(0, AdjudicationResult(
+            verdict="conflict", explanation="real", severity="medium",
+        ))
+        monkeypatch.setattr(adjudicate, "get_structured_output_for_role", lambda llm, role: fake)
+        records = [_record(75, "amend", "amendment"), _record(80, "rfp", "rfp")]
+        result = adjudicate_node(RunState(run_id="t", contradictions=[_candidate(records)]))
+        assert result["contradictions"][0].severity == "high"  # ops.sites_total
+
+    def test_a_candidate_never_judged_is_still_a_disagreement_with_a_row(
+        self, fields_yaml_path, monkeypatch,
+    ) -> None:  # type: ignore[no-untyped-def]
+        result, fake = self._run(fields_yaml_path, monkeypatch, failures=5)
+        assert fake.calls == 2
+        c = result["contradictions"][0]
+        assert c.verdict == "conflict"
+        assert c.explanation == UNJUDGED_EXPLANATION
+        assert c.severity == "high"  # ops.sites_total is a budget driver
+        [row] = result["resolved"]
+        assert row.status == "needs_review"
+        assert row.contradiction is not None and row.contradiction.verdict == "conflict"
+        assert len(result["errors"]) == 1
+
+
+class TestOffTopicRecordsAnswer:
+    def test_an_empty_string_means_none_are_off_topic(self) -> None:
+        r = AdjudicationResult.model_validate(
+            {"verdict": "conflict", "explanation": "x", "off_topic_records": ""}
+        )
+        assert r.off_topic_records == []
+
+    def test_null_means_none_are_off_topic(self) -> None:
+        r = AdjudicationResult.model_validate(
+            {"verdict": "conflict", "explanation": "x", "off_topic_records": None}
+        )
+        assert r.off_topic_records == []
+
+
+class TestThePromptsWordingAfterOpus5:
+    """Run r-20261123-opus5-base judged 42 against 40 months reconcilable and
+    kept a statistical sample size of 236 beside the enrolment figure of 260."""
+
+    @staticmethod
+    def _system() -> str:
+        from rfp_intake.adjudicate.prompt import ADJUDICATE_SYSTEM_PROMPT
+
+        return " ".join(ADJUDICATE_SYSTEM_PROMPT.split())
+
+    def test_two_close_amounts_at_one_scope_are_a_conflict(self) -> None:
+        conflict = self._system().split("- conflict:")[1].split("off_topic_records:")[0]
+        assert (
+            "Two different amounts for the same quantity at the same scope are a conflict "
+            "even when they are close"
+        ) in conflict
+        assert 'one says "approximately"' in conflict
+
+    def test_no_confidence_figure_reaches_the_model(self, fields_yaml_path) -> None:  # type: ignore[no-untyped-def]
+        """Angus Gray, 29 October 2026: no confidence figure anywhere in the
+        report. Run r-20261123-oct29-run3's Appendix B quoted the model's
+        "highest-confidence (0.95) records", read off the candidate list."""
+        from rfp_intake.adjudicate.prompt import build_adjudicate_prompt
+        from rfp_intake.domain.registry import get_registry
+
+        _use_real_registry(fields_yaml_path)
+        get_registry.cache_clear()
+        field = get_registry().get_field("ops.subjects_total")
+        c = Contradiction(field_id=field.id, records=[
+            _record(260, "doc-am", "amendment", confidence=0.95),
+            _record(236, "doc-am", "amendment", confidence=0.85),
+        ])
+        from rfp_intake.domain.precedence import get_precedence_policy
+
+        text = " ".join(
+            str(m.content) for m in build_adjudicate_prompt(c, field, get_precedence_policy())
+        )
+        assert "confidence" not in text.casefold()
+        assert "0.95" not in text and "0.85" not in text
+
+    def test_the_same_answer_in_other_words_is_reconcilable(self) -> None:
+        """Run r-20261123-oct29-run2 called the two documents' primary objectives
+        not_a_conflict, which keeps one row per document."""
+        reconcilable = self._system().split("- reconcilable:")[1].split("- conflict:")[0]
+        assert "The same answer worded differently" in reconcilable
+        assert "is reconcilable, not not_a_conflict" in reconcilable
+        not_a_conflict = self._system().split("- not_a_conflict:")[1].split("- reconcilable:")[0]
+        assert "about different things" in not_a_conflict
+
+    def test_a_different_quantity_in_the_same_words_is_off_topic(self) -> None:
+        off_topic = self._system().split("off_topic_records:")[1].split("Your explanation")[0]
+        assert "a record for a different quantity that uses the same words IS off-topic" in (
+            off_topic
+        )
+        assert "power calculation" in off_topic
+        # The older rule still stands beside it.
+        assert "A record that is about the field but gives a different value is never " \
+            "off-topic." in off_topic

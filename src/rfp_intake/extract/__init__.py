@@ -8,8 +8,10 @@ import structlog
 
 from rfp_intake.domain.dynamic import (
     FieldExtractionItem,
+    asked_in,
     build_extraction_model,
     extraction_response_to_records,
+    fields_to_extract,
 )
 from rfp_intake.domain.registry import FieldDef, Registry, get_registry
 from rfp_intake.domain.schemas import (
@@ -47,13 +49,27 @@ def extract_group(
     if registry is None:
         registry = get_registry()
 
+    doc_kind = doc.kind or "other"
+    # A document CLASSIFY could not label is asked for every field: a failed
+    # classification never leaves a field unread (docs/ARCHITECTURE.md §4.2).
+    asked_kind = doc.kind
+    if not fields_to_extract(task.group, registry, asked_kind):
+        # Every field of the group is read only from other kinds of document
+        # (`only_from`), so there is nothing to ask this one.
+        logger.info(
+            "extract_group_skipped", doc_id=task.doc_id, group=task.group, doc_kind=doc_kind,
+        )
+        return [], []
+
     llm = get_llm("extract")
     structured = get_structured_output_for_role(llm, "extract")
 
-    schema = build_extraction_model(task.group, registry)
+    schema = build_extraction_model(task.group, registry, asked_kind)
     messages = build_extract_prompt(task, doc, registry)
     excerpt = build_excerpt(task, doc)
 
+    # Every field of the group, `only_from` or not, so a record for a field this
+    # document was not asked for is recognised and rejected below.
     fields_in_group = [
         f for f in registry.get_fields_for_group(task.group) if not f.derived
     ]
@@ -61,7 +77,6 @@ def extract_group(
 
     response = structured.extract(schema, messages)
 
-    doc_kind = doc.kind or "other"
     raw_records = extraction_response_to_records(
         task.group, doc.id, doc_kind, response, registry, doc.page_labels
     )
@@ -87,6 +102,9 @@ def extract_group(
         field_def = field_map.get(record.field_id)
         if field_def is None:
             valid_records.append(record)
+            continue
+        if not asked_in(field_def, asked_kind):
+            errors.append(_rejected(task, record, _not_asked(field_def, doc_kind)))
             continue
 
         # Build a FieldExtractionItem-like for validation
@@ -126,6 +144,9 @@ def extract_group(
                 field_def = field_map.get(record.field_id)
                 if field_def is None:
                     valid_records.append(record)
+                    continue
+                if not asked_in(field_def, asked_kind):
+                    errors.append(_rejected(task, record, _not_asked(field_def, doc_kind)))
                     continue
 
                 item_status2 = "found" if record.status == "not_found" else record.status
@@ -209,6 +230,14 @@ def extract_node(state: RunState) -> dict[str, Any]:
             ))
 
     return {"records": all_records, "errors": all_errors}
+
+
+def _not_asked(field_def: FieldDef, doc_kind: str) -> str:
+    """Why a record for a field this kind of document is not asked for was dropped."""
+    return (
+        f"Rejected: {field_def.id} is read only from {', '.join(field_def.only_from)} "
+        f"documents (only_from), and this document is {doc_kind}"
+    )
 
 
 def _rejected(task: ExtractionTask, record: FieldRecord, error: str) -> RunError:

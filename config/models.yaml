@@ -72,16 +72,20 @@ providers:
 # It is a reasoning model with no tool-call parser, so generation runs away on
 # some groups — llm_max_tokens and llm_timeout_s in Settings are what stop that.
 roles:
-  # Claude Sonnet 4.6, verified against Bedrock 2026-08-27 with allow_fallback=False
-  # so nothing could mask the result: native tool-calling genuinely works, including
-  # operational_metrics — the budget-driver group that returned nothing usable on
-  # both Nemotron (CAII) and Llama 3.1 70B (Bedrock).
+  # Claude Opus 5 on Bedrock since 2026-11-23, Oliver's choice for the working
+  # prototype, which will later move to a model on CAII. Claude Sonnet 4.6 (verified
+  # 2026-08-27 with allow_fallback=False) made every run before 2026-11-23; to go back,
+  # change these four `model` lines to us.anthropic.claude-sonnet-4-6.
+  # Opus 5.5 does not: Bedrock refuses the forced tool choice that native structured
+  # output relies on (llm/structured.py). Opus 5's first run, r-20261123-opus5-base,
+  # failed 9 of the 14 must-hold facts until the EXTRACT page-number wording and the
+  # CLASSIFY amendment wording were made plainer; see docs/JOURNAL.md, 2026-11-23.
   #
   # TESTING ONLY, per CLAUDE.md rule 5. Bedrock is outside the customer boundary;
   # production runs on CAII. Synthetic and publicly-registered documents only.
   classify:
     provider: bedrock
-    model: us.anthropic.claude-sonnet-4-6
+    model: us.anthropic.claude-opus-5
     allow_external: true
     strategy: native
   # MARK_OTHER_STUDY (stage 4 of docs/PLAN_2026-10-02.md). Same binding as
@@ -92,17 +96,17 @@ roles:
   # returns prose instead removes nothing.
   other_study_check:
     provider: bedrock
-    model: us.anthropic.claude-sonnet-4-6
+    model: us.anthropic.claude-opus-5
     allow_external: true
     strategy: native
   extract:
     provider: bedrock
-    model: us.anthropic.claude-sonnet-4-6
+    model: us.anthropic.claude-opus-5
     allow_external: true
     strategy: native
   adjudicate:
     provider: bedrock
-    model: us.anthropic.claude-sonnet-4-6
+    model: us.anthropic.claude-opus-5
     allow_external: true
     strategy: native
 

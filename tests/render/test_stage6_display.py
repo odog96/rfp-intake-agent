@@ -62,9 +62,16 @@ class TestNoDocumentGivesATotal:
     def test_the_note_the_reason_and_where_to_look(self, status: str) -> None:
         row = _row(_model([_why_no_total(status)]), "visits.total_count")
         assert row.status == "not_found"
-        assert [v.text for v in row.values] == ["No document gives a total."]
-        assert [b.text for b in row.block_lines] == [
-            f'"{_WHY}" (Protocol p.42)',
+        # 29 October 2026: the value reads as every not-found value does (rule
+        # 3); the note, the passage saying why (quoted) and where to look are
+        # grey notes under the passage's pages in the Where cell.
+        [label_row] = row.table
+        assert label_row.values == ["Not found in the documents"]
+        assert label_row.lines == []
+        assert (label_row.status, label_row.where) == ("Review", "Protocol p.42")
+        assert label_row.notes == [
+            "No document gives a total.",
+            f'"{_WHY}"',
             "See Visit frequency by study period.",
         ]
         # The record saying why stays the row's member, so it is still counted
@@ -75,13 +82,15 @@ class TestNoDocumentGivesATotal:
         rf = _why_no_total()
         rf.quote = "Visits will continue\nuntil  disease progression"
         row = _row(_model([rf]), "visits.total_count")
-        assert row.block_lines[0].text == '"Visits will continue until disease progression" ' \
-                                          "(Protocol p.42)"
+        assert row.table[0].notes[1] == '"Visits will continue until disease progression"'
 
     def test_with_no_record_there_is_no_reason_line(self) -> None:
         row = _row(_model([]), "visits.total_count")
-        assert [v.text for v in row.values] == ["No document gives a total."]
-        assert [b.text for b in row.block_lines] == ["See Visit frequency by study period."]
+        assert row.table[0].values == ["Not found in the documents"]
+        assert row.table[0].where == ""
+        assert row.table[0].notes == [
+            "No document gives a total.", "See Visit frequency by study period.",
+        ]
 
     def test_a_noted_variable_is_not_counted_as_found(self) -> None:
         assert _model([_why_no_total()]).variables_found == 0

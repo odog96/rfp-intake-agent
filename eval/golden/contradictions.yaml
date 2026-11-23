@@ -16,7 +16,10 @@ contradictions:
       80 SSVs for 75 planned sites is an internal inconsistency within the RFP.
     documents: [Synthetic_RFP_NEOD001]
     expected_verdict: reconcilable
-    severity: medium
+    # High since 23 November 2026: ops.sites_total is a budget driver, and a
+    # disagreement on one is high (config/precedence.yaml `severity`,
+    # FieldDef.severity), whatever the model rates it.
+    severity: high
 
   - field_id: timeline.periods
     description: >

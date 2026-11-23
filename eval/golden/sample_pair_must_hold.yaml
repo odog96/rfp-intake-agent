@@ -151,11 +151,17 @@ facts:
       - {field: ops.visits_pharmacy_monitoring, from: rfp, amount: {n: 300, unit: [visit, visits]}}
 
   - id: 9
-    name: At least 40 of the registry's fields have a value
+    name: At least 39 of the registry's fields have a value
     kind: coverage
-    at_least: 40
+    # 40 of 44 when this fact was written (2026-10-13): four fields could be without a
+    # value, three of them because these documents never give one (healthy-volunteer
+    # scope, SDV, SDR), so one was slack. On 2026-11-23 the registry became 42 fields for
+    # Angus Gray's 29 October asks and SDV and SDR became one field, which these documents
+    # do not give either. Two fields are now without a value by design, so the same one
+    # field of slack is 39 of 42. Flagged to Oliver on 2026-11-23.
+    at_least: 39
     # The same known failure as fact 8: when this field has no value the
-    # threshold is 39, never lower.
+    # threshold is 38, never lower.
     known_missing:
       - {field: ops.visits_site_selection, known: "CLAUDE.md open item 1, the two-column table on RFP p.3"}
 

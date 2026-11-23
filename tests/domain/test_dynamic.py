@@ -14,8 +14,19 @@ from rfp_intake.domain.dynamic import (
 from rfp_intake.domain.registry import load_registry
 
 
-def test_build_extraction_model_for_visits(fields_yaml_path: Path) -> None:
-    registry = load_registry(fields_yaml_path)
+def test_build_extraction_model_for_visits(fields_yaml_path: Path, tmp_path: Path) -> None:
+    # No field in config/fields.yaml is derived since 2026-11-23, so one is added
+    # to a copy of it to show a derived field is left out of the model.
+    import yaml
+
+    data = yaml.safe_load(fields_yaml_path.read_text())
+    data["fields"].append({
+        "id": "visits.worked_out", "group": "visits", "label": "Worked out", "type": "text",
+        "derived": True, "derived_from": ["visits.total_count"],
+    })
+    copy = tmp_path / "fields.yaml"
+    copy.write_text(yaml.dump(data, allow_unicode=True))
+    registry = load_registry(copy)
     model = build_extraction_model("visits", registry=registry)
 
     assert issubclass(model, BaseModel)
@@ -25,9 +36,9 @@ def test_build_extraction_model_for_visits(fields_yaml_path: Path) -> None:
     field_names = set(model.model_fields.keys())
     assert "frequency_by_period" in field_names
     assert "total_count" in field_names
-    assert "intensity_evidence" in field_names
+    assert "schedule_present" in field_names
     # Derived field should be excluded
-    assert "intensity_rating" not in field_names
+    assert "worked_out" not in field_names
 
 
 def test_build_extraction_model_for_study_design(fields_yaml_path: Path) -> None:
@@ -66,7 +77,7 @@ def test_generated_model_round_trips_json(fields_yaml_path: Path) -> None:
                 "notes": None,
             }
         ],
-        "intensity_evidence": None,
+        "schedule_present": None,
     }
 
     instance = model.model_validate(payload)
@@ -170,3 +181,17 @@ def test_all_groups_build_successfully(fields_yaml_path: Path) -> None:
         # Empty payload should be valid (all fields optional)
         instance = model.model_validate({})
         assert instance is not None
+
+
+def test_the_page_description_names_the_page_marker() -> None:
+    """Run r-20261123-opus5-base: the description said "1-indexed page number
+    within the excerpt", and Claude Opus 5 counted pages from the start of the
+    excerpt. The page is the number in the excerpt's "--- Page N ---" marker."""
+    from rfp_intake.domain.dynamic import FieldExtractionItem
+
+    description = FieldExtractionItem.model_fields["page"].description or ""
+    assert "--- Page N ---" in description
+    assert "within the excerpt" not in description
+    # And the JSON schema the model is sent carries the same words.
+    schema = FieldExtractionItem.model_json_schema()
+    assert schema["properties"]["page"]["description"] == description

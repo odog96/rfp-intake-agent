@@ -41,12 +41,16 @@ class TestBudgetDriverCollections:
         assert out.status == "confirmed"
 
     def test_a_non_budget_driver_collection_still_confirms(self) -> None:
-        # visits.intensity_evidence legitimately holds many members and is not a
-        # number anyone budgets from directly.
+        # monitoring.unblinded_factors legitimately holds many members and is not
+        # a number anyone budgets from directly (visits.intensity_evidence, of the
+        # same shape, was the example until it was removed on 2026-11-23).
         from rfp_intake.gate import _gate_field
 
         out = _gate_field(
-            self._resolved("visits.intensity_evidence", ["safety_labs", "ecgs"]),
+            self._resolved(
+                "monitoring.unblinded_factors",
+                ["ip_accountability", "pharmacy_manual_requirements"],
+            ),
             None,
             is_budget_driver=False,
         )

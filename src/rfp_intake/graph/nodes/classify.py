@@ -21,8 +21,13 @@ Based on the first pages and outline headings provided, determine the document t
 
 Document types:
 - rfp: Request for Proposal — asks a CRO to bid on running a study
-- protocol: Clinical study protocol — describes the scientific design
-- amendment: A change to an existing protocol
+- protocol: Clinical study protocol — describes the scientific design. An original \
+protocol that has never been amended.
+- amendment: A protocol amendment — either a document listing changes to an existing \
+protocol, or a full protocol that has been amended (its first pages give the dates of \
+one or more amendments, or summarise the changes made by them). An amended protocol is \
+the current version and supersedes the original, so it is an amendment even when its \
+cover calls it a "Study Protocol".
 - soa: Schedule of Assessments — a standalone visit/procedure grid
 - other: Does not fit the above categories
 

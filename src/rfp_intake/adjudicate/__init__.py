@@ -23,7 +23,7 @@ from __future__ import annotations
 from typing import Any, Literal
 
 import structlog
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from rfp_intake.adjudicate.prompt import build_adjudicate_prompt
 from rfp_intake.domain.precedence import PrecedencePolicy, get_precedence_policy
@@ -31,6 +31,7 @@ from rfp_intake.domain.registry import FieldDef, get_registry
 from rfp_intake.domain.schemas import Contradiction, FieldRecord, ResolvedField, RunError, RunState
 from rfp_intake.llm.provider import get_llm
 from rfp_intake.llm.structured import StructuredOutput, get_structured_output_for_role
+from rfp_intake.reconcile import scope_key
 from rfp_intake.reconcile.precedence import apply_precedence
 
 logger = structlog.get_logger()
@@ -47,6 +48,16 @@ class AdjudicationResult(BaseModel):
     # 1-based positions, numbered as winning_record is, of records the model
     # says are not about this field at all. Fix 5 of the 2026-10-12 brief.
     off_topic_records: list[int] = Field(default_factory=list)
+
+    @field_validator("off_topic_records", mode="before")
+    @classmethod
+    def _none_said(cls, v: object) -> object:
+        """An empty string or null is "no record is off-topic". Claude Opus 5 wrote
+        `"off_topic_records": ""` for "Whole study duration" in run
+        r-20261123-oct29-run2, which failed validation and lost the verdict."""
+        if v is None or (isinstance(v, str) and not v.strip()):
+            return []
+        return v
 
 
 def adjudicate_node(state: RunState) -> dict[str, Any]:
@@ -76,15 +87,15 @@ def adjudicate_node(state: RunState) -> dict[str, Any]:
             continue
 
         try:
-            adjudicated, fields = _adjudicate_one(c, field_def, policy, structured)
-            updated_contradictions.append(adjudicated)
-            new_resolved.extend(fields)
+            adjudicated, fields = _adjudicate_with_retry(c, field_def, policy, structured)
         except Exception as e:
             logger.error("adjudicate_failed", field_id=c.field_id, error=str(e))
             errors.append(RunError(
                 node="ADJUDICATE", task_id=c.field_id, error=f"Adjudication failed: {e}",
             ))
-            updated_contradictions.append(c)  # left unadjudicated — verdict stays None
+            adjudicated, fields = _unjudged(c, field_def)
+        updated_contradictions.append(adjudicated)
+        new_resolved.extend(fields)
 
     logger.info(
         "adjudicate_complete",
@@ -100,6 +111,63 @@ def adjudicate_node(state: RunState) -> dict[str, Any]:
     }
 
 
+# How many times one candidate is put to the model before it is shown as a
+# disagreement nobody has judged (_unjudged). A second attempt costs one call, and
+# only where the first one failed.
+ADJUDICATE_ATTEMPTS = 2
+
+# What Appendix B says about a candidate the model could not judge.
+UNJUDGED_EXPLANATION = (
+    "The reviewer model could not judge these passages (its answer could not be read), "
+    "so they are shown as a disagreement for a person to settle."
+)
+
+
+def _adjudicate_with_retry(
+    contradiction: Contradiction,
+    field_def: FieldDef,
+    policy: PrecedencePolicy,
+    structured: StructuredOutput,
+) -> tuple[Contradiction, list[ResolvedField]]:
+    """`_adjudicate_one`, tried again once if the call fails. Static control
+    flow: the number of attempts is fixed here, never chosen by a model."""
+    for attempt in range(1, ADJUDICATE_ATTEMPTS + 1):
+        try:
+            return _adjudicate_one(contradiction, field_def, policy, structured)
+        except Exception as e:
+            if attempt == ADJUDICATE_ATTEMPTS:
+                raise
+            logger.warning(
+                "adjudicate_retry", field_id=contradiction.field_id, attempt=attempt,
+                error=str(e)[:200],
+            )
+    raise AssertionError("unreachable")  # the loop returns or raises
+
+
+def _unjudged(
+    contradiction: Contradiction, field_def: FieldDef,
+) -> tuple[Contradiction, list[ResolvedField]]:
+    """A candidate the model could not judge is a disagreement for a person to
+    settle, shown with the value document precedence gives (_handle_conflict),
+    never dropped. Code found the documents' values differ (RECONCILE); without a
+    model saying otherwise, a person must choose.
+
+    Until 2026-11-23 the candidate kept verdict None and no row at all, so the
+    report printed the variable as "Not found" and listed no disagreement: run
+    r-20261123-oct29-run2 showed "Whole study duration: Not found" though the
+    amendment says 42 months and the RFP 40. `explanation` says no model judged
+    it, and the run's errors list keeps the failed call. Severity is high for a
+    budget driver, as config/fields.yaml's header defines it for any disagreement
+    on one, and otherwise left unrated: no model rated it.
+    """
+    marked = contradiction.model_copy(update={
+        "verdict": "conflict",
+        "explanation": UNJUDGED_EXPLANATION,
+        "severity": field_def.severity(None),
+    })
+    return _handle_conflict(marked, field_def)
+
+
 def _adjudicate_one(
     contradiction: Contradiction,
     field_def: FieldDef,
@@ -112,7 +180,11 @@ def _adjudicate_one(
     adjudicated = contradiction.model_copy(update={
         "verdict": result.verdict,
         "explanation": result.explanation,
-        "severity": result.severity,
+        # High on a budget driver whatever the model rated it, as
+        # config/precedence.yaml's `severity` and config/fields.yaml's header
+        # define it: run r-20261123-oct29-run6 rated the placebo-matching
+        # conflict "medium" (report-usability-reviewer, 23 November 2026).
+        "severity": field_def.severity(result.severity),
         "off_topic_record_indexes": _off_topic(contradiction, result),
     })
 
@@ -135,14 +207,26 @@ def _handle_not_a_conflict(
     """Records weren't actually comparable — resolve each on its own rather
     than force a single merged value RECONCILE's scope grouping got wrong.
 
-    Except where the field's answer is one choice (`type` in config/fields.yaml
-    is enum or bool) and every record about it has the same scope: one row
-    per record would only repeat one question, so that cluster gets one row,
-    written as a reconcilable one is (_one_row). The other records are in
-    Appendix A. Free-text and number fields keep one row per record.
+    Two exceptions, both where every record about the field has the same scope,
+    get one row for the cluster, written as a reconcilable one is (_one_row);
+    the other records are in Appendix A:
+
+    - the field's answer is one choice (`type` in config/fields.yaml is enum or
+      bool): one row per record would only repeat one question;
+    - every record about the field gives the same normalized value, whatever the
+      field's type: once the off-topic records are set aside nothing differs.
+      Added 2026-11-23: the subject count's three records of 260 (amendment
+      p.15 and p.43, RFP p.4) beside an off-topic 236 came back as three rows
+      of 260.
+
+    Otherwise free-text and number fields keep one row per record.
     """
     on_topic = _on_topic(contradiction)
-    if field_def.type in _ONE_CHOICE_TYPES and len({r.scope for r in on_topic}) == 1:
+    # The same scope as RECONCILE groups scopes (reconcile/__init__.py:scope_key):
+    # on a field that is not scoped, "total" and no scope are one.
+    if len({scope_key(field_def, r.scope) for r in on_topic}) == 1 and (
+        field_def.type in _ONE_CHOICE_TYPES or _one_value(on_topic)
+    ):
         return _one_row(contradiction, result, "NOT_A_CONFLICT")
     fields = [
         ResolvedField(
@@ -279,6 +363,13 @@ def _off_topic(contradiction: Contradiction, result: AdjudicationResult) -> list
         )
         return []
     return numbers
+
+
+def _one_value(records: list[FieldRecord]) -> bool:
+    """Whether every record gives the same normalized value, compared with ==
+    as RECONCILE compares values (reconcile/__init__.py:_group_by_canonical_value),
+    so a list or a dict is the same value only if it is equal."""
+    return all(r.value == records[0].value for r in records[1:])
 
 
 def _on_topic(contradiction: Contradiction) -> list[FieldRecord]:

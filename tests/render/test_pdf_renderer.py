@@ -173,7 +173,8 @@ def _conflict_state() -> RunState:
 
     conflict = Contradiction(
         field_id="interim.count", verdict="conflict", severity="high",
-        explanation="The RFP (d-rfp) plans an interim analysis; the protocol (d-prot) does not.",
+        explanation="The RFP (d-rfp) plans an interim analysis; the protocol (d-prot) does not; "
+                    "d-rfp p.4 says so.",
         records=[rec(0, 98, "d-prot", "protocol"), rec(1, 4, "d-rfp", "rfp")],
     )
     dismissed = Contradiction(
@@ -183,7 +184,7 @@ def _conflict_state() -> RunState:
         # with the internal document id in it: the renderer has to swap that for
         # the report's own name. See
         # `test_reasoning_and_dismissed_entries_are_in_the_appendix`.
-        explanation="Both records name the same disease; the protocol (d-prot) abbreviates it.",
+        explanation="Both records name the same disease; d-prot abbreviates it.",
         records=[
             FieldRecord(field_id="study.indication", group="phase_population", raw_value=v,
                         value=v, quote=v, confidence=0.9,
@@ -211,9 +212,16 @@ class TestReportText:
 
     def test_every_registry_variable_is_named(self, fields_yaml_path) -> None:  # type: ignore[no-untyped-def]
         _use_real_registry(fields_yaml_path)
+        from rfp_intake.domain.registry import ScopesDisplay
+
         text = _pdf_text(build_report_pdf(RunState(run_id="r-1"), _registry(), generated_at="t"))
         for f in _registry().fields:
-            assert " ".join(f.label.split()) in text, f.label
+            # A variable printed under another (`shown_under`) is named by its
+            # scopes display's first heading, "Whole study", or by its label.
+            name = f.label
+            if f.shown_under is not None and isinstance(f.display, ScopesDisplay):
+                name = f.display.scopes[0].label
+            assert " ".join(name.split()) in text, name
 
     def test_the_five_sections_are_in_the_order_the_customer_asked_for(
         self, fields_yaml_path: Path,
@@ -343,12 +351,15 @@ class TestReportText:
         """The variables table flags the row and points at the numbered table."""
         _use_real_registry(fields_yaml_path)
         text = _pdf_text(build_report_pdf(_conflict_state(), _registry(), generated_at="t"))
-        assert "Number of interim analyses" in text
-        # The row in All variables states both sides, each with its page and
-        # quote, and says where to read the detail (fix 2 of the 2026-10-12 brief).
-        assert 'Protocol p.98: 0 — "quote on page 98' in text
-        assert 'RFP p.4: 1 — "quote on page 4' in text
-        assert "No value chosen. See Disagreement 1." in text
+        text = " ".join(text.split())
+        # The row in All variables says, in red, that the documents disagree
+        # and where to read the detail; then each side is a row of its own, its
+        # document, value and quote, and its pages on the right (29 October 2026).
+        assert (
+            "Number of interim analyses BUDGET Documents disagree — see Disagreement 1 Review "
+            'Protocol: 0 — "quote on page 98" Protocol p.98 '
+            'RFP: 1 — "quote on page 4" RFP p.4'
+        ) in text
         # The numbered table carries both sides with their pages, and the verdict.
         assert "0 — Protocol p.98" in text
         assert "1 — RFP p.4" in text
@@ -381,20 +392,26 @@ class TestReportText:
         ]
         state.resolved += [timing, *durations]
         text = _pdf_text(build_report_pdf(state, _registry(), generated_at="t"))
-        assert "Depends on Disagreement 1" in text
-        assert "Only the RFP gives a timing: after 156 events (RFP p.4)." in text
-        assert "If the protocol is right, there is no interim analysis to time." in text
-        # A part with one value names its pages in its heading.
-        whole = text.index("Whole study (Protocol p.15):")
-        each = text.index("Time each patient spends in the study (Protocol p.47):")
-        assert whole < text.index("42 months", whole) < each < text.index("about 4 years", each)
+        text = " ".join(text.split())
+        # The follower's value, its red line, Review, and its page on the right.
+        assert (
+            "Timing of each interim analysis Only the RFP gives a timing: after 156 events. "
+            "If the protocol is right, there is no interim analysis to time. "
+            "Depends on Disagreement 1 Review RFP p.4"
+        ) in text
+        # The whole study's duration is printed under the patient timeline
+        # (`shown_under`), each part a row with its heading, value, status and page.
+        assert (
+            "Whole study 42 months Confirmed Protocol p.15 "
+            "Time each patient spends in the study about 4 years Confirmed Protocol p.47"
+        ) in text
+        assert text.index("Patient timeline") < text.index("Whole study 42 months")
 
-    def test_confidence_is_printed_and_explained(self, fields_yaml_path) -> None:  # type: ignore[no-untyped-def]
-        """Angus Gray asked how the percentage is produced, so the report says.
-
-        The figure is printed on every row, not only when it is low — the example
-        the customer praised read "(Confirmed, 100% confidence)".
-        """
+    def test_no_confidence_is_printed_and_the_two_status_words_are_explained(
+        self, fields_yaml_path: Path,
+    ) -> None:
+        """Angus Gray, 29 October 2026: the confidence "doesn't add much"; the
+        status says Confirmed or Review, and the header says what each means."""
         _use_real_registry(fields_yaml_path)
         rf = ResolvedField(
             field_id="ops.sites_total", value=75, status="confirmed", confidence=1.0,
@@ -403,10 +420,13 @@ class TestReportText:
         )
         text = _pdf_text(build_report_pdf(RunState(run_id="r-1", resolved=[rf]), _registry(),
                                           generated_at="t"))
-        assert "Confidence" in text
-        assert "100%" in text
-        assert "the extraction model's own rating" in text
-        assert "not a probability of being correct" in text
+        flat = " ".join(text.split())
+        assert "Confidence" not in text
+        assert "%" not in text
+        assert "Total number of sites BUDGET 75 Confirmed RFP p.5" in flat
+        assert "Confirmed means the documents state it and nothing needs checking." in flat
+        assert "Review means check it before using it" in flat
+        assert "each document's side is listed under the variable with its pages" in flat
 
     def test_a_flagged_value_carries_its_reason(self, fields_yaml_path) -> None:  # type: ignore[no-untyped-def]
         """Before 2026-09-30 this section printed names only, under "Also check"."""
@@ -418,15 +438,23 @@ class TestReportText:
         )
         text = _pdf_text(build_report_pdf(RunState(run_id="r-1", resolved=[rf]), _registry(),
                                           generated_at="t"))
+        flat = " ".join(text.split())
         assert "Why it is flagged" in text
-        assert "Confidence below 80%" in text
+        assert "Confidence" not in text
+        assert "%" not in text
+        reason = "The document does not state it clearly — read the passage in Appendix A."
+        # In Flagged for review, and in grey under the row's pages in All variables.
+        assert flat.count(reason) == 2
+        assert f"Total number of sites BUDGET 75 Review RFP p.5 {reason}" in flat
 
     def test_reasoning_and_dismissed_entries_are_in_the_appendix(self, fields_yaml_path) -> None:  # type: ignore[no-untyped-def]
         _use_real_registry(fields_yaml_path)
         text = _pdf_text(build_report_pdf(_conflict_state(), _registry(), generated_at="t"))
         assert "Appendix B" in text
         # Document ids in the adjudicator's reasoning are replaced by names.
-        assert "The RFP (RFP) plans an interim analysis; the protocol (Protocol) does not." in text
+        # An id just after the document's own name is dropped, not doubled.
+        assert ("The RFP plans an interim analysis; the protocol does not; RFP p.4 says so."
+                in text)
         assert "Checked and dismissed (1)" in text
         assert "Light chain amyloidosis" in text
         # The dismissed pair carries its reason too, and that reason is renamed
@@ -435,7 +463,7 @@ class TestReportText:
         # then printed, but unrenamed, so Appendix B of
         # r-20261008-review2-run3 showed the analyst "doc-2ea4cd79".
         assert (
-            "Both records name the same disease; the protocol (Protocol) abbreviates it."
+            "Both records name the same disease; Protocol abbreviates it."
             in text
         )
         # Scoped to the appendix: the header block on page 1 names both document
@@ -457,7 +485,9 @@ class TestReportText:
         # document and the test would pass without the quote being in the appendix.
         evidence = text[text.index("Appendix A — Evidence"):]
         assert '"75 sites total"' in evidence
-        assert "RFP p.5, 92%" in evidence
+        # No confidence figure on an evidence line (29 October 2026).
+        assert "RFP p.5" in evidence
+        assert "92" not in evidence and "%" not in evidence
 
     def test_each_side_of_a_disagreement_says_whether_the_report_used_it(
         self, fields_yaml_path: Path,
@@ -469,42 +499,13 @@ class TestReportText:
         evidence = text[start:text.index("Appendix B — Disagreements", start)]
         assert evidence.count("No value chosen — see Disagreement 1") == 2
 
-    def test_a_derived_row_prints_why_and_its_pages_in_plain_words(
+    def test_the_blinding_rows_and_the_scope_words_are_printed(
         self, fields_yaml_path: Path,
     ) -> None:
-        """Fix 8 of the 2026-10-12 brief: the status says the tool worked it out,
-        the value cell says why and from which pages, and no field id is printed."""
-        from rfp_intake.derive import derive_node
-
-        _use_real_registry(fields_yaml_path)
-        state = RunState(run_id="r-1", resolved=[ResolvedField(
-            field_id="visits.intensity_evidence",
-            value=["frequent_early_visits", "infusion_observation_period", "imaging",
-                   "pk_pd_sampling"],
-            status="needs_review", confidence=0.9,
-            sources=[Provenance(doc_id="p", doc_kind="protocol", page=13)],
-            quote="q",
-        )])
-        state.resolved = derive_node(state)["resolved"]
-        text = " ".join(_pdf_text(build_report_pdf(state, _registry(), generated_at="t")).split())
-        assert "Worked out by the tool — confirm" in text
-        assert (
-            "Why: frequent visits early in the study; IV infusion with an observation period; "
-            "imaging; PK/PD sampling."
-        ) in text
-        assert "Evidence pages: Protocol p.13." in text
-        evidence = text[text.index("Appendix A — Evidence"):]
-        assert "Derived from Evidence of visit intensity, Visit frequency by study period" in (
-            evidence
-        )
-        assert "visits.intensity" not in text
-
-    def test_the_blinding_block_and_the_scope_words_are_printed(
-        self, fields_yaml_path: Path,
-    ) -> None:
-        """Fixes 9 and 11 of the 2026-10-12 brief, read back out of the PDF: one
-        "Unblinded staff and monitoring" row in place of six, a scope's kind as a
-        word, and no "Part not stated"."""
+        """Fix 11 of the 2026-10-12 brief, read back out of the PDF: a scope's
+        kind as a word, and no "Part not stated". The blinding group has no
+        block since 29 October 2026: each of its variables is a row of its own,
+        the pharmacy monitoring rows first."""
         _use_real_registry(fields_yaml_path)
 
         def rf(field_id: str, value: object, page: int, scope: str | None = None,
@@ -523,16 +524,12 @@ class TestReportText:
             rf("ops.subjects_total", 260, 43),
         ])
         text = " ".join(_pdf_text(build_report_pdf(state, _registry(), generated_at="t")).split())
-        # The main table: Flagged for review names each member under its own label.
         main = text[:text.rindex("Flagged for review", 0, text.index("Appendix A — Evidence"))]
-        assert "Unblinded staff and monitoring" in main
-        assert "Likely needed" in main
-        assert (
-            'Stated in the documents: Yes — "The Unblinded Pharmacist will be provided '
-            'access." (Protocol p.52)'
-        ) in main
-        assert "Factors driving unblinded monitoring: not found" in main
-        assert "Unblinded monitoring likely required" not in main
+        group = main[main.index("Blinding and Unblinded Monitoring"):]
+        assert group.index("Pharmacy monitoring visits") < group.index(
+            "Pharmacy monitoring frequency") < group.index("Unblinded staff stated as required")
+        assert "Unblinded staff stated as required BUDGET Yes Review Protocol p.52" in group
+        assert "Unblinded monitoring likely required" in group
         assert "Cohort: NEOD001 arm" in main
         assert "cohort:" not in main
         assert "Part not stated" not in text

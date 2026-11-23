@@ -200,12 +200,25 @@ class TestReconcileNode:
         assert rf.value is None
         assert rf.sources == []
 
-    def test_derived_fields_are_skipped(self, fields_yaml_path) -> None:  # type: ignore[no-untyped-def]
-        """RECONCILE never emits a not_found row for a derived field — DERIVE owns it."""
-        _use_real_registry(fields_yaml_path)
+    def test_derived_fields_are_skipped(self, fields_yaml_path, tmp_path) -> None:  # type: ignore[no-untyped-def]
+        """RECONCILE never emits a not_found row for a derived field — DERIVE owns it.
+
+        No field in config/fields.yaml is derived since 2026-11-23, so one is
+        added to a copy of it."""
+        import yaml
+
+        data = yaml.safe_load(fields_yaml_path.read_text())
+        data["fields"].append({
+            "id": "visits.worked_out", "group": "visits", "label": "Worked out",
+            "type": "text", "derived": True, "derived_from": ["visits.total_count"],
+        })
+        copy = tmp_path / "fields.yaml"
+        copy.write_text(yaml.dump(data, allow_unicode=True))
+        _use_real_registry(copy)
         from rfp_intake.reconcile import reconcile_node
 
         state = RunState(run_id="t", records=[])
         result = reconcile_node(state)
 
-        assert not any(r.field_id == "visits.intensity_rating" for r in result["resolved"])
+        assert any(r.field_id == "visits.total_count" for r in result["resolved"])
+        assert not any(r.field_id == "visits.worked_out" for r in result["resolved"])

@@ -346,3 +346,23 @@ def test_the_exclusions_reach_the_model_in_the_hint(fields_yaml_path) -> None:  
         task = ExtractionTask(doc_id="doc-001", group=group, page_window=(2, 4))
         system = str(build_extract_prompt(task, doc, registry)[0].content)
         assert " ".join(said.split()) in " ".join(system.split()), said
+
+
+def test_the_rules_say_the_page_is_the_number_in_the_page_marker(fields_yaml_path) -> None:  # type: ignore[no-untyped-def]
+    """The rule names the marker the excerpt is built with, and never asks for a
+    page counted from the start of the excerpt (run r-20261123-opus5-base)."""
+    import os
+    import re
+
+    os.environ["RFP_INTAKE_FIELDS_YAML_PATH"] = str(fields_yaml_path)
+    from rfp_intake.domain.registry import get_registry
+    get_registry.cache_clear()
+
+    system, human = (
+        str(m.content) for m in build_extract_prompt(_make_task(), _make_doc(), get_registry())
+    )
+    rules = system.split("FIELDS")[0]
+    assert '"--- Page N ---"' in rules
+    assert "within the excerpt" not in system
+    # The marker the rule describes is the marker the excerpt carries.
+    assert re.search(r"^--- Page 2 ---$", human, re.MULTILINE)

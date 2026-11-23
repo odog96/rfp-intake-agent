@@ -5,7 +5,7 @@ Laid out for an analyst who is checking the pipeline's work instead of reading
 the RFP and protocol themselves. Five sections, in this order:
 
     1  Header       Documents reviewed, the counts, and how to read the report.
-    2  Variables    Every variable, grouped: value, status, confidence, pages.
+    2  Variables    Every variable, grouped: value, status, pages.
                     Variables with many entries (visit schedules, timeline
                     components) follow in section 5 as their own tables.
     3  Disagreements  Where the documents say different things, numbered, both
@@ -36,6 +36,7 @@ from __future__ import annotations
 
 import io
 import re
+from typing import Any
 from xml.sax.saxutils import escape
 
 from reportlab.lib import colors
@@ -44,7 +45,7 @@ from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.lib.units import inch
 from reportlab.pdfbase.pdfmetrics import stringWidth
 from reportlab.platypus import (
-    PageBreak,
+    CondPageBreak,
     Paragraph,
     SimpleDocTemplate,
     Spacer,
@@ -54,26 +55,27 @@ from reportlab.platypus import (
 
 from rfp_intake.domain.registry import Registry
 from rfp_intake.domain.schemas import RunState
-from rfp_intake.gate import CONFIDENCE_CONFIRMED
 from rfp_intake.render.report_model import (
     DECISION_VALUE_CHARS,
+    REASON_DERIVED,
+    REASON_DISMISSED_DISAGREEMENT,
+    REASON_LOW_CONFIDENCE,
+    REASON_MANY_VALUES,
+    STATUS_CONFIRMED,
+    STATUS_REVIEW,
     Decision,
     ReportModel,
     Row,
+    TableRow,
     ValueLine,
+    _whole_study,
     build_report_model,
 )
 
-# What the Confidence column means, in the report itself. Angus Gray asked how
-# the percentage is produced, and the honest answer is short enough to print:
-# the number is the extraction model's own self-rating, which nothing in the
-# pipeline checks against known-correct answers. Saying so in the report is the
-# difference between a number a reviewer can weigh and one they might trust.
-_CONFIDENCE_NOTE = (
-    "<b>Confidence</b> is the extraction model's own rating of how clearly the document "
-    "stated the value, plus 5 points for each extra passage that agreed. It has not been "
-    "checked against hand-marked answers, so it is not a probability of being correct."
-)
+# No confidence figure is printed anywhere since 29 October 2026. Oliver: "The
+# confidence is a little... I don't know how useful it is." Angus Gray: "Yeah,
+# it doesn't add much." The Status column says Confirmed or Review instead,
+# and a row for review says why under its pages.
 
 _GREEN = colors.HexColor("#2e7d32")
 _AMBER = colors.HexColor("#e65100")
@@ -84,13 +86,7 @@ _RULE = colors.HexColor("#d0d0d0")
 _HEADER_BG = colors.HexColor("#e4e4e4")
 _BAND_BG = colors.HexColor("#f4f4f4")
 
-_STATUS_WORDS = {
-    "confirmed": ("Confirmed", _GREEN),
-    "needs_review": ("Review", _AMBER),
-    "not_specified": ("Not specified", _GREY),
-    "not_found": ("Not found", _GREY),
-    "not_applicable": ("Not applicable", _GREY),
-}
+_STATUS_COLORS = {STATUS_CONFIRMED: _GREEN, STATUS_REVIEW: _AMBER}
 
 _MARGIN = 0.6 * inch
 _BOTTOM_MARGIN = 0.7 * inch
@@ -99,15 +95,15 @@ _WIDTH = LETTER[0] - 2 * _MARGIN
 # frame's own 6-point padding top and bottom (686.4 points).
 _FRAME_HEIGHT = LETTER[1] - _MARGIN - _BOTTOM_MARGIN - 12
 
-# Variable | Value | Status | Confidence | Where
-_MAIN_COLS = [1.6 * inch, 2.44 * inch, 1.0 * inch, 0.78 * inch, _WIDTH - 5.82 * inch]
-# Applies to | Value | Status | Confidence | Where — schedule rows have short
-# pages and long labels, so the first column is wider and the last narrower.
-_SCHEDULE_COLS = [2.05 * inch, 2.57 * inch, 1.0 * inch, 0.78 * inch, _WIDTH - 6.4 * inch]
+# Variable | Value | Status | Where (Angus Gray, 29 October 2026: the values in
+# the middle, "and then on the right-hand side, the references").
+_MAIN_COLS = [1.7 * inch, 3.0 * inch, 0.8 * inch, _WIDTH - 5.5 * inch]
+# Applies to | Value | Status | Where — a schedule's rows, named by their scope.
+_SCHEDULE_COLS = _MAIN_COLS
 # # | Variable | What the documents say | Assessment
 _DECISION_COLS = [0.25 * inch, 1.45 * inch, 4.0 * inch, _WIDTH - 5.7 * inch]
-# Variable | Value | Confidence | Why it is flagged | Where
-_FLAGGED_COLS = [1.55 * inch, 1.72 * inch, 0.78 * inch, 2.13 * inch, _WIDTH - 6.18 * inch]
+# Variable | Value | Why it is flagged | Where
+_FLAGGED_COLS = [1.6 * inch, 2.15 * inch, 2.05 * inch, _WIDTH - 5.8 * inch]
 # Term | What it means
 _GLOSSARY_COLS = [1.6 * inch, _WIDTH - 1.6 * inch]
 
@@ -128,6 +124,8 @@ def _styles() -> dict[str, ParagraphStyle]:
         "meta": ParagraphStyle("meta", parent=body, fontSize=8.5, textColor=_GREY),
         "cell": cell,
         "cell_head": ParagraphStyle("cell_head", parent=cell, fontName="Helvetica-Bold"),
+        # A row printed under a variable's own: its sub-label indented a little.
+        "cell_part": ParagraphStyle("cell_part", parent=cell, leftIndent=8),
         "cell_small": ParagraphStyle("cell_small", parent=cell, fontSize=7.5, leading=8.6,
                                      textColor=colors.HexColor("#555555")),
         "evidence": ParagraphStyle("evidence", parent=body, fontSize=7.5, leading=9.2,
@@ -160,7 +158,9 @@ def build_report_pdf(state: RunState, registry: Registry, *, generated_at: str) 
     story += _disagreements(model, styles)
     story += _flagged(model, styles)
     story += _schedules(model, styles)
-    story.append(PageBreak())
+    # A new page for the appendices only where less than a third of one is left:
+    # a forced break left page 6 of run r-20261123-oct29-run4 holding one row.
+    story.append(CondPageBreak(3 * inch))
     story += _evidence_appendix(model, styles)
     story += _reasoning_appendix(model, styles)
     story += _removed_appendix(model, styles)
@@ -188,6 +188,17 @@ def build_report_pdf(state: RunState, registry: Registry, *, generated_at: str) 
 # --------------------------------------------------------------------------- #
 
 
+def _reading_date(generated_at: str) -> str:
+    """An ISO timestamp as "23 November 2026, 06:50 UTC"; anything else as given."""
+    from datetime import UTC, datetime
+
+    try:
+        when = datetime.fromisoformat(generated_at).astimezone(UTC)
+    except ValueError:
+        return generated_at
+    return f"{when.day} {when:%B %Y, %H:%M} UTC"
+
+
 def _header_block(model: ReportModel, generated_at: str, styles: dict) -> list:  # type: ignore[type-arg]
     """Title, the documents, the counts, and how to read what follows.
 
@@ -196,9 +207,10 @@ def _header_block(model: ReportModel, generated_at: str, styles: dict) -> list: 
     """
     story: list[object] = [
         Paragraph("RFP Intake Summary", styles["title"]),
+        # A date a reader can read; the registry version that made the report is
+        # in extraction.json (report-usability-reviewer, 23 November 2026).
         Paragraph(
-            f"Run {escape(model.run_id)} · generated {escape(generated_at)} · "
-            f"field registry {escape(model.registry_version)}",
+            f"Run {escape(model.run_id)} · {escape(_reading_date(generated_at))}",
             styles["meta"],
         ),
         Spacer(1, 6),
@@ -228,17 +240,25 @@ def _header_block(model: ReportModel, generated_at: str, styles: dict) -> list: 
     story.append(Paragraph(counts, styles["body"]))
 
     story.append(Spacer(1, 4))
+    # Rule 10 of the 29 October 2026 layout: what the four columns and the two
+    # status words mean. The Confidence paragraph that followed is gone with
+    # the figure.
     story.append(Paragraph(
-        "<b>How to read this report.</b> <b>All variables</b> lists everything the tool read, "
-        "grouped, with where in the documents each value came from; "
+        "<b>How to read this report.</b> In <b>All variables</b> each variable is in bold "
+        "with its value, its status and, on the right, the pages it came from; "
         '<font color="#1565c0">BUDGET</font> marks a variable that drives the budget. '
-        "<b>Disagreements between the documents</b> and <b>Flagged for review</b> then list the "
-        "values a person has to settle, each with the reason it is there. Nothing is left out of "
-        "the tables: every value's source passage is quoted in Appendix A, and any clinical term "
-        "used here is explained in <b>Words used in this report</b> on the last pages.",
+        f'<font color="{_GREEN.hexval()}"><b>Confirmed</b></font> means the documents state it '
+        "and nothing needs checking. "
+        f'<font color="{_AMBER.hexval()}"><b>Review</b></font> means check it before using it, '
+        "for the reason given under its pages and in <b>Flagged for review</b>, or in the "
+        "<b>Disagreement</b> it names. Where the documents disagree, each document's side is "
+        "listed under the variable with its pages; a line starting "
+        f"\"{escape(model.also_read)} …\" gives "
+        "another value the tool read in the passages of a row in review. Every quote is in "
+        "Appendix A, and <b>Words used in this report</b>, on the last pages, says in plain "
+        "words what most variables mean and spells out the abbreviations used.",
         styles["body"],
     ))
-    story.append(Paragraph(_CONFIDENCE_NOTE, styles["body"]))
     return story
 
 
@@ -279,9 +299,9 @@ def _disagreements(model: ReportModel, styles: dict) -> list:  # type: ignore[ty
         return story
     story.append(Paragraph(
         "Each row is one variable where the documents say different things. Pick the value that "
-        "belongs in the budget, or ask the sponsor. The tool does not choose for you — where it "
-        "shows a provisional value, that is only which document normally takes precedence. The "
-        "reviewer's full reasoning for each is in Appendix B.",
+        "belongs in the budget, or ask the sponsor. The tool does not choose for you: where it "
+        "shows a provisional value, it says why it shows that one. The tool's reasoning "
+        "for each is in Appendix B.",
         styles["body"],
     ))
     story.append(Spacer(1, 3))
@@ -305,8 +325,8 @@ def _decision_table(decisions: list[Decision], styles: dict) -> Table:  # type: 
         )
         if d.provisional:
             assessment += (
-                f"<br/><font size=\"7.5\">Provisional, by document precedence: "
-                f"{escape(_clip(d.provisional, 80))}</font>"
+                f"<br/><font size=\"7.5\">Provisional: "
+                f"{escape(_clip(d.provisional, 120))}</font>"
             )
         else:
             assessment += '<br/><font size="7.5">No value chosen.</font>'
@@ -334,11 +354,17 @@ def _variables(model: ReportModel, styles: dict) -> list:  # type: ignore[type-a
     The band carries the group's one-line explanation from `plain` in
     config/fields.yaml, where one is written. That is the only place the report
     explains a whole group of variables, and it costs one line per group.
+
+    Each row of the model is printed as its table rows (report_model.TableRow,
+    the 29 October 2026 layout): the variable's own, then one for each further
+    value, part, period, side of a disagreement or variable shown under it.
+    The rule between a variable's own rows is faint, so they read as one.
     """
-    head = ["Variable", "Value", "Status", "Confidence", "Where"]
+    head = ["Variable", "Value", "Status", "Where"]
     data: list[list[object]] = [[Paragraph(h, styles["cell_head"]) for h in head]]
     bands: list[int] = []
     spans: list[int] = []
+    faint: list[int] = []
     for section in model.groups:
         if not section.rows:
             continue
@@ -349,16 +375,18 @@ def _variables(model: ReportModel, styles: dict) -> list:  # type: ignore[type-a
                 f' <font size="7.5" color="#555555">— {escape(section.group.plain.strip())}</font>'
             )
         band = Paragraph(band_text, styles["cell"])
-        data.append([band, "", "", "", ""])
-        prev = None
+        data.append([band, "", "", ""])
         for r in section.rows:
-            data.append(_row_cells(r, styles, scope_only=r.field_id == prev))
-            prev = r.field_id
+            for i, t in enumerate(r.table):
+                if i:
+                    faint.append(len(data) - 1)
+                data.append(_cells(t, styles))
             if r.visit_tables or r.visit_lines:
+                faint.append(len(data) - 1)
                 spans.append(len(data))
-                data.append([_visit_cell(r, styles), "", "", "", ""])
+                data.append([_visit_cell(r, styles), "", "", ""])
     table = _table(data, _MAIN_COLS)
-    extra = []
+    extra: list[tuple[Any, ...]] = [("LINEBELOW", (0, i), (-1, i), 0.3, _FAINT) for i in faint]
     for i in bands:
         extra += [
             ("SPAN", (0, i), (-1, i)),
@@ -368,6 +396,10 @@ def _variables(model: ReportModel, styles: dict) -> list:  # type: ignore[type-a
     extra += [("SPAN", (0, i), (-1, i)) for i in spans]
     table.setStyle(TableStyle(extra))
     return [Paragraph("All variables", styles["section"]), table]
+
+
+# The rule between the rows of one variable: faint, so they read as one.
+_FAINT = colors.HexColor("#ececec")
 
 
 # Period | Visit timing | Visits | Assessments | Key considerations | Where: the
@@ -413,90 +445,68 @@ def _schedules(model: ReportModel, styles: dict) -> list:  # type: ignore[type-a
         if s.budget_driver:
             title += ' <font size="7" color="#1565c0">BUDGET</font>'
         story.append(Paragraph(title, styles["group"]))
-        head = ["Applies to", "Value", "Status", "Confidence", "Where"]
+        head = ["Applies to", "Value", "Status", "Where"]
         data = [[Paragraph(h, styles["cell_head"]) for h in head]]
-        data += [_row_cells(r, styles, scope_only=True) for r in s.rows]
+        data += [_cells(t, styles) for r in s.rows for t in r.table]
         story.append(_table(data, _SCHEDULE_COLS))
     return story
 
 
-def _row_cells(r: Row, styles: dict, *, scope_only: bool) -> list[object]:  # type: ignore[type-arg]
+def _cells(t: TableRow, styles: dict) -> list[object]:  # type: ignore[type-arg]
+    """One table row: Variable | Value | Status | Where."""
     return [
-        Paragraph(_first_cell(r, scope_only), styles["cell"]),
-        _block_cell(r, styles) if r.block_lines else Paragraph(_value_cell(r), styles["cell"]),
-        Paragraph(_status_cell(r), styles["cell"]),
-        Paragraph(_confidence_cell(r), styles["cell"]),
-        Paragraph(_where_cell(r) + _where_notes(r), styles["cell_small"]),
+        _variable_cell(t, styles),
+        _value_cell(t, styles),
+        Paragraph(_status_text(t.status), styles["cell"]),
+        Paragraph(_where_text(t), styles["cell_small"]),
     ]
 
 
-def _where_notes(r: Row) -> str:
-    """The row's notes, in grey under its pages (Prompt B item 3, Angus Gray,
-    2026-10-13). Each is a report_wording sentence from config/fields.yaml."""
-    return "".join(
-        f'<br/><font size="7" color="#757575">{escape(note)}</font>' for note in r.where_notes
-    )
+def _variable_cell(t: TableRow, styles: dict) -> Paragraph:  # type: ignore[type-arg]
+    """The label in bold with the BUDGET tag; a part's sub-label in bold,
+    indented; a further value's scope in grey. A scope that is not the whole
+    study follows in grey."""
+    if t.kind == "label":
+        text = f"<b>{escape(t.variable)}</b>"
+        if t.budget:
+            text += ' <font size="6.5" color="#1565c0">BUDGET</font>'
+    elif t.kind == "part":
+        text = f"<b>{escape(t.variable)}</b>"
+    else:
+        text = f'<font color="#555555">{escape(t.variable)}</font>'
+    if t.scope:
+        text += f'<br/><font size="7.5" color="#555555">{escape(t.scope)}</font>'
+    return Paragraph(text, styles["cell"] if t.kind == "label" else styles["cell_part"])
 
 
-def _first_cell(r: Row, scope_only: bool) -> str:
-    # scope_only: a schedule row, or a further row of the variable just above it.
-    if scope_only:
-        # A row with no scope is drawn first (report_model._rows_for), so here it
-        # is only ever a schedule row, whose blank "Applies to" says the same.
-        return f'<font color="#555555">{escape(r.scope or "")}</font>'
-    text = escape(r.label)
-    if r.budget_driver:
-        text += ' <font size="6.5" color="#1565c0">BUDGET</font>'
-    if r.scope:
-        text += f'<br/><font size="7.5" color="#555555">{escape(r.scope)}</font>'
-    return text
-
-
-def _value_cell(r: Row) -> str:
-    # A row with block lines is drawn by _block_cell instead.
-    if r.parts:
-        return "<br/>".join(_part_block(p) for p in r.parts)
-    if r.follow_lines:
-        # Only some documents in the disagreement this row follows give it a
-        # value, and these sentences say which and what that means. The status
-        # cell names the disagreement (Row.depends_on).
-        return "<br/>".join(escape(t) for t in r.follow_lines)
-    if r.sides:
-        return _sides_cell(r)
-    body = _values_cell(r)
-    # A derived row's reasons and the pages they rest on, in place of the Where
-    # cell (fix 8 of the 2026-10-12 brief).
-    if r.why:
-        body += f"<br/>{escape(r.why)}"
-    if r.evidence_pages:
-        body += f'<br/><font size="7" color="#757575">{escape(r.evidence_pages)}</font>'
-    return body
-
-
-# One step of a block's indent: the width of the three spaces it used to be.
+# One step of a line's indent: the width of the three spaces it used to be.
 _INDENT = stringWidth("\xa0" * 3, "Helvetica", 8.5)
 # Where a `keep` line may break: after a comma, or after the dash of "Arm 1 —".
 _ITEM_BREAK = re.compile(r"(?<=,) |(?<= —) ")
 
 
-def _block_cell(r: Row, styles: dict) -> list[Paragraph]:  # type: ignore[type-arg]
-    """A group's block (fix 9 of the 2026-10-12 brief): the headline value, then
-    each line, indented as the report model says.
-
-    One paragraph per line, each indented by its own left margin, so a line
-    too long for the column carries on under its own first word rather than
-    at the column's edge (Prompt B item 3, Angus Gray, 2026-10-13).
-    """
+def _value_cell(t: TableRow, styles: dict) -> object:  # type: ignore[type-arg]
+    """Values only: the value lines, the lines kept in the cell (each indented
+    by its own left margin, under the value when there is one, so a line too
+    long for the column carries on under its own first word), then the red
+    line and the grey ones. Never a page reference: those are in Where."""
     cell = styles["cell"]
-    head = "; ".join(_value_text(v) for v in r.values)
-    out = [Paragraph(head, cell)]
-    for t in r.block_lines:
-        indent = _INDENT * (1 + t.indent)
-        style = ParagraphStyle(f"block{t.indent}", parent=cell, leftIndent=indent)
+    out: list[Paragraph] = []
+    if t.values:
+        out.append(Paragraph("<br/>".join(escape(v) for v in t.values), cell))
+    for line in t.lines:
+        indent = _INDENT * (line.indent + (1 if t.values else 0))
+        style = ParagraphStyle(f"line{indent:.1f}", parent=cell, leftIndent=indent)
         width = _MAIN_COLS[1] - 8 - indent  # less the cell's 4-point padding each side
-        text = _kept(t.text, width, cell) if t.keep else escape(t.text)
+        text = _kept(line.text, width, cell) if line.keep else escape(line.text)
         out.append(Paragraph(text, style))
-    return out
+    if t.alert:
+        out.append(Paragraph(f'<font color="{_RED.hexval()}">{escape(t.alert)}</font>', cell))
+    for g in t.grey:
+        out.append(Paragraph(f'<font size="7.5" color="#757575">{escape(g)}</font>', cell))
+    if not out:
+        return Paragraph("", cell)
+    return out[0] if len(out) == 1 else out
 
 
 def _kept(text: str, width: float, style: ParagraphStyle) -> str:
@@ -511,152 +521,32 @@ def _kept(text: str, width: float, style: ParagraphStyle) -> str:
     )
 
 
-def _part_block(p: Row) -> str:
-    """One part of a `scopes` display: its heading, then its lines indented.
-
-    A part with one value and no disagreement names its pages in the heading,
-    "Time each patient spends in the study (Amendment p.47):", because the row's
-    Where cell cannot hold different pages for different parts.
-    """
-    head = escape(p.heading) if p.heading else ""
-    one = not p.sides and not p.follow_lines and len(p.values) == 1
-    if head and one and p.values[0].sources:
-        head += f" ({escape(p.values[0].sources)})"
-    body = _value_cell(p)
-    if one and p.values[0].sources and not head:
-        body += f' <font size="7" color="#757575">— {escape(p.values[0].sources)}</font>'
-    indent = "&nbsp;&nbsp;&nbsp;"
-    lines = [indent + line for line in body.split("<br/>")]
-    return "<br/>".join(([f"<b>{head}:</b>"] if head else []) + lines)
+def _status_text(word: str) -> str:
+    """"Confirmed" in green or "Review" in amber; nothing for a line with no
+    status of its own."""
+    if not word:
+        return ""
+    color = _STATUS_COLORS.get(word, _GREY)
+    return f'<font color="{color.hexval()}"><b>{escape(word)}</b></font>'
 
 
-def _sides_cell(r: Row) -> str:
-    """A row's own numbered disagreement: each document's side, then the value
-    shown or that none was chosen. Fix 2 of the 2026-10-12 brief. Any value on
-    the row that is not from the disagreement is printed first, with its pages."""
-    others = [v for v in r.values if not v.on_sides]
-    lines = [
-        _value_text(v) + (f' <font size="7" color="#757575">— {escape(v.sources)}</font>'
-                          if v.sources else "")
-        for v in others
-    ]
-    for side in r.sides:
-        line = f"{escape(side.sources)}: {escape(side.text)}"
-        if side.quote:
-            line += f' — "{escape(side.quote)}"' + ("…" if side.quote_cut else "")
-        lines.append(line)
-    if r.decision_line:
-        lines.append(f'<font color="{_RED.hexval()}">{escape(r.decision_line)}</font>')
-    return "<br/>".join(lines)
+def _where_text(t: TableRow) -> str:
+    """The pages, then each note in grey under them (Prompt B item 3, Angus
+    Gray, 2026-10-13, and 29 October 2026): what one document alone states,
+    that other wordings are in Appendix A, that the tool counted the value,
+    and why a row is for review."""
+    notes = [f'<font size="7" color="#757575">{escape(note)}</font>' for note in t.notes]
+    return "<br/>".join(([escape(t.where)] if t.where else []) + notes)
 
 
 def _value_text(v: ValueLine) -> str:
     if len(v.items) > 1 and any(len(i) > 40 for i in v.items):
         return "<br/>".join(f"• {escape(i)}" for i in v.items)
     if len(v.items) > 1:
-        # Short items — enum lists such as the evidence of visit intensity —
-        # read fine as one line, and a bullet each took up to eleven lines.
+        # Short items read fine as one line, and a bullet each took up to
+        # eleven lines.
         return escape(", ".join(v.items))
     return escape(v.items[0])
-
-
-def _values_cell(r: Row) -> str:
-    multi = len(r.values) > 1
-    parts = []
-    for v in r.values:
-        text = _value_text(v)
-        if multi and v.status != r.status:
-            word, color = _STATUS_WORDS.get(v.status, (v.status, _GREY))
-            text += f' <font size="7" color="{color.hexval()}">({word.lower()})</font>'
-        parts.append(text)
-    if multi:
-        # Each value carries its own pages, since they differ from value to value.
-        parts = [
-            p + (f' <font size="7" color="#757575">— {escape(v.sources)}</font>'
-                 if v.sources else "")
-            for p, v in zip(parts, r.values, strict=True)
-        ]
-    body = "<br/>".join(parts)
-    if r.decision_no is not None:
-        # A row that borrowed another variable's disagreement names it, because
-        # the Disagreements table describes that other variable's values and a
-        # reader sent there by a bare "Sources disagree" finds nothing about this
-        # row. See Row.follows_label in render/report_model.py.
-        what = f" on {escape(r.follows_label)}" if r.follows_label else ""
-        body += (
-            f'<br/><font size="7" color="{_RED.hexval()}">The documents disagree'
-            f"{what} — see Disagreement {r.decision_no}</font>"
-        )
-    elif r.folded:
-        n = len(r.folded)
-        body += (
-            f'<br/><font size="7" color="#757575">{n} other wording{"s" if n != 1 else ""} '
-            "in the documents; checked, not a conflict. Each is quoted in Appendix A.</font>"
-        )
-    elif r.verdict == "not_a_conflict" and multi:
-        body += (
-            '<br/><font size="7" color="#757575">'
-            "Worded differently; checked, not a conflict.</font>"
-        )
-    elif r.verdict == "reconcilable":
-        # One value line, because ADJUDICATE chose which record to show. Saying
-        # so is what stops the row looking like the only wording in the
-        # documents; the others are printed in Appendix B.
-        body += (
-            '<br/><font size="7" color="#757575">'
-            "Worded differently; checked, the same answer — see Appendix B.</font>"
-        )
-    return body
-
-
-def _status_cell(r: Row) -> str:
-    if r.depends_on is not None:
-        word, color = r.depends_on, _RED
-    elif r.decision_no is not None:
-        word, color = "Disagreement", _RED
-    elif r.derived_status is not None:
-        word, color = r.derived_status, _AMBER
-    else:
-        word, color = _STATUS_WORDS.get(r.status, (r.status, _GREY))
-    return f'<font color="{color.hexval()}"><b>{escape(word)}</b></font>'
-
-
-def _confidence_cell(r: Row) -> str:
-    """The lowest confidence among the row's values, on every row that has one.
-
-    The lowest rather than an average: merging entries must never make a row look
-    more certain than its least certain value. Printed amber below
-    CONFIDENCE_CONFIRMED, which is the figure GATE uses to decide between
-    confirming a value and sending it for review, so the colour and the status
-    word in the cell to its left can never tell different stories.
-    """
-    scored = _scored(r)
-    # no_figure: a row of the tool's own counting (Prompt C) has no rating.
-    if r.is_pointer or r.no_figure or not scored:
-        return ""
-    low = min(scored)
-    color = _GREY if low >= CONFIDENCE_CONFIRMED else _AMBER
-    return f'<font color="{color.hexval()}">{low:.0%}</font>'
-
-
-def _scored(r: Row) -> list[float]:
-    """The confidences a row's figure is the lowest of. A disagreement where no
-    value was chosen has no value to rate, so its "—" is not scored: Angus Gray
-    read the 0% printed there as a rating (2026-10-12). For the same reason a
-    `scopes` row with such a part has no figure: the other parts' figure, printed
-    beside the word Disagreement, would read as the disagreement's."""
-    if r.parts:
-        if any(p.sides and not _scored(p) for p in r.parts):
-            return []
-        return [c for p in r.parts for c in _scored(p)]
-    # A block holding such a disagreement has no figure either; otherwise its
-    # figure is its headline value's.
-    if any(m.sides and not _scored(m) for m in r.members):
-        return []
-    return [
-        v.confidence for v in r.values
-        if v.status != "not_found" and not (v.on_sides and v.text == "—")
-    ]
 
 
 # --------------------------------------------------------------------------- #
@@ -671,33 +561,37 @@ def _flagged(model: ReportModel, styles: dict) -> list:  # type: ignore[type-arg
     replaying the rules in rfp_intake/gate/__init__.py. Before 2026-09-30 this
     section printed variable names only, under the heading "Also check", with no
     value, no confidence and no reason — four different reasons for being flagged
-    looked identical to a reader.
+    looked identical to a reader. The Confidence column went on 29 October 2026,
+    with the figure everywhere else.
     """
     rows = model.review_rows()
     story: list[object] = [Paragraph("Flagged for review", styles["section"])]
     if not rows:
         story.append(Paragraph("No other values need review.", styles["body"]))
         return story
+    # What each reason means, for the reasons these rows give only: the list
+    # explained a reason no row used and left out one two rows used
+    # (report-usability-reviewer, 23 November 2026, on run6).
+    given = {reason for r in rows for reason in r.reasons}
+    meanings = [
+        text for reason, text in _REASON_MEANINGS
+        if any(g.startswith(reason[:24]) for g in given)
+    ]
     story.append(Paragraph(
         "The documents do not contradict each other on these; each is here for the reason in the "
         "<b>Why it is flagged</b> column. A value stays flagged until a person confirms it — the "
-        "tool never clears one by itself. What the reasons mean: "
-        "<b>budget driver holding more than one value</b> — which of them belongs in a budget is a "
-        "person's judgement, so the tool will not pick; "
-        "<b>budget driver, the documents word it differently</b> — the reviewer judged the "
-        "wordings not to disagree, and a person still confirms that; "
-        "<b>confidence below "
-        f"{CONFIDENCE_CONFIRMED:.0%}</b> — read the quoted passage in Appendix A before using it.",
+        "tool never clears one by itself."
+        + (" What the reasons mean: " + "; ".join(meanings) + "." if meanings else ""),
         styles["body"],
     ))
     story.append(Spacer(1, 3))
-    head = ["Variable", "Value", "Confidence", "Why it is flagged", "Where"]
+    head = ["Variable", "Value", "Why it is flagged", "Where"]
     data: list[list[object]] = [[Paragraph(h, styles["cell_head"]) for h in head]]
     for r in rows:
         label = escape(r.label)
         if r.budget_driver:
             label += ' <font size="6.5" color="#1565c0">BUDGET</font>'
-        if r.scope:
+        if r.scope and not _whole_study(r.scope):
             label += f'<br/><font size="7.5" color="#555555">{escape(r.scope)}</font>'
         value = (
             r.review_text if r.review_text is not None
@@ -709,12 +603,34 @@ def _flagged(model: ReportModel, styles: dict) -> list:  # type: ignore[type-arg
         data.append([
             Paragraph(label, styles["cell"]),
             Paragraph(escape(value), styles["cell"]),
-            Paragraph(_confidence_cell(r), styles["cell"]),
             Paragraph(why, styles["cell"]),
-            Paragraph(_where_cell(r) or escape(r.values[0].sources), styles["cell_small"]),
+            Paragraph(escape(_flagged_pages(r)), styles["cell_small"]),
         ])
     story.append(_table(data, _FLAGGED_COLS))
     return story
+
+
+# Each review reason Flagged for review can give, and what it means for the
+# reader; the introduction explains those its rows give.
+_REASON_MEANINGS = [
+    (REASON_MANY_VALUES, "<b>budget driver holding more than one value</b> — which of them "
+     "belongs in a budget is a person's judgement, so the tool will not pick"),
+    (REASON_DISMISSED_DISAGREEMENT, "<b>budget driver, the passages differ, but the tool's "
+     "check found no contradiction</b> — Appendix B gives the tool's reasoning, and a person "
+     "still confirms the value before it goes in the budget"),
+    (REASON_LOW_CONFIDENCE, "<b>the document does not state it clearly</b> — read the quoted "
+     "passage in Appendix A before using it"),
+    (REASON_DERIVED, "<b>worked out by the tool</b> — the tool counted or worked the value out "
+     "from what the documents give, and shows its working under the variable"),
+]
+
+
+def _flagged_pages(r: Row) -> str:
+    """A flagged row's pages: the pages its follow sentences rest on, or each
+    value's pages, once each."""
+    if r.follow_pages:
+        return r.follow_pages
+    return "; ".join(dict.fromkeys(v.sources for v in r.values if v.sources))
 
 
 # --------------------------------------------------------------------------- #
@@ -741,23 +657,14 @@ def _glossary(model: ReportModel, styles: dict) -> list:  # type: ignore[type-ar
     return [
         Paragraph("Words used in this report", styles["section"]),
         Paragraph(
-            "Written for a reader without a clinical background. The wording lives in "
-            "config/fields.yaml and can be corrected there.",
+            # Most, not each: a variable is listed only where config/fields.yaml gives it a
+            # `plain` paragraph, 28 of the 42 (plan-conformance-reviewer, 23 November 2026).
+            "What most variables mean, in plain words, then the abbreviations used in this report.",
             styles["meta"],
         ),
         Spacer(1, 3),
         _table(data, _GLOSSARY_COLS),
     ]
-
-
-def _where_cell(r: Row) -> str:
-    # With several values, each carries its own pages inline in the value cell,
-    # and so does each side of a disagreement, each part of a `scopes` display
-    # and a row following another variable's disagreement.
-    # A derived row with its reasons names its pages under them.
-    if len(r.values) != 1 or r.parts or r.sides or r.follow_lines or r.evidence_pages:
-        return ""
-    return escape(r.values[0].sources)
 
 
 class _Table(Table):  # type: ignore[misc]
@@ -832,12 +739,16 @@ def _evidence_appendix(model: ReportModel, styles: dict) -> list:  # type: ignor
             head = f"[{escape(e.scope)}] " + head
         # A passage under a list printed once just above has no value of its
         # own, so no dash leads to its pages (Prompt B item 8(d)).
-        cited = f"{escape(e.sources)}, {e.confidence:.0%}"
+        # No confidence figure since 29 October 2026 (rule 13 of that layout).
+        cited = escape(e.sources)
         if e.value:
             cited = "— " + cited
         head = head.strip()
         line = f"• {head + ' ' if head else ''}<font color=\"#757575\">{cited}</font>"
         if e.quote:
+            # Where the line cites several pages, the one the quote is from.
+            if e.quote_from:
+                line += f'<font color="#757575">; quote from {escape(e.quote_from)}</font>'
             line += f': <i>"{escape(e.quote)}"</i>'
         if e.derived_from:
             line += f" <font color=\"#757575\">Derived from {escape(', '.join(e.derived_from))}"
@@ -906,12 +817,14 @@ def _removed_appendix(model: ReportModel, styles: dict) -> list:  # type: ignore
     if not model.removed:
         return []
     story: list[object] = [
+        # Never the heading alone at the foot of a page.
+        CondPageBreak(1.5 * inch),
         Paragraph("Appendix C — Text read as describing a different study", styles["section"]),
         Paragraph(
             "A protocol often describes earlier studies of the same drug. A number taken "
             "from one of those is a wrong number, so these passages were not read when the "
             "variables above were extracted. Each says where it is in the documents, so it "
-            "can be checked. The full text of each is in extraction.json.",
+            "can be checked. The full text of each is kept with the run.",
             styles["meta"],
         ),
     ]

@@ -25,7 +25,18 @@ class FieldExtractionItem(BaseModel):
     status: Literal["found", "not_specified"] = "found"
     confidence: float = Field(ge=0.0, le=1.0)
     scope: str | None = Field(default=None, description="e.g. 'total', 'cohort:A', 'country:DE'")
-    page: int = Field(description="1-indexed page number within the excerpt")
+    # The page the quote is on, as the excerpt's "--- Page N ---" marker above it
+    # numbers it. Until 2026-11-23 this said "1-indexed page number within the
+    # excerpt", and Claude Opus 5 did what it said: it counted pages from the start
+    # of the excerpt, so a quote on page 98 came back as page 4 and every record
+    # outside the window was rejected (run r-20261123-opus5-base, 22 errors).
+    page: int = Field(
+        description=(
+            "The page number N from the '--- Page N ---' marker above the text the quote "
+            "is copied from: the page's number in the document, not its position in "
+            "the excerpt."
+        )
+    )
     notes: str | None = None
 
     @field_validator("raw_value", mode="before")
@@ -65,27 +76,53 @@ def _build_field_description(field_def: FieldDef) -> str:
     return " | ".join(parts)
 
 
+def asked_in(field_def: FieldDef, doc_kind: str | None) -> bool:
+    """Whether EXTRACT asks for this field in a document of `doc_kind`: its
+    `only_from` in config/fields.yaml lists the kind, or is empty. A document
+    CLASSIFY could not label (no kind) is asked for every field, so a failed
+    classification never leaves a field unread (docs/ARCHITECTURE.md §4.2;
+    pipeline-rules-reviewer, 23 November 2026)."""
+    return doc_kind is None or not field_def.only_from or doc_kind in field_def.only_from
+
+
+def fields_to_extract(
+    group_id: str, registry: Registry, doc_kind: str | None = None,
+) -> list[FieldDef]:
+    """The group's fields one extraction call asks for: every field that is not
+    derived, less those whose `only_from` leaves out `doc_kind`. With no kind,
+    every field that is not derived. The prompt's field list and the response
+    schema are both built from this list, so the two always agree."""
+    return [
+        f for f in registry.get_fields_for_group(group_id)
+        if not f.derived and asked_in(f, doc_kind)
+    ]
+
+
 _model_cache: dict[str, type[BaseModel]] = {}
 
 
-def build_extraction_model(group_id: str, registry: Registry | None = None) -> type[BaseModel]:
+def build_extraction_model(
+    group_id: str, registry: Registry | None = None, doc_kind: str | None = None,
+) -> type[BaseModel]:
     """Generate a Pydantic model for extracting fields in the given group.
 
     Each non-derived field becomes an optional list of FieldExtractionItem
-    (list because scoped fields may emit multiple records per field).
+    (list because scoped fields may emit multiple records per field). With
+    `doc_kind`, a field whose `only_from` leaves that kind out is not in the
+    model, so the response schema of a call on that document cannot ask for it.
     """
     if registry is None:
         registry = get_registry()
 
-    cache_key = f"{group_id}:{registry.registry_version}"
-    if cache_key in _model_cache:
-        return _model_cache[cache_key]
-
     registry.get_group(group_id)  # validate group exists
 
-    fields_in_group = [
-        f for f in registry.get_fields_for_group(group_id) if not f.derived
-    ]
+    fields_in_group = fields_to_extract(group_id, registry, doc_kind)
+
+    cache_key = (
+        f"{group_id}:{registry.registry_version}:{','.join(f.id for f in fields_in_group)}"
+    )
+    if cache_key in _model_cache:
+        return _model_cache[cache_key]
 
     field_definitions: dict[str, Any] = {}
     for field_def in fields_in_group:

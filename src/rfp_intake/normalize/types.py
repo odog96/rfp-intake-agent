@@ -36,12 +36,29 @@ _TRAILING_JUNK = re.compile(
     r"\s*(sites?|subjects?|patients?|centres?|centers?|pages?|visits?|months?|weeks?|days?|years?).*$",
     re.IGNORECASE,
 )
+# A parenthetical with no parenthetical inside it, removed innermost first.
+_PARENTHETICAL = re.compile(r"\([^()]*\)")
+# A letter with a digit somewhere after it: words, then a second figure.
+_WORDS_THEN_DIGITS = re.compile(r"[^\W\d_].*\d", re.DOTALL)
+# A whole number at the start, with or without thousands commas, and the rest.
+_LEADING_WHOLE = re.compile(r"(\d{1,3}(?:,\d{3})+|\d+)(.*)", re.DOTALL)
+# What may follow it: words, spaces and the punctuation of a sentence. No
+# digit, and no sign such as % or + that would make it another quantity.
+_WORDS_ONLY = re.compile(r"(?:[^\W\d_]+|[\s.,;:'\"’/&–—-]+)+")
 
 
 def normalize_int(raw: str) -> int | None:
     """Parse an integer from clinical text.
 
-    Handles: "40", "forty (40)", "~120", "approximately 75", "forty".
+    Handles: "40", "forty (40)", "~120", "approximately 75", "forty", and a
+    leading whole number followed only by words ("20,800 CRF pages total") or
+    by a parenthetical, which may hold digits ("260 (130 per arm)").
+
+    Words followed by a second figure outside any parenthetical give None,
+    because the text states two numbers and this function cannot know which is
+    the count: "10 visits per site for a total of 750 visits" is not 10.
+    NORMALIZE then keeps the document's words as the value (CLAUDE.md open
+    item 10, 2026-10-19; changed 2026-11-23).
     """
     raw = raw.strip()
     if not raw:
@@ -52,8 +69,21 @@ def normalize_int(raw: str) -> int | None:
     if m:
         return int(m.group(1))
 
-    # Strip approximate prefixes and trailing unit words
+    # Strip approximate prefixes
     cleaned = _APPROX_PREFIX.sub("", raw)
+
+    outside = _outside_parentheticals(cleaned)
+    if _WORDS_THEN_DIGITS.search(outside):
+        return None
+
+    # A whole number, then only words or parentheticals: "20,800 CRF pages
+    # total", "260 (130 per arm)". The number must end at a space or a bracket,
+    # so "200-260", "1.5" and "10/site" are not read this way.
+    lead = _LEADING_WHOLE.fullmatch(cleaned)
+    if lead and _only_words(lead.group(2)):
+        return int(lead.group(1).replace(",", ""))
+
+    # Strip trailing unit words
     cleaned = _TRAILING_JUNK.sub("", cleaned).strip()
 
     # Try direct integer parse
@@ -76,6 +106,28 @@ def normalize_int(raw: str) -> int | None:
         pass
 
     return None
+
+
+def _outside_parentheticals(text: str) -> str:
+    """The text with every balanced parenthetical removed, nested ones too."""
+    while True:
+        shorter = _PARENTHETICAL.sub(" ", text)
+        if shorter == text:
+            return text
+        text = shorter
+
+
+def _only_words(tail: str) -> bool:
+    """Whether what follows a leading number is words, parentheticals, or both.
+
+    It must start with a space or an opening bracket, hold something, and,
+    outside its parentheticals, hold no digit and nothing but words, spaces and
+    sentence punctuation.
+    """
+    if not tail.strip() or not (tail[0].isspace() or tail[0] == "("):
+        return False
+    outside = _outside_parentheticals(tail)
+    return _WORDS_ONLY.fullmatch(outside) is not None if outside.strip() else True
 
 
 def normalize_enum(raw: str, allowed_values: list[str]) -> str | None:
@@ -129,10 +181,31 @@ def normalize_text(raw: str) -> str:
     return text
 
 
+# A length written as one hyphenated word, the whole of a value: "28-day",
+# "14-21-day", "24-month". The patient timeline's hint asks for "28 days", and
+# the model still wrote "28-day" for "a 28-day Screening period" (Amendment
+# p.47, run r-20261123-oct29-run3), so the same length read two ways.
+_HYPHENATED_AMOUNT = re.compile(
+    r"^(\d+(?:\.\d+)?(?:\s*(?:-|–|to)\s*\d+(?:\.\d+)?)?)-(hour|day|week|month|year)s?$",
+    re.IGNORECASE,
+)
+
+
+def amount_words(text: str) -> str:
+    """A length written as one hyphenated word, as a number and a unit: "28-day"
+    gives "28 days", "1-week" gives "1 week". Any other text is returned as it is."""
+    m = _HYPHENATED_AMOUNT.match(text)
+    if m is None:
+        return text
+    n, unit = m.group(1), m.group(2).lower()
+    return f"{n} {unit}" if n == "1" else f"{n} {unit}s"
+
+
 def normalize_entry(raw: str, keys: list[EntryKey]) -> dict[str, Any] | None:
     """One `object[]` entry, the JSON object EXTRACT validated, with its keys in
     `schema` order: an int key as an int, an enum key as its allowed value, text
-    with its whitespace collapsed. A key stated empty, or one that does not
+    with its whitespace collapsed and a length written as one hyphenated word
+    as a number and a unit (`amount_words`). A key stated empty, or one that does not
     normalize, is left out, so a missing key and an unstated one read the same.
     None when `raw` is not a JSON object. Added 2026-10-12, fix 1 of that day's
     brief.
@@ -156,7 +229,7 @@ def normalize_entry(raw: str, keys: list[EntryKey]) -> dict[str, Any] | None:
         elif key.type == "enum":
             normalized = normalize_enum(text, key.values)
         else:
-            normalized = normalize_text(text) or None
+            normalized = amount_words(normalize_text(text)) or None
         if normalized is not None:
             entry[key.name] = normalized
     return entry

@@ -363,7 +363,11 @@ def _registry_labels() -> set[str]:
     try:
         from rfp_intake.domain.registry import get_registry
 
-        return {f.label for f in get_registry().fields}
+        # A variable printed under another's row (`shown_under`) labels a sub-row of
+        # that row, not a variable of its own.
+        return {
+            f.label for f in get_registry().fields if not getattr(f, "shown_under", None)
+        }
     except Exception:  # pragma: no cover - a broken registry is check 10's problem
         return set()
 

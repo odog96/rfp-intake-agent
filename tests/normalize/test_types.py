@@ -6,6 +6,7 @@ import pytest
 
 from rfp_intake.domain.registry import parse_entry_key
 from rfp_intake.normalize.types import (
+    amount_words,
     normalize_bool,
     normalize_entry,
     normalize_enum,
@@ -55,6 +56,70 @@ class TestNormalizeInt:
         "", "  ", "unknown", "N/A", "not specified",
     ])
     def test_invalid(self, raw: str) -> None:
+        assert normalize_int(raw) is None
+
+    # CLAUDE.md open item 10 (2026-10-19): a leading whole number followed only
+    # by words with no digits, or by a parenthetical, which may hold digits.
+    @pytest.mark.parametrize("raw,expected", [
+        ("20,800 CRF pages total", 20800),
+        ("Approximately 20,800 CRF pages total.", 20800),
+        ("20800", 20800),
+        ("260 (130 per arm)", 260),
+        ("260 (130 per arm), randomized", 260),
+        ("approximately 260 subjects (130 per arm, randomized 1:1)", 260),
+        ("260 patients (130 per arm)", 260),
+        ("260 randomized", 260),
+        ("260 total", 260),
+        ("3 (three)", 3),
+        ("75 sites (US & EU)", 75),
+        ("52 weeks (1 year)", 52),
+        ("260 subjects — randomized", 260),
+    ])
+    def test_a_number_followed_by_words_or_a_parenthetical(
+        self, raw: str, expected: int,
+    ) -> None:
+        assert normalize_int(raw) == expected
+
+    # What it accepted before the change and still accepts.
+    @pytest.mark.parametrize("raw,expected", [
+        ("approximately 260", 260),
+        ("up to 40 sites", 40),
+        ("about 30 sites across Europe", 30),
+        ("1,000,000", 1000000),
+        ("1 000", 1000),
+        ("120.0", 120),
+        ("120.0 sites", 120),
+        ("0", 0),
+        ("-5", -5),
+        ("forty (40)", 40),
+    ])
+    def test_still_accepted(self, raw: str, expected: int) -> None:
+        assert normalize_int(raw) == expected
+
+    @pytest.mark.parametrize("raw", [
+        # Words, then a second figure outside a parenthetical: two numbers.
+        "10 visits per site for a total of 750 visits",
+        "40 sites in 5 countries",
+        "forty sites in 5 countries",
+        "260 (130 per arm) randomised 1:1",
+        "260 subjects (130 per arm), 236 evaluable",
+        "10 to 12",
+        "10 or 12",
+        # A range, a fraction, a share, a rate: no whole count.
+        "200-260",
+        "200 - 260",
+        "1.5",
+        "1.5 years",
+        "40 %",
+        "10/site",
+        "260 + 20",
+        # Not a number followed by words or a whole parenthetical.
+        "260 (130 per arm",
+        "260pts",
+        "N=260",
+        "Total: 260",
+    ])
+    def test_still_none(self, raw: str) -> None:
         assert normalize_int(raw) is None
 
 
@@ -181,9 +246,35 @@ _ENTRY_KEYS = [
     ("{}", {}),
     ("not json", None),
     ('["a"]', None),
+    # A length written as one hyphenated word reads as a number and a unit.
+    ('{"name": "28-day"}', {"name": "28 days"}),
+    ('{"name": "28-day Screening period"}', {"name": "28-day Screening period"}),
 ])
 def test_normalize_entry(raw: str, expected: dict[str, object] | None) -> None:
     out = normalize_entry(raw, _ENTRY_KEYS)
     assert out == expected
     if out is not None:
         assert list(out) == [k.name for k in _ENTRY_KEYS if k.name in out]
+
+
+@pytest.mark.parametrize(("text", "expected"), [
+    ("28-day", "28 days"),
+    ("28-Day", "28 days"),
+    ("24-month", "24 months"),
+    ("1-week", "1 week"),
+    ("1.5-year", "1.5 years"),
+    ("14-21-day", "14-21 days"),
+    ("14–21-day", "14–21 days"),
+    ("6-hours", "6 hours"),
+    # Anything but a whole hyphenated length is left as it is.
+    ("28 days", "28 days"),
+    ("14-21 days", "14-21 days"),
+    ("a 28-day period", "a 28-day period"),
+    ("28-day Screening period", "28-day Screening period"),
+    ("Day -28", "Day -28"),
+    ("Month 1-Day 1", "Month 1-Day 1"),
+    ("28-dayish", "28-dayish"),
+    ("", ""),
+])
+def test_amount_words(text: str, expected: str) -> None:
+    assert amount_words(text) == expected

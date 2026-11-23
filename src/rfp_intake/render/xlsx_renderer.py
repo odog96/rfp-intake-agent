@@ -1,11 +1,15 @@
 """report.xlsx — spreadsheet renderer alongside the primary JSON/PDF outputs.
 Pure function returning bytes; no filesystem access. See ARCHITECTURE.md §4.10.
 
-One row per field: Group | Variable | Value | Status | Confidence |
-Source Doc | Page | Quote | Contradiction, conditional-formatted
-red/amber/green/grey, plus a Review Queue sheet (non-confirmed rows,
-budget drivers first), and a Schedule of Events sheet with the visit table
-report.pdf prints (Prompt C).
+One row per field: Group | Variable | Value | Status | Source Doc | Page |
+Quote | Contradiction, conditional-formatted red/amber/green/grey, plus a
+Review Queue sheet (the rows whose status is Review, budget drivers first), and
+a Schedule of Events sheet with the visit table report.pdf prints (Prompt C).
+
+Since 29 October 2026 the workbook prints no confidence figure and the same two
+status words as report.pdf, "Confirmed" and "Review" (Angus Gray: the
+confidence "doesn't add much"); the value says "Not found in the documents",
+"Not specified" or "N/A" as the PDF does, so the three stay apart (rule 3).
 """
 
 from __future__ import annotations
@@ -20,10 +24,16 @@ from openpyxl.worksheet.worksheet import Worksheet
 
 from rfp_intake.domain.registry import FieldDef, Registry, ReportWording
 from rfp_intake.domain.schemas import ResolvedField, RunState
-from rfp_intake.render.report_model import VisitSchedule, report_entries, visit_schedule
+from rfp_intake.render.report_model import (
+    STATUS_REVIEW,
+    VisitSchedule,
+    report_entries,
+    status_word,
+    visit_schedule,
+)
 
 _HEADERS = [
-    "Group", "Variable", "Value", "Status", "Confidence",
+    "Group", "Variable", "Value", "Status",
     "Source Doc", "Page", "Quote", "Contradiction",
 ]
 
@@ -32,7 +42,7 @@ _FILL_NEEDS_REVIEW = PatternFill("solid", fgColor="FFE0B2")  # amber
 _FILL_CONFLICT = PatternFill("solid", fgColor="FFCDD2")   # red
 _FILL_NOT_FOUND = PatternFill("solid", fgColor="E0E0E0")   # grey
 
-_COLUMN_WIDTHS = [20, 32, 24, 14, 12, 20, 6, 50, 40]
+_COLUMN_WIDTHS = [20, 32, 24, 12, 20, 6, 50, 40]
 # Period | Visit timing | Visits | Assessments | Key considerations | Where
 _SCHEDULE_WIDTHS = [30, 34, 18, 14, 44, 40]
 
@@ -85,15 +95,25 @@ def _row_values(
     return [
         group,
         f"{label} [{rf.scope}]" if rf.scope else label,
-        # A question a rule says does not arise reads as the PDF reads it ("N/A").
-        wording.not_applicable if rf.status == "not_applicable" else _excel_safe(rf.value),
-        rf.status,
-        round(rf.confidence, 2),
+        _value(rf, wording),
+        status_word(rf.status),
         source.doc_id if source else "",
         source.page if source else "",
         rf.quote or "",
         contradiction_text,
     ]
+
+
+def _value(rf: ResolvedField, wording: ReportWording) -> Any:
+    """The value as report.pdf words it where the value is a terminal state:
+    "Not found in the documents", "Not specified" and "N/A" (rule 3)."""
+    if rf.status == "not_applicable":
+        return wording.not_applicable
+    if rf.status == "not_found":
+        return wording.not_found
+    if rf.status == "not_specified" and rf.value is None:
+        return "Not specified"
+    return _excel_safe(rf.value)
 
 
 def _write_sheet(
@@ -132,8 +152,9 @@ def build_report_xlsx(state: RunState, registry: Registry) -> bytes:
     _write_sheet(fields_ws, all_rows, registry.report_wording)
 
     review_rows = sorted(
-        # A question a rule says does not arise is settled, not waiting for review.
-        (row for row in all_rows if row[0].status not in ("confirmed", "not_applicable")),
+        # The rows report.pdf marks Review: a document saying it does not specify
+        # a value, or a rule saying the question does not arise, is settled.
+        (row for row in all_rows if status_word(row[0].status) == STATUS_REVIEW),
         key=lambda row: row[0].field_id not in budget_drivers,  # False (budget driver) sorts first
     )
     review_ws = wb.create_sheet("Review Queue")

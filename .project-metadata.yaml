@@ -25,7 +25,7 @@ environment_variables:
     description: >-
       An AWS Bedrock API key, used only while config/models.yaml routes a step
       to Bedrock. Required for a first evaluation, because config/models.yaml
-      ships pointing at Claude Sonnet 4.6 on Bedrock. Your AWS account also
+      ships pointing at Claude Opus 5 on Bedrock. Your AWS account also
       needs model access granted for that model in the Bedrock console, which
       is a separate approval and can take a day. Leave empty for a production
       deployment on Cloudera AI Inference.

@@ -5,6 +5,7 @@ from __future__ import annotations
 import structlog
 from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
 
+from rfp_intake.domain.dynamic import fields_to_extract
 from rfp_intake.domain.registry import FieldDef, Registry
 from rfp_intake.domain.schemas import Document, ExtractionTask, Section, TableData
 from rfp_intake.extract.validate import comparable_text
@@ -19,6 +20,8 @@ RULES
 - Return a record ONLY if the document states it. Never infer, never estimate, never use \
 outside knowledge.
 - `quote` must be copied character-for-character from the excerpt. It is validated.
+- `page` is the number N in the "--- Page N ---" marker above the text you quote (the \
+document's own page number), never a count of pages from the start of the excerpt.
 - Set status="not_specified" only where the passage you quote itself says the item does not \
 apply, will not be done, or is none. A document that simply does not mention the item is \
 not "not specified": omit the field.
@@ -64,7 +67,10 @@ def build_extract_prompt(
 ) -> list[BaseMessage]:
     """Build the extraction prompt messages for a single task."""
     group = registry.get_group(task.group)
-    fields = [f for f in registry.get_fields_for_group(task.group) if not f.derived]
+    # A field whose `only_from` leaves out this kind of document is not asked
+    # for; the response schema leaves it out the same way (extract/__init__.py).
+    # A document CLASSIFY could not label is asked for every field.
+    fields = fields_to_extract(task.group, registry, doc.kind)
 
     # System message
     fields_section = _render_fields_section(fields)

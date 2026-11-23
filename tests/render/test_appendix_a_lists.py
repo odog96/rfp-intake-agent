@@ -5,7 +5,9 @@
   all: that line ran over pages 10-11 and 14 of report-oct-13-v2.pdf.
 - A list with a passage for each page prints the list once, then the passages,
   each with no value of its own: report-oct-13-v2.pdf printed the full visit
-  intensity list beside each of its 36 passages.
+  intensity list beside each of its 36 passages. The visit intensity rows are
+  gone since 29 October 2026, so the list here is the factors driving
+  unblinded monitoring, another list of values with a passage for each page.
 
 Every state here goes through `assert_nothing_lost` (in `_report`).
 """
@@ -30,14 +32,19 @@ def _real_registry(fields_yaml_path) -> None:  # type: ignore[no-untyped-def]
     get_registry.cache_clear()
 
 
-_F = "visits.intensity_evidence"
+_F = "monitoring.unblinded_factors"
+_LIST = (
+    "Study drug accountability; Separate blinded and unblinded staff; Drug preparation requirements"
+)
 
 
-def _intensity() -> list[FieldRecord]:
+def _factors() -> list[FieldRecord]:
     return [
-        _rec(_F, "imaging", None, AM, 13, "MRI of the heart at baseline and week 24"),
-        _rec(_F, "ecgs", None, AM, 20, "A 12-lead ECG at every visit"),
-        _rec(_F, "pk_pd_sampling, imaging", None, RFP, 3, "PK samples and imaging"),
+        _rec(_F, "ip_accountability", None, AM, 13, "Accountability by an unblinded monitor"),
+        _rec(_F, "separate_blinded_unblinded_staff", None, AM, 20,
+             "Unblinded pharmacy staff will prepare the infusion"),
+        _rec(_F, "drug_preparation_requirements, ip_accountability", None, RFP, 3,
+             "Preparation and accountability by unblinded staff"),
     ]
 
 
@@ -79,34 +86,36 @@ class TestStatements:
 
 class TestAListWithAPassageForEachPage:
     def test_the_list_is_printed_once_then_each_passage(self) -> None:
-        lines = _lines(_intensity(), _F)
+        lines = _lines(_factors(), _F)
         [listed] = [e for e in lines if e.value]
-        assert listed.value == "Imaging; ECGs; PK/PD sampling"
+        assert listed.value == _LIST
         assert listed.quote is None
         assert lines[0] is listed
         assert [(e.value, e.sources, e.quote) for e in lines[1:]] == [
-            ("", "Amendment p.13", "MRI of the heart at baseline and week 24"),
-            ("", "Amendment p.20", "A 12-lead ECG at every visit"),
-            ("", "RFP p.3", "PK samples and imaging"),
+            ("", "Amendment p.13", "Accountability by an unblinded monitor"),
+            ("", "Amendment p.20", "Unblinded pharmacy staff will prepare the infusion"),
+            ("", "RFP p.3", "Preparation and accountability by unblinded staff"),
         ]
 
     def test_a_list_of_one_keeps_its_value_beside_each_passage(self) -> None:
         records = [
-            _rec(_F, "imaging", None, AM, 13, "MRI of the heart at baseline"),
-            _rec(_F, "imaging", None, RFP, 3, "Cardiac imaging"),
+            _rec(_F, "ip_accountability", None, AM, 13, "Accountability by an unblinded monitor"),
+            _rec(_F, "ip_accountability", None, RFP, 3, "Unblinded accountability"),
         ]
         lines = _lines(records, _F)
         assert {(e.value, e.quote) for e in lines} == {
-            ("Imaging", "MRI of the heart at baseline"),
-            ("Imaging", "Cardiac imaging"),
+            ("Study drug accountability", "Accountability by an unblinded monitor"),
+            ("Study drug accountability", "Unblinded accountability"),
         }
 
     def test_the_pdf_prints_the_list_once_and_no_dash_before_a_passage(self) -> None:
-        text = _evidence_text(_intensity())
-        assert text.count("Imaging; ECGs; PK/PD sampling") == 1
-        assert '"A 12-lead ECG at every visit"' in text
+        text = _evidence_text(_factors())
+        assert text.count(_LIST) == 1
+        assert '"Unblinded pharmacy staff will prepare the infusion"' in text
         # A passage's line starts with its pages, not a dash before them.
         assert "— Amendment p.20" not in text
         assert "• Amendment p.20" in text
         # The list's own line keeps its dash.
-        assert "Imaging; ECGs; PK/PD sampling —" in text
+        assert f"{_LIST} —" in text
+        # No confidence figure on any line (29 October 2026).
+        assert "%" not in text

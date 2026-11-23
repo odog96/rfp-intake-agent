@@ -57,6 +57,25 @@ def _strip_reasoning(text: str) -> str:
     return text
 
 
+def _content_text(content: object) -> str:
+    """The answer text of a model response.
+
+    Bedrock Converse returns a list of content blocks when the model also
+    returns reasoning: Claude Opus 5 did in run r-20261123-oct29-run2, with a
+    `reasoning_content` block before the `text` block. str() of that list is not
+    JSON, so the guided parse failed. Only the text blocks are the answer.
+    """
+    if not isinstance(content, list):
+        return str(content)
+    parts: list[str] = []
+    for block in content:
+        if isinstance(block, str):
+            parts.append(block)
+        elif isinstance(block, dict) and block.get("type") == "text":
+            parts.append(str(block.get("text", "")))
+    return "".join(parts)
+
+
 def _find_json_object(text: str) -> str | None:
     """Return the last balanced *top-level* JSON object in `text`, or None.
 
@@ -318,7 +337,7 @@ class StructuredOutput:
                 f"ceiling before the JSON closed. Raise RFP_INTAKE_LLM_MAX_TOKENS."
             )
 
-        response_text = _strip_reasoning(str(response.content).strip())
+        response_text = _strip_reasoning(_content_text(response.content).strip())
         # Clean common artifacts
         if response_text.startswith("```json"):
             response_text = response_text[7:]
