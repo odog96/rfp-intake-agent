@@ -23,7 +23,7 @@ from __future__ import annotations
 from typing import Any, Literal
 
 import structlog
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from rfp_intake.adjudicate.prompt import build_adjudicate_prompt
 from rfp_intake.domain.precedence import PrecedencePolicy, get_precedence_policy
@@ -47,6 +47,16 @@ class AdjudicationResult(BaseModel):
     # 1-based positions, numbered as winning_record is, of records the model
     # says are not about this field at all. Fix 5 of the 2026-10-12 brief.
     off_topic_records: list[int] = Field(default_factory=list)
+
+    @field_validator("off_topic_records", mode="before")
+    @classmethod
+    def _none_said(cls, v: object) -> object:
+        """An empty string or null is "no record is off-topic". Claude Opus 5 wrote
+        `"off_topic_records": ""` for "Whole study duration" in run
+        r-20261123-oct29-run2, which failed validation and lost the verdict."""
+        if v is None or (isinstance(v, str) and not v.strip()):
+            return []
+        return v
 
 
 def adjudicate_node(state: RunState) -> dict[str, Any]:
@@ -76,15 +86,15 @@ def adjudicate_node(state: RunState) -> dict[str, Any]:
             continue
 
         try:
-            adjudicated, fields = _adjudicate_one(c, field_def, policy, structured)
-            updated_contradictions.append(adjudicated)
-            new_resolved.extend(fields)
+            adjudicated, fields = _adjudicate_with_retry(c, field_def, policy, structured)
         except Exception as e:
             logger.error("adjudicate_failed", field_id=c.field_id, error=str(e))
             errors.append(RunError(
                 node="ADJUDICATE", task_id=c.field_id, error=f"Adjudication failed: {e}",
             ))
-            updated_contradictions.append(c)  # left unadjudicated — verdict stays None
+            adjudicated, fields = _unjudged(c, field_def)
+        updated_contradictions.append(adjudicated)
+        new_resolved.extend(fields)
 
     logger.info(
         "adjudicate_complete",
@@ -98,6 +108,63 @@ def adjudicate_node(state: RunState) -> dict[str, Any]:
         "resolved": state.resolved + new_resolved,
         "errors": errors,
     }
+
+
+# How many times one candidate is put to the model before it is shown as a
+# disagreement nobody has judged (_unjudged). A second attempt costs one call, and
+# only where the first one failed.
+ADJUDICATE_ATTEMPTS = 2
+
+# What Appendix B says about a candidate the model could not judge.
+UNJUDGED_EXPLANATION = (
+    "The reviewer model could not judge these passages (its answer could not be read), "
+    "so they are shown as a disagreement for a person to settle."
+)
+
+
+def _adjudicate_with_retry(
+    contradiction: Contradiction,
+    field_def: FieldDef,
+    policy: PrecedencePolicy,
+    structured: StructuredOutput,
+) -> tuple[Contradiction, list[ResolvedField]]:
+    """`_adjudicate_one`, tried again once if the call fails. Static control
+    flow: the number of attempts is fixed here, never chosen by a model."""
+    for attempt in range(1, ADJUDICATE_ATTEMPTS + 1):
+        try:
+            return _adjudicate_one(contradiction, field_def, policy, structured)
+        except Exception as e:
+            if attempt == ADJUDICATE_ATTEMPTS:
+                raise
+            logger.warning(
+                "adjudicate_retry", field_id=contradiction.field_id, attempt=attempt,
+                error=str(e)[:200],
+            )
+    raise AssertionError("unreachable")  # the loop returns or raises
+
+
+def _unjudged(
+    contradiction: Contradiction, field_def: FieldDef,
+) -> tuple[Contradiction, list[ResolvedField]]:
+    """A candidate the model could not judge is a disagreement for a person to
+    settle, shown with the value document precedence gives (_handle_conflict),
+    never dropped. Code found the documents' values differ (RECONCILE); without a
+    model saying otherwise, a person must choose.
+
+    Until 2026-11-23 the candidate kept verdict None and no row at all, so the
+    report printed the variable as "Not found" and listed no disagreement: run
+    r-20261123-oct29-run2 showed "Whole study duration: Not found" though the
+    amendment says 42 months and the RFP 40. `explanation` says no model judged
+    it, and the run's errors list keeps the failed call. Severity is high for a
+    budget driver, as config/fields.yaml's header defines it for any disagreement
+    on one, and otherwise left unrated: no model rated it.
+    """
+    marked = contradiction.model_copy(update={
+        "verdict": "conflict",
+        "explanation": UNJUDGED_EXPLANATION,
+        "severity": "high" if field_def.budget_driver else None,
+    })
+    return _handle_conflict(marked, field_def)
 
 
 def _adjudicate_one(

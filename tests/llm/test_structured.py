@@ -193,6 +193,30 @@ class TestStripReasoning:
         assert _strip_reasoning(raw) == '{"value": 75}'
 
 
+class TestContentText:
+    """Only a response's text blocks are its answer (run r-20261123-oct29-run2)."""
+
+    def test_a_plain_string_is_kept(self) -> None:
+        from rfp_intake.llm.structured import _content_text
+
+        assert _content_text('{"a": 1}') == '{"a": 1}'
+
+    def test_a_reasoning_block_is_dropped(self) -> None:
+        from rfp_intake.llm.structured import _content_text
+
+        # The shape Bedrock Converse returned for Claude Opus 5 with reasoning.
+        content = [
+            {"type": "reasoning_content", "reasoning_content": {"text": "", "signature": "x"}},
+            {"type": "text", "text": '{"verdict": "conflict"}'},
+        ]
+        assert _content_text(content) == '{"verdict": "conflict"}'
+
+    def test_text_blocks_and_strings_are_joined_in_order(self) -> None:
+        from rfp_intake.llm.structured import _content_text
+
+        assert _content_text(['{"a": ', {"type": "text", "text": "1}"}]) == '{"a": 1}'
+
+
 class TestRoleStrategyPin:
     """A strategy pinned in models.yaml describes one endpoint, not every model."""
 

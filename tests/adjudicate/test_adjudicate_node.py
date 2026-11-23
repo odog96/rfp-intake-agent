@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Literal
 
 from rfp_intake.adjudicate import (
+    UNJUDGED_EXPLANATION,
     AdjudicationResult,
     _handle_conflict,
     _handle_not_a_conflict,
@@ -465,3 +466,67 @@ class TestAdjudicateNode:
         adjudicated = result["contradictions"][0]
         assert adjudicated.verdict == "not_a_conflict"
         assert len(result["resolved"]) == 2  # one ResolvedField per original record
+
+
+class _Failing:
+    """A structured-output stand-in whose first `failures` calls raise."""
+
+    def __init__(self, failures: int, result: AdjudicationResult) -> None:
+        self.failures = failures
+        self.calls = 0
+        self.result = result
+
+    def extract(self, schema, messages):  # type: ignore[no-untyped-def]
+        self.calls += 1
+        if self.calls <= self.failures:
+            raise ValueError("Failed to parse guided response")
+        return self.result
+
+
+class TestAModelThatCannotAnswer:
+    """Run r-20261123-oct29-run2: one malformed answer printed "Whole study
+    duration" as Not found, with no disagreement listed."""
+
+    def _run(self, fields_yaml_path, monkeypatch, failures: int):  # type: ignore[no-untyped-def]
+        _use_real_registry(fields_yaml_path)
+        import rfp_intake.adjudicate as adjudicate
+
+        fake = _Failing(failures, AdjudicationResult(verdict="conflict", explanation="real"))
+        monkeypatch.setattr(adjudicate, "get_structured_output_for_role", lambda llm, role: fake)
+        records = [_record(75, "amend", "amendment"), _record(80, "rfp", "rfp")]
+        state = RunState(run_id="t", contradictions=[_candidate(records)])
+        return adjudicate_node(state), fake
+
+    def test_one_failure_is_tried_again(self, fields_yaml_path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+        result, fake = self._run(fields_yaml_path, monkeypatch, failures=1)
+        assert fake.calls == 2
+        assert result["contradictions"][0].explanation == "real"
+        assert result["errors"] == []
+
+    def test_a_candidate_never_judged_is_still_a_disagreement_with_a_row(
+        self, fields_yaml_path, monkeypatch,
+    ) -> None:  # type: ignore[no-untyped-def]
+        result, fake = self._run(fields_yaml_path, monkeypatch, failures=5)
+        assert fake.calls == 2
+        c = result["contradictions"][0]
+        assert c.verdict == "conflict"
+        assert c.explanation == UNJUDGED_EXPLANATION
+        assert c.severity == "high"  # ops.sites_total is a budget driver
+        [row] = result["resolved"]
+        assert row.status == "needs_review"
+        assert row.contradiction is not None and row.contradiction.verdict == "conflict"
+        assert len(result["errors"]) == 1
+
+
+class TestOffTopicRecordsAnswer:
+    def test_an_empty_string_means_none_are_off_topic(self) -> None:
+        r = AdjudicationResult.model_validate(
+            {"verdict": "conflict", "explanation": "x", "off_topic_records": ""}
+        )
+        assert r.off_topic_records == []
+
+    def test_null_means_none_are_off_topic(self) -> None:
+        r = AdjudicationResult.model_validate(
+            {"verdict": "conflict", "explanation": "x", "off_topic_records": None}
+        )
+        assert r.off_topic_records == []
