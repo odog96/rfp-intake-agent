@@ -1097,10 +1097,11 @@ fields:
     # timeline and the whole-study duration record.
     only_from: [rfp]
     shown_under: timeline.periods
-    # Where the RFP gives no window, the row says so, so the question can go back to the
-    # sponsor before the budget is built.
+    # Where no window is found, the row says to ask the sponsor before the budget is built. It
+    # does not say the RFP is silent: "not found" can also mean the tool could not read the
+    # passage (rule 3).
     when_not_found:
-      lines: ["Not stated in the RFP: ask the sponsor."]
+      lines: ["Ask the sponsor what time window to budget for."]
 
   - id: timeline.total_duration
     group: timelines
@@ -1602,10 +1603,11 @@ fields:
       problems. Checking everything costs far more than a sample.
     source_priority: rfp
     budget_driver: true
-    # Says what was looked for when no document gives it (Angus Gray, 7 October 2026: a row
-    # that says nothing was specified should say what it refers to).
+    # Says what was looked for when nothing is found (Angus Gray, 7 October 2026: a row that
+    # says nothing was specified should say what it refers to). It does not say the documents
+    # are silent: "not found" can also mean the tool could not read the passage (rule 3).
     when_not_found:
-      lines: ["No document gives a source data verification (SDV), source data review (SDR) or CRF percentage."]
+      lines: ["The tool looked for source data verification (SDV), source data review (SDR) and CRF percentages."]
 
   - id: monitoring.strategy_guidance
     group: clinical_monitoring
