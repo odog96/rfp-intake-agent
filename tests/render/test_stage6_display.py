@@ -63,10 +63,16 @@ class TestNoDocumentGivesATotal:
         row = _row(_model([_why_no_total(status)]), "visits.total_count")
         assert row.status == "not_found"
         assert [v.text for v in row.values] == ["No document gives a total."]
+        # The passage's pages are in the Where cell, not after the quote
+        # (29 October 2026).
         assert [b.text for b in row.block_lines] == [
-            f'"{_WHY}" (Protocol p.42)',
+            f'"{_WHY}"',
             "See Visit frequency by study period.",
         ]
+        assert row.values[0].sources == "Protocol p.42"
+        [label_row] = row.table
+        assert label_row.where == "Protocol p.42"
+        assert label_row.status == "Review"
         # The record saying why stays the row's member, so it is still counted
         # and quoted in Appendix A.
         assert [e for m in row.members for v in m.values for e in v.entries] != []
@@ -75,8 +81,7 @@ class TestNoDocumentGivesATotal:
         rf = _why_no_total()
         rf.quote = "Visits will continue\nuntil  disease progression"
         row = _row(_model([rf]), "visits.total_count")
-        assert row.block_lines[0].text == '"Visits will continue until disease progression" ' \
-                                          "(Protocol p.42)"
+        assert row.block_lines[0].text == '"Visits will continue until disease progression"'
 
     def test_with_no_record_there_is_no_reason_line(self) -> None:
         row = _row(_model([]), "visits.total_count")

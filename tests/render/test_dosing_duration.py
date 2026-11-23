@@ -88,4 +88,5 @@ def test_the_pdf_says_duration_not_stated() -> None:
         " ".join(doc[i].get_text().split())  # type: ignore[no-untyped-call]
         for i in range(doc.page_count)
     )
-    assert "How long patients are dosed BUDGET Duration not stated Not found" in text
+    # The status column says Review (29 October 2026); the value keeps its words.
+    assert "How long patients are dosed BUDGET Duration not stated Review" in text

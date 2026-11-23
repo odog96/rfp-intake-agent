@@ -140,8 +140,12 @@ class TestTheRealProtocol:
                  if cells[1].startswith("Day 1") and cells[0] != "Screening"]
         assert day_1 == [2, 4, 6, 8, 9]
         assert all("Study drug infusion" in considerations[i] for i in day_1)
-        assert all("Premedication" in considerations[i] for i in day_1)
         assert "Study drug infusion" not in considerations[3]
+        # Premedication and chemotherapy have show: false (Angus Gray, 29 October
+        # 2026): not listed, though the "leaves out" sentence still names both.
+        assert not any("Premedication" in c or "Chemotherapy" in c for c in considerations)
+        assert table.note is not None
+        assert "premedication" in table.note and "chemotherapy" in table.note
 
     def test_every_count_cites_its_page(self, protocol_state: RunState) -> None:
         [table] = _row(get_registry(), protocol_state, TABLE).visit_tables
