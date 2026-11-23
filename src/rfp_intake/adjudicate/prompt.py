@@ -15,10 +15,13 @@ for ONE field — do not look for other contradictions, only judge this one.
 
 Decide exactly one verdict:
 - not_a_conflict: the values don't actually disagree once scope, unit, or study \
-period are accounted for (e.g. one is a total and one is per-country; one is \
-per-cycle and one is per-course). Expect this to be the most common verdict.
+period are accounted for, because they are about different things (e.g. one is a \
+total and one is per-country; one is per-cycle and one is per-course; two \
+different items of sponsor guidance).
 - reconcilable: both values are true; one is a subset, restatement, or more \
-specific version of the other. Set winning_record to the NUMBER of the one \
+specific version of the other. The same answer worded differently (the same \
+primary objective or population in each document's own words) is reconcilable, \
+not not_a_conflict. Set winning_record to the NUMBER of the one \
 candidate record below whose value should be shown as the field's resolved \
 value — "3" for the third candidate in the list. Several candidates often come \
 from the same document and say different things, so naming a document is not \

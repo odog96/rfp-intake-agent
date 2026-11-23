@@ -665,6 +665,15 @@ class TestThePromptsWordingAfterOpus5:
         ) in conflict
         assert 'one says "approximately"' in conflict
 
+    def test_the_same_answer_in_other_words_is_reconcilable(self) -> None:
+        """Run r-20261123-oct29-run2 called the two documents' primary objectives
+        not_a_conflict, which keeps one row per document."""
+        reconcilable = self._system().split("- reconcilable:")[1].split("- conflict:")[0]
+        assert "The same answer worded differently" in reconcilable
+        assert "is reconcilable, not not_a_conflict" in reconcilable
+        not_a_conflict = self._system().split("- not_a_conflict:")[1].split("- reconcilable:")[0]
+        assert "about different things" in not_a_conflict
+
     def test_a_different_quantity_in_the_same_words_is_off_topic(self) -> None:
         off_topic = self._system().split("off_topic_records:")[1].split("Your explanation")[0]
         assert "a record for a different quantity that uses the same words IS off-topic" in (
