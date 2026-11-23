@@ -1,7 +1,8 @@
 """Angus Gray's asks of 29 October 2026, measured on one run's report.pdf.
 
     python scripts/check_review_2026_10_29.py r-20261123-oct29-run2
-    python scripts/check_review_2026_10_29.py r-20261123-oct29-run2 --pdf runs/<run>/report-rerender.pdf
+    python scripts/check_review_2026_10_29.py r-20261123-oct29-run2 \
+        --pdf runs/<run>/report-rerender.pdf
 
 Angus reviewed report r-20261029-140643 on a call on 29 October 2026 (Zoom
 transcript GMT20261029-142148). Each check below is one thing he asked for on
@@ -142,7 +143,8 @@ def check_gone(report: c7.Report) -> Result:
 def check_intensity(report: c7.Report) -> Result:
     hits = [line for line in report.text.splitlines() if re.search(r"visit intensity", line, re.I)]
     if hits:
-        return Result("S12", "No visit intensity anywhere", "FAIL", f"{len(hits)} line(s)", hits[:3])
+        return Result("S12", "No visit intensity anywhere", "FAIL", f"{len(hits)} line(s)",
+                      hits[:3])
     return Result("S12", "No visit intensity anywhere", "PASS", "the words are not in the report")
 
 
@@ -165,7 +167,8 @@ def check_timeline(report: c7.Report) -> Result:
     extra = [s for s in named if s not in TIMELINE_LINES]
     accrual = [s for s in named if re.search(r"accrual|recruit|enrol", s, re.I)]
     if accrual:
-        return Result("T6", title, "FAIL", f"an enrolment line is back: {', '.join(accrual)}", notes)
+        return Result("T6", title, "FAIL", f"an enrolment line is back: {', '.join(accrual)}",
+                      notes)
     reason = f"{len(order)} lines in order" + (f", plus {', '.join(extra)}" if extra else "")
     return Result("T3 T4 T6 T8", title, "PASS", reason, notes)
 
@@ -407,8 +410,18 @@ def check_every_answer(report: c7.Report) -> Result:
     except Exception as e:  # pragma: no cover - a broken registry fails the test suite
         return Result("B7 L2", title, "LOOK", f"registry not readable: {e}")
     shown = {r.label for r in _all_rows(report)}
+    # A variable printed inside another's headline has no row of its own by design:
+    # the allocation ratio is in "2 arms, randomized 1:1" (decided by Oliver on
+    # 2026-10-12, the layout Angus Gray approved on 13 and 29 October).
+    in_headline = {
+        h.field
+        for f in registry.fields
+        for h in (getattr(f.display, "headline_fields", None) or [])
+        + (getattr(f.display, "also", None) or [])
+    }
     missing = [f.label for f in registry.fields
-               if f.label not in shown and not getattr(f, "shown_under", None)]
+               if f.label not in shown and not getattr(f, "shown_under", None)
+               and f.id not in in_headline]
     rows = _all_rows(report)
     empty = []
     for i, r in enumerate(rows):
