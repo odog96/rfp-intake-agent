@@ -170,3 +170,17 @@ def test_all_groups_build_successfully(fields_yaml_path: Path) -> None:
         # Empty payload should be valid (all fields optional)
         instance = model.model_validate({})
         assert instance is not None
+
+
+def test_the_page_description_names_the_page_marker() -> None:
+    """Run r-20261123-opus5-base: the description said "1-indexed page number
+    within the excerpt", and Claude Opus 5 counted pages from the start of the
+    excerpt. The page is the number in the excerpt's "--- Page N ---" marker."""
+    from rfp_intake.domain.dynamic import FieldExtractionItem
+
+    description = FieldExtractionItem.model_fields["page"].description or ""
+    assert "--- Page N ---" in description
+    assert "within the excerpt" not in description
+    # And the JSON schema the model is sent carries the same words.
+    schema = FieldExtractionItem.model_json_schema()
+    assert schema["properties"]["page"]["description"] == description

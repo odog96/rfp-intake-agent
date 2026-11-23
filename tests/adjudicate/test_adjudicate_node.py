@@ -465,3 +465,32 @@ class TestAdjudicateNode:
         adjudicated = result["contradictions"][0]
         assert adjudicated.verdict == "not_a_conflict"
         assert len(result["resolved"]) == 2  # one ResolvedField per original record
+
+
+class TestThePromptsWordingAfterOpus5:
+    """Run r-20261123-opus5-base judged 42 against 40 months reconcilable and
+    kept a statistical sample size of 236 beside the enrolment figure of 260."""
+
+    @staticmethod
+    def _system() -> str:
+        from rfp_intake.adjudicate.prompt import ADJUDICATE_SYSTEM_PROMPT
+
+        return " ".join(ADJUDICATE_SYSTEM_PROMPT.split())
+
+    def test_two_close_amounts_at_one_scope_are_a_conflict(self) -> None:
+        conflict = self._system().split("- conflict:")[1].split("off_topic_records:")[0]
+        assert (
+            "Two different amounts for the same quantity at the same scope are a conflict "
+            "even when they are close"
+        ) in conflict
+        assert 'one says "approximately"' in conflict
+
+    def test_a_different_quantity_in_the_same_words_is_off_topic(self) -> None:
+        off_topic = self._system().split("off_topic_records:")[1].split("Your explanation")[0]
+        assert "a record for a different quantity that uses the same words IS off-topic" in (
+            off_topic
+        )
+        assert "power calculation" in off_topic
+        # The older rule still stands beside it.
+        assert "A record that is about the field but gives a different value is never " \
+            "off-topic." in off_topic
