@@ -1213,8 +1213,11 @@ class TestBothSidesOnTheRow:
         c = state.contradictions[0].model_copy(update={"precedence_rule": "specificity"})
         state.contradictions[0] = c
         state.resolved[0].contradiction = c
+        # main's config/fields.yaml words `specificity` without "confidence"
+        # (29 October 2026); this branch's copy still has the older wording, so
+        # this test passes once the two are merged.
         assert self._row(state).decision_line == (
-            "Shown provisionally: 0 (the protocol's passage had the highest confidence). "
+            "Shown provisionally: 0 (the protocol states it most clearly). "
             "See Disagreement 1."
         )
 

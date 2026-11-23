@@ -909,7 +909,7 @@ def build_report_model(state: RunState, registry: Registry) -> ReportModel:
     for section in sections:
         prev = None
         for r in section.rows:
-            r.table = _table_rows(r, wording, None if r.field_id != prev else "")
+            r.table = _once_each(_table_rows(r, wording, None if r.field_id != prev else ""))
             prev = r.field_id
         for sch in section.schedules:
             for r in sch.rows:
@@ -1092,9 +1092,13 @@ def _not_found_row(
     field_by_id: dict[str, FieldDef],
     docs: _Docs,
 ) -> Row:
-    """A variable no document gives, as its `when_not_found` explains it: the
-    note's own lines, then each passage saying why there is no value, quoted
-    with its pages, then where to look instead.
+    """A variable no document gives, as its `when_not_found` explains it.
+
+    The value reads "Not found in the documents" (`report_wording.not_found`),
+    as every not-found value does (rule 3). The note's own lines, each passage
+    saying why there is no value, quoted, and where to look instead are grey
+    notes under the pages in the Where cell, as every other note is (layout
+    rule 8 of 29 October 2026); the pages are the quoted passages'.
 
     Fix 4 of the 2026-10-12 brief. The reason is only ever a document's own
     sentence, from a record scoped as `because_scopes` names; with none, no
@@ -1102,20 +1106,16 @@ def _not_found_row(
     still counted, listed and quoted in Appendix A. Nothing here works out a
     value.
     """
-    # The note's own lines stand where the value would, as the approved layout
-    # reads; "—" only if the note has none.
-    head = " ".join(note.lines) or "—"
-    lines: list[BlockText] = []
+    notes = list(note.lines)
     because: list[Provenance] = []
     for rf in entries:
         if rf.quote and scope_has_phrase(rf.scope, note.because_scopes):
-            # Its pages in the Where cell, not after the quote (29 October 2026).
-            lines.append(BlockText(_without_pages(ReportWording.fill(
+            notes.append(_without_pages(ReportWording.fill(
                 note.because_line, quote=" ".join(rf.quote.split()), pages="",
-            ))))
+            )))
             because += rf.sources
     for other in note.see:
-        lines.append(BlockText(note.see_line.format(label=field_by_id[other].label)))
+        notes.append(note.see_line.format(label=field_by_id[other].label))
     return Row(
         field_id=fd.id,
         label=fd.label,
@@ -1123,10 +1123,10 @@ def _not_found_row(
         budget_driver=fd.budget_driver,
         status="not_found",
         values=[ValueLine(
-            items=[head], status="not_found", confidence=0.0, sources=docs.pages(because),
+            items=["—"], status="not_found", confidence=0.0, sources=docs.pages(because),
         )],
         members=[r for r in rows_by_field.get(fd.id, []) if r.values[0].entries],
-        block_lines=lines,
+        where_notes=notes,
     )
 
 
@@ -2080,7 +2080,7 @@ def _periods_row(
         )
         lines: list[tuple[int, Row]] = []
         stated: set[str] = set()
-        for group in group_entries([r for _, r in said], display.one_per):
+        for group in _period_groups([r for _, r in said], display):
             entry = merge_entry(fd, group)
             unsettled = entry.differing(None)
             words = _entry_words(entry, None, wording, set(unsettled))
@@ -2104,7 +2104,8 @@ def _periods_row(
             rfs = list({id(rf): rf for rf, r in said if any(r is g for g in group)}.values())
             status = min((rf.status for rf in rfs), key=lambda st: _STATUS_RANK.get(st, 0))
             line = _line_row(
-                fd, heading, text, status, docs.pages([r.provenance for r in group]), rfs,
+                fd, heading, text, status,
+                docs.pages([r.provenance for r in _period_stating(entry, group, display)]), rfs,
                 scope, docs.name_ids,
             )
             line.below = _differ_rows(fd, entry, unsettled, group, {}, docs, wording)
@@ -2143,6 +2144,47 @@ def _periods_row(
     )
     row.below = below
     return row
+
+
+def _period_stating(
+    entry: MergedEntry, group: list[FieldRecord], display: PeriodsDisplay,
+) -> list[FieldRecord]:
+    """The records of one stretch whose words are the ones its line prints:
+    every key of the line and heading wordings a record states reads as the
+    line shows it. A record wording the stretch otherwise (RFP p.3's "20
+    months" beside the amendment's "24 months") is quoted in Appendix A, not
+    cited beside a value it does not state (rule 2). With none such, every
+    record of the stretch."""
+    names = {k for w in display.lines + display.heading for k in placeholders(w)}
+    stating = [
+        r for r in group
+        if isinstance(r.value, dict) and all(
+            same_key(r.value[k]) == same_key(entry.value(k))
+            for k in names if r.value.get(k) not in (None, "")
+        )
+    ]
+    return stating or group
+
+
+def _period_groups(records: list[FieldRecord], display: PeriodsDisplay) -> list[list[FieldRecord]]:
+    """`records` grouped one per stretch, by the `one_per` keys. Where the
+    display lists the stretches it `always` prints, a stretch it does not list
+    (`other`) is also told apart by the keys its heading names: two stretches
+    the documents name differently, such as an enrolment period and an end of
+    treatment visit, are two rows, each with its own pages, not one row
+    citing the other's page."""
+    groups = group_entries(records, display.one_per)
+    if not display.always:
+        return groups
+    named = [k for w in display.heading for k in placeholders(w) if k not in display.one_per]
+    out: list[list[FieldRecord]] = []
+    for group in groups:
+        value = group[0].value.get(display.order_key) if isinstance(group[0].value, dict) else None
+        if named and str(value) not in display.always:
+            out += group_entries(group, display.one_per + list(dict.fromkeys(named)))
+        else:
+            out.append(group)
+    return out
 
 
 # A line wording's `{heading}`, and what separates it from the rest of the
@@ -3133,12 +3175,24 @@ def _under_rows(fd: FieldDef, shown_as: dict[str, Row], field_rows: list[Row]) -
     )
     out: list[Row] = []
     for r in rows:
-        if r.parts:
-            out += r.parts
-            continue
-        r.heading = first if r.status == "not_found" and first else fd.label
-        out.append(r)
+        for p in r.parts or [r]:
+            if p is r or p.heading is None:
+                p.heading = first if p.status == "not_found" and first else fd.label
+            out.append(p)
     return out
+
+
+def _once_each(rows: list[TableRow]) -> list[TableRow]:
+    """`rows` with each grey note printed once: a reason or note that a row
+    above it in the same variable already gives is not repeated, so five
+    periods of one list flagged for the same reason say it once, under the
+    first."""
+    seen: set[str] = set()
+    for t in rows:
+        kept = [n for n in dict.fromkeys(t.notes) if n not in seen]
+        seen.update(kept)
+        t.notes = kept
+    return rows
 
 
 def _table_rows(

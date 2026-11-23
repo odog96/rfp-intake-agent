@@ -71,7 +71,10 @@ def test_a_stated_duration_is_shown_with_its_passage() -> None:
 def test_no_passage_reads_duration_not_stated() -> None:
     rows = _rows([_record(FREQUENCY, "once every 28 days", P54, 54)])
     [row] = [r for r in rows if r.field_id == DURATION]
-    assert (row.status, row.values[0].items) == ("not_found", ["Duration not stated"])
+    # Rule 3 in the value; the note in grey under the (empty) pages.
+    assert row.status == "not_found"
+    assert row.table[0].values == ["Not found in the documents"]
+    assert row.table[0].notes == ["Duration not stated"]
 
 
 def test_the_pdf_says_duration_not_stated() -> None:
@@ -88,5 +91,7 @@ def test_the_pdf_says_duration_not_stated() -> None:
         " ".join(doc[i].get_text().split())  # type: ignore[no-untyped-call]
         for i in range(doc.page_count)
     )
-    # The status column says Review (29 October 2026); the value keeps its words.
-    assert "How long patients are dosed BUDGET Duration not stated Review" in text
+    # 29 October 2026: the value reads "Not found in the documents" (rule 3),
+    # the status Review, and the note is in grey in the Where column.
+    assert ("How long patients are dosed BUDGET Not found in the documents Review "
+            "Duration not stated") in text
