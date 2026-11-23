@@ -2453,7 +2453,14 @@ def _show_schedule(
         # A variable with no row at all is printed by the when_not_found loop or
         # not at all, and has no text for the line to go above.
         own = shown_as.get(table_fd.id) or next(iter(rows_by_field.get(table_fd.id, [])), None)
-        if own is not None:
+        if own is None:
+            pass
+        elif own.below:
+            # A row whose stretches are rows of their own has no value of its
+            # own to go above: the line is a grey note in its Where cell.
+            own.where_notes[:0] = [schedule.missing or w.none_found]
+            own.where_notes += schedule.lines
+        else:
             own.block_lines[:0] = [BlockText(schedule.missing or w.none_found)]
             own.block_lines += [BlockText(t) for t in schedule.lines]
 

@@ -188,10 +188,12 @@ def _printed(row: Row) -> list[tuple[str, str, str, str]]:
 
 
 def _period_lines(row: Row) -> list[str]:
-    """The visit-frequency row's lines after Prompt C's "No schedule table found."."""
-    lines = _lines(row)
-    assert lines[0] == "No schedule table found."
-    return lines[1:]
+    """The visit-frequency row's lines. Prompt C's "No schedule table found." is
+    a grey note in the Where cell of the variable's own row, which has no
+    value, status or pages of its own (29 October 2026)."""
+    assert row.table[0].notes[0] == "No schedule table found."
+    assert (row.table[0].values, row.table[0].status, row.table[0].where) == ([], "", "")
+    return _lines(row)
 
 
 class TestArms:
@@ -327,8 +329,8 @@ class TestVisitFrequency:
         assert [where for *_, where in _printed(row)] == [""] + ["Amendment p.26"] * 5
         # GATE's one reason for the list, printed once, under the first stretch.
         notes = [n for t in row.table for n in t.notes]
-        assert notes == ["Budget driver holding more than one value."]
-        assert row.table[1].notes == notes
+        assert notes == ["No schedule table found.", "Budget driver holding more than one value."]
+        assert row.table[1].notes == ["Budget driver holding more than one value."]
 
     def test_a_stretch_with_only_a_count_prints_the_count(self) -> None:
         _, model = _report([_rec("visits.frequency_by_period",
@@ -357,7 +359,8 @@ class TestVisitFrequency:
             "Later treatment (Month 4 onwards): Monthly, Day 1 (every 28 days)",
         ]
         assert "Other wordings are quoted in Appendix A." not in lines
-        assert row.where_notes == ["Other wordings are quoted in Appendix A."]
+        assert row.where_notes == ["No schedule table found.",
+                                   "Other wordings are quoted in Appendix A."]
         quotes = {e.quote for e in model.evidence if e.field_id == "visits.frequency_by_period"}
         assert {"Day 1 of all other months", "Every 28 days"} <= quotes
 
@@ -605,12 +608,15 @@ def test_a_row_taller_than_a_page_continues_on_the_next_page() -> None:
     pages = [page.get_text() for page in doc]  # type: ignore[attr-defined]
     text = " ".join("\n".join(pages).split())
     # Every stretch, not only the first and last, so a split that dropped the
-    # middle of the row would fail.
+    # middle of the variable would fail. Since 29 October 2026 each stretch is
+    # a table row of its own, its heading in the Variable column.
     for n in range(1, 41):
-        assert f"(Month {n}): Day 1" in text, n
-    # And the row did run onto a later page than the one it starts on.
-    first = next(i for i, p in enumerate(pages) if "(Month 2):" in p)
-    assert any("(Month 40):" in p for p in pages[first + 1:])
+        assert f"Early treatment (Month {n}) Part: Part {n} Day 1" in text, n
+    # And the variable did run onto a later page than the one it starts on (a
+    # heading may wrap in the Variable column, so each page's words are joined).
+    flat = [" ".join(p.split()) for p in pages]
+    first = next(i for i, p in enumerate(flat) if "(Month 2)" in p)
+    assert any("(Month 40)" in p for p in flat[first + 1:])
 
 
 @pytest.mark.parametrize("tall", [0, 20, 59])
@@ -674,11 +680,16 @@ def test_the_pdf_prints_the_three_rows() -> None:
         "Arm 1 — NEOD001 plus standard of care",
         "RFP calls it: Group 2",
         "Dose and schedule are stated in the amendment only.",
-        "Stopped early: every 3 months after the early-discontinuation visit "
+        "Stopped early Every 3 months after the early-discontinuation visit "
         "(budgeted separately)",
-        "Whole study: 42 vs 40 months (Disagreement",
+        "Patient timeline",
+        "Whole study Documents disagree — see Disagreement",
+        'Amendment: 42 months — "42 months"',
     ):
         assert said in text, said
+    # No page reference is printed inside a value, and no confidence figure.
+    assert "(Amendment p." not in text
+    assert "%" not in text
 
 
 class TestLeadingAmount:
@@ -727,7 +738,9 @@ def test_an_arm_line_breaks_only_between_items_and_under_its_own_start() -> None
     records = _arms()
     for r in records[:2]:
         entry = json.loads(str(r.raw_value))
-        r.raw_value = json.dumps(dict(entry, schedule="once every 28 days"))
+        # Long enough to need a second line in the Value column.
+        r.raw_value = json.dumps(dict(entry, dose=f"{entry['dose']} over 60 minutes",
+                                      schedule="once every 28 days"))
     state, _ = _report(records)
     pdf = build_report_pdf(state, get_registry(), generated_at="2026-10-16")
     doc = pymupdf.open(stream=pdf, filetype="pdf")  # type: ignore[no-untyped-call]
@@ -739,10 +752,10 @@ def test_an_arm_line_breaks_only_between_items_and_under_its_own_start() -> None
     texts = {" ".join(w for _, w in ws): ws[0][0] for ws in lines.values()}
     # Each arm's dose is one item, and the schedule the next, under it.
     dose = next(t for t in texts if t.startswith("Dose: 24"))
-    assert dose == "Dose: 24 mg/kg IV infusion,"
+    assert dose == "Dose: 24 mg/kg IV infusion over 60 minutes,"
     assert "once every 28 days" in texts
     assert abs(texts["once every 28 days"] - texts[dose]) < 0.5
     # The notes are in the Where column, the line on what the documents agree on gone.
     where = next(x for t, x in texts.items() if t.startswith("Dose and schedule"))
-    assert where > page.rect.width - 72 * 0.6 - (sum(_MAIN_COLS) - sum(_MAIN_COLS[:4])) - 1
+    assert where > page.rect.width - 72 * 0.6 - (sum(_MAIN_COLS) - sum(_MAIN_COLS[:3])) - 1
     assert not any("agree on" in t for t in texts)
