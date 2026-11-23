@@ -31,6 +31,7 @@ from rfp_intake.domain.registry import FieldDef, get_registry
 from rfp_intake.domain.schemas import Contradiction, FieldRecord, ResolvedField, RunError, RunState
 from rfp_intake.llm.provider import get_llm
 from rfp_intake.llm.structured import StructuredOutput, get_structured_output_for_role
+from rfp_intake.reconcile import scope_key
 from rfp_intake.reconcile.precedence import apply_precedence
 
 logger = structlog.get_logger()
@@ -150,7 +151,9 @@ def _handle_not_a_conflict(
     Otherwise free-text and number fields keep one row per record.
     """
     on_topic = _on_topic(contradiction)
-    if len({r.scope for r in on_topic}) == 1 and (
+    # The same scope as RECONCILE groups scopes (reconcile/__init__.py:scope_key):
+    # on a field that is not scoped, "total" and no scope are one.
+    if len({scope_key(field_def, r.scope) for r in on_topic}) == 1 and (
         field_def.type in _ONE_CHOICE_TYPES or _one_value(on_topic)
     ):
         return _one_row(contradiction, result, "NOT_A_CONFLICT")

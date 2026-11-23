@@ -53,6 +53,7 @@ import structlog
 
 from rfp_intake.domain.registry import FieldDef, get_registry
 from rfp_intake.domain.schemas import Contradiction, ResolvedField, RunState
+from rfp_intake.reconcile import scope_key
 from rfp_intake.reconcile.entries import merge_entry
 
 logger = structlog.get_logger()
@@ -106,20 +107,22 @@ def gate_node(state: RunState) -> dict[str, Any]:
         if f.follows_conflict_of is not None
     }
 
-    # Every scope a record of the disagreement is written with, not only the
-    # first record's: ADJUDICATE gives a row its winning record's scope, or each
-    # record's own, and one disagreement can hold records whose scopes are
-    # spelled differently — "total" and none at all on a field the registry
-    # says is not scoped (reconcile/__init__.py:_scope_key).
+    # Keyed by the group RECONCILE put the records in (reconcile/__init__.py:
+    # scope_key), under every record's scope, not only the first record's:
+    # ADJUDICATE gives a row its winning record's scope, or each record's own,
+    # and one disagreement can hold scopes spelled differently — "total" and
+    # none at all on a field the registry says is not scoped among them. A row
+    # is looked up by the same key, so the spelling never hides its disagreement.
+    fields = {f.id: f for f in registry.fields}
     contradiction_by_key: dict[tuple[str, str | None], Contradiction] = {}
     for c in state.contradictions:
         for scope in dict.fromkeys(r.scope for r in c.records) if c.records else [None]:
-            contradiction_by_key[(c.field_id, scope)] = c
+            contradiction_by_key[(c.field_id, scope_key(fields.get(c.field_id), scope))] = c
 
     gated = [
         _gate_field(
             rf,
-            _contradiction_for(rf, contradiction_by_key, follows),
+            _contradiction_for(rf, contradiction_by_key, follows, fields),
             is_budget_driver=rf.field_id in budget_drivers,
             one_answer=one_answer.get(rf.field_id),
             listing=listing.get(rf.field_id, set()),
@@ -136,6 +139,7 @@ def _contradiction_for(
     rf: ResolvedField,
     contradiction_by_key: dict[tuple[str, str | None], Contradiction],
     follows: dict[str, str],
+    fields: dict[str, FieldDef] | None = None,
 ) -> Contradiction | None:
     """This field's own disagreement, or the one config says it shares.
 
@@ -148,7 +152,8 @@ def _contradiction_for(
     picks up another's — otherwise a row would be marked with a disagreement
     that is not about the value it shows.
     """
-    own = contradiction_by_key.get((rf.field_id, rf.scope))
+    fields = fields or {}
+    own = contradiction_by_key.get((rf.field_id, scope_key(fields.get(rf.field_id), rf.scope)))
     if own is not None:
         return own
     leader = follows.get(rf.field_id)
@@ -157,9 +162,10 @@ def _contradiction_for(
     # The leader's disagreement at the same part of the study, falling back to an
     # unscoped one: a count stated once for the whole study is still the count
     # this row's entry belongs to.
-    return contradiction_by_key.get((leader, rf.scope)) or contradiction_by_key.get(
-        (leader, None)
-    )
+    leader_def = fields.get(leader)
+    return contradiction_by_key.get(
+        (leader, scope_key(leader_def, rf.scope))
+    ) or contradiction_by_key.get((leader, scope_key(leader_def, None)))
 
 
 def _gate_field(

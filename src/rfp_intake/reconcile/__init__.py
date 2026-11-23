@@ -188,7 +188,7 @@ def _reconcile_field(
             # says so. See _scope_checks.
             label = f"{r.scope} (not matched, {r.provenance.doc_id})"
             unmatched.add(normalize_scope(label))
-        key = _scope_key(field_def, label)
+        key = scope_key(field_def, label)
         by_scope[key].append(r)
         # Keep the first label seen for the reader; the canonical form is an
         # internal grouping key and is not what belongs in a report.
@@ -250,10 +250,16 @@ def _reconcile_field(
     return resolved, contradictions
 
 
-def _scope_key(field_def: FieldDef, label: str | None) -> str | None:
+def scope_key(field_def: FieldDef | None, label: str | None) -> str | None:
     """The group a record's scope puts it in: `normalize_scope`'s canonical
     form, except that on a field config/fields.yaml says is not `scoped`, the
-    whole study ("total") is the same group as no scope at all (None).
+    whole study ("total") is the same group as no scope at all (None). With no
+    FieldDef (a field the registry does not have), the canonical form alone.
+
+    The one place this rule lives: RECONCILE groups records with it, and every
+    step that matches a row to its disagreement by scope uses it too (GATE's
+    lookup, ADJUDICATE's one-scope check), so a row and its disagreement can
+    never be told apart by "total" against no scope.
 
     Such a field has one answer for the whole study, so a record that gives no
     scope and one that says "the whole study" make the same claim. Run
@@ -266,7 +272,7 @@ def _scope_key(field_def: FieldDef, label: str | None) -> str | None:
     scope stays apart on any field.
     """
     key = normalize_scope(label)
-    if key == "total" and not field_def.scoped:
+    if key == "total" and field_def is not None and not field_def.scoped:
         return None
     return key
 

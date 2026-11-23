@@ -448,3 +448,50 @@ def test_a_row_finds_its_disagreement_by_any_records_scope(fields_yaml_path) -> 
     [out] = gate_node(RunState(run_id="t", resolved=[rf], contradictions=[c]))["resolved"]
     assert out.status == "needs_review"
     assert out.contradiction is c
+
+
+class TestARowFindsItsDisagreementByTheGroupingKey:
+    """GATE matches a row to its disagreement by reconcile/__init__.py:scope_key,
+    the rule RECONCILE groups with: on a field that is not scoped, "total" and no
+    scope are one group, so neither spelling hides the disagreement."""
+
+    @staticmethod
+    def _gate(
+        field_id: str, record_scopes: list[str | None], row_scope: str | None,
+    ) -> ResolvedField:
+        records = []
+        for i, scope in enumerate(record_scopes):
+            r = FieldRecord(
+                field_id=field_id, group="g", raw_value=f"v{i}", quote=f"q{i}",
+                provenance=Provenance(doc_id=f"doc-{i}", doc_kind="rfp", page=i + 1),
+                confidence=0.9, scope=scope,
+            )
+            r.value = f"v{i}"
+            records.append(r)
+        c = Contradiction(field_id=field_id, records=records, verdict="conflict")
+        rf = ResolvedField(
+            field_id=field_id, value="v0", status="needs_review", confidence=0.95,
+            scope=row_scope,
+        )
+        [out] = gate_node(RunState(run_id="t", resolved=[rf], contradictions=[c]))["resolved"]
+        return out
+
+    @pytest.mark.parametrize("record_scopes,row_scope", [
+        (["total", "total"], None),
+        (["total", None], None),
+        ([None, None], "total"),
+        (["Total", "study"], None),
+    ])
+    def test_an_unscoped_field(self, fields_yaml_path, record_scopes, row_scope) -> None:  # type: ignore[no-untyped-def]
+        _use_real_registry(fields_yaml_path)
+        out = self._gate("blinding.placebo_matching", record_scopes, row_scope)
+        assert out.status == "needs_review"
+        assert out.contradiction is not None
+
+    def test_a_scoped_field_keeps_the_two_apart(self, fields_yaml_path) -> None:  # type: ignore[no-untyped-def]
+        """As RECONCILE does: on a scoped field they are two groups, so a row
+        with no scope is not the whole study's disagreement."""
+        _use_real_registry(fields_yaml_path)
+        out = self._gate("ops.sites_total", ["total", "total"], None)
+        assert out.contradiction is None
+        assert out.status == "confirmed"
