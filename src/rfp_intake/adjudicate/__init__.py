@@ -135,14 +135,24 @@ def _handle_not_a_conflict(
     """Records weren't actually comparable — resolve each on its own rather
     than force a single merged value RECONCILE's scope grouping got wrong.
 
-    Except where the field's answer is one choice (`type` in config/fields.yaml
-    is enum or bool) and every record about it has the same scope: one row
-    per record would only repeat one question, so that cluster gets one row,
-    written as a reconcilable one is (_one_row). The other records are in
-    Appendix A. Free-text and number fields keep one row per record.
+    Two exceptions, both where every record about the field has the same scope,
+    get one row for the cluster, written as a reconcilable one is (_one_row);
+    the other records are in Appendix A:
+
+    - the field's answer is one choice (`type` in config/fields.yaml is enum or
+      bool): one row per record would only repeat one question;
+    - every record about the field gives the same normalized value, whatever the
+      field's type: once the off-topic records are set aside nothing differs.
+      Added 2026-11-23: the subject count's three records of 260 (amendment
+      p.15 and p.43, RFP p.4) beside an off-topic 236 came back as three rows
+      of 260.
+
+    Otherwise free-text and number fields keep one row per record.
     """
     on_topic = _on_topic(contradiction)
-    if field_def.type in _ONE_CHOICE_TYPES and len({r.scope for r in on_topic}) == 1:
+    if len({r.scope for r in on_topic}) == 1 and (
+        field_def.type in _ONE_CHOICE_TYPES or _one_value(on_topic)
+    ):
         return _one_row(contradiction, result, "NOT_A_CONFLICT")
     fields = [
         ResolvedField(
@@ -279,6 +289,13 @@ def _off_topic(contradiction: Contradiction, result: AdjudicationResult) -> list
         )
         return []
     return numbers
+
+
+def _one_value(records: list[FieldRecord]) -> bool:
+    """Whether every record gives the same normalized value, compared with ==
+    as RECONCILE compares values (reconcile/__init__.py:_group_by_canonical_value),
+    so a list or a dict is the same value only if it is equal."""
+    return all(r.value == records[0].value for r in records[1:])
 
 
 def _on_topic(contradiction: Contradiction) -> list[FieldRecord]:
