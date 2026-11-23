@@ -83,18 +83,27 @@ The final live run is `r-20261123-oct29-run6` (410 s, 11 contradiction clusters,
 errors): 14 of 14 must-hold facts pass, `scripts/check_review_2026_10_29.py` gives 19 pass, 0 fail,
 0 look, `scripts/check_flag_reasons.py` 13 of 13, and `report.pdf` reads "Values found for 41 of 42
 variables". The report to send Angus is that run's `report-rerender.pdf`: the same extraction
-re-rendered after two Appendix B wording fixes made while it ran. Run 5 put the protocol's power
+rendered with the final code, after the reviewers' last two readings ("After the last readings of
+run 6" and "The final readings" in the JOURNAL entry: the placebo row quotes "identical once
+prepared", other values of a dismissed difference read "Also read in the RFP: …", a budget driver's
+disagreement is high severity, a period's name is no difference only under a fixed heading and where
+another key is compared, the healthy-volunteers "No" shows the phrase that proves it); it is 14 pages
+and still gives 14 of 14, 19 pass and 13 of 13. What the final readings found and left for Oliver or a
+new run is listed there (the time window's status, Months 2 and 3's visits that need not be on site,
+the RFP's mid-page footers, among others). Run 5 put the protocol's power
 assumption ("a treatment/follow-up period of 18 months") on the treatment line as Confirmed; the
 timeline hint now forbids it, and check 5 of the 29 October script now fails it. `runs/` is not in
 git.
 
-Both gate reviewers ran on the branch three times on 2026-11-23. The first reading found 3 breaches
+Both gate reviewers read the branch several times on 2026-11-23, the last readings on the
+re-renders of run 6 ("After the last readings of run 6" and "The final readings" in the JOURNAL
+entry, where each of their findings is fixed or recorded). The first reading found 3 breaches
 of `docs/ARCHITECTURE.md` and 8 asks only partly met; each was fixed before run 4, or is recorded in
 ARCHITECTURE.md as a deviation waiting for Oliver. The second reading, and report-usability-reviewer's
 and run-comparison-reviewer's reading of run 4, were answered after run 4 ("After run 4" in the
 JOURNAL entry). pipeline-rules-reviewer's third reading found no breach of the ten rules and one of
 §3 (an Appendix B page reference without its printed page), fixed; the risks it recorded are listed
-in the JOURNAL entry. **Four decisions wait for Oliver:**
+in the JOURNAL entry. **Five decisions wait for Oliver:**
 1. Whether `only_from` stays, narrowed so a document CLASSIFY could not label is asked for every
    field, or goes, as pipeline-rules-reviewer proposed (ARCHITECTURE.md §4.2).
 2. Whether a budget driver should stay in review whenever ADJUDICATE called any record off-topic.
@@ -104,6 +113,10 @@ in the JOURNAL entry. **Four decisions wait for Oliver:**
    one field and the registry is smaller.
 4. ADJUDICATE stores a candidate no model judged as `conflict`, not None, so the report shows it as a
    disagreement (§4.7).
+5. Whether "Time window to budget for" stays Confirmed with its grey note (Angus said on 1 October to
+   ignore the protocol's 42 months) or reads Review, "Depends on Disagreement 2", through
+   `follows_conflict_of`, as report-usability-reviewer proposed. The email asks Angus whether the RFP's
+   40 months is the window.
 
 Open items 1 to 9 of the 2026-10-13 section below still stand; item 10 is fixed, and item 6
 (`report.xlsx`) now also lacks every report fix of 2026-11-23 after run 4. Still open from Angus's

@@ -388,6 +388,19 @@ class PeriodsDisplay(BaseModel):
     # confirm the variable (gate/__init__.py:periods_agree), and a key that
     # does not is printed with each of its values under the line.
     may_word_differently: list[str] = Field(default_factory=list)
+    # The text keys that only name the stretch ("Screening", "Screening
+    # Period"). Under a heading `always` gives, which the report prints in
+    # place of the document's name, any document may word them any way, and
+    # they hold the variable in review only where the documents' passages
+    # share no other key to compare (`MergedEntry.stated_two_ways`;
+    # plan-conformance-reviewer, 23 November 2026: two documents calling a
+    # 28-day screening "Screening" and "Screening Period" put the timeline in
+    # review; pipeline-rules-reviewer, the same day). Every other stretch's
+    # line prints the document's own name, which can say what a heading cannot
+    # ("a separate open-label extension study of NEOD001" is not this study's
+    # budget), so there two names are two answers (plan-conformance-reviewer,
+    # second reading, 23 November 2026). See `names_of`.
+    names: list[str] = Field(default_factory=list)
 
     @field_validator("always", "when_stated")
     @classmethod
@@ -407,6 +420,13 @@ class PeriodsDisplay(BaseModel):
     def named(self, value: str) -> str | None:
         """The heading `always` or `when_stated` gives a value, if either does."""
         return self.always.get(value) or self.when_stated.get(value)
+
+    def names_of(self, value: Any) -> list[str]:
+        """The keys of `names` that are no difference for the stretch whose
+        `order_key` value is `value`: all of them where `always` gives it a
+        heading, which the report prints instead of the document's name; none
+        elsewhere, where the line prints the document's name."""
+        return list(self.names) if str(value) in self.always else []
 
 
 class BreakdownDisplay(BaseModel):
@@ -521,6 +541,11 @@ class FieldDef(BaseModel):
         default_factory=list
     )
     budget_driver: bool = False
+    # Print the row's quote after its value, as the phrase that proves it:
+    # "No — "…Subjects with Light Chain (AL) Amyloidosis"" (Angus Gray, 1
+    # October 2026, docs/ANALYST_PROCEDURE_PROTOCOL.md section 2: "the report
+    # should say no and show the phrase that proves it").
+    show_quote: bool = False
     derived: bool = False
     derived_from: list[str] | None = None
     # Rows of the `derived_from` inputs that this field's rubric must not read.
@@ -628,6 +653,15 @@ class FieldDef(BaseModel):
         """The keys of one entry of an `object[]` field, in `schema` order."""
         return [parse_entry_key(k, s) for k, s in (self.schema_def or {}).items()]
 
+    def severity(self, rated: str | None) -> str | None:
+        """A disagreement's severity on this field: "high" on a budget driver,
+        whatever a model rated it, as config/precedence.yaml's `severity`
+        defines it ("field has budget_driver: true"); else the rating given.
+        The one place the rule lives: ADJUDICATE stores it, and the report
+        applies it to a run stored before 23 November 2026
+        (pipeline-rules-reviewer, the same day)."""
+        return "high" if self.budget_driver else rated
+
 
 class ReportWording(BaseModel):
     """Phrases report.pdf prints that belong to no one field, `report_wording` in
@@ -712,9 +746,72 @@ class ReportWording(BaseModel):
     row_disagree: str = Field(default="Documents disagree — see Disagreement {n}", min_length=1)
     row_provisional: str = Field(default="Shown provisionally: {value} ({why})", min_length=1)
     counted_note: str = Field(
-        default="Worked out by the tool from {heading}, not read from a document.",
+        # "Counted", not "worked out … not read from a document", which read as
+        # if the table were the tool's own (report-usability-reviewer, 23
+        # November 2026, on run r-20261123-oct29-run6).
+        default="Counted by the tool from {heading}; no document states this count.",
         min_length=1,
     )
+    # Under a stretch of a `periods` display's `always` list that no document
+    # gives, so the "Not found" says what it refers to (angus-asks L13;
+    # report-usability-reviewer, 23 November 2026, on run6's "Run-in").
+    period_not_found: str = Field(
+        default="No passage in the documents describes this stage.", min_length=1,
+    )
+    # Abbreviations the report prints in quoted or extracted words, explained
+    # after the variables in "Words used in this report": page 1 says every
+    # clinical term is there, and run6 printed EOT, IXRS and IP with no entry.
+    terms: dict[str, str] = Field(default_factory=dict)
+    # Under a row whose passage is also one document's side of another
+    # variable's numbered Disagreement (`{doc}`, `{n}`): run6 printed the RFP's
+    # "40 month study duration" as the Confirmed time window to budget for one
+    # line above the same words in Disagreement 2 (report-usability-reviewer).
+    same_passage: str = Field(
+        default="The {doc}'s side of Disagreement {n} quotes the same passage.", min_length=1,
+    )
+    # On a side printed under a row (`Row.others`) whose passage is another
+    # row's own (`{label}`), in place of the quote: run6 printed the RFP's
+    # pharmacy monitoring request twice in one section, once as "Pharmacy
+    # monitoring visits" and once as the RFP's side of "Unblinded monitoring
+    # likely required" (plan-conformance-reviewer, second reading; angus-asks B8).
+    side_same_row: str = Field(
+        default='read from the same passage as "{label}"', min_length=1,
+    )
+
+    # A side printed under a row in review (`Row.others`): another value the
+    # tool read in the passages, not one side of a disagreement, so it does not
+    # read as one (report-usability-reviewer, on run r-20261123-oct29-run6).
+    side_also: str = Field(default="Also read in the {doc}: {value}", min_length=1)
+    # Under the pages of a row or side that cites several pages and prints one
+    # quote: which page the quote is on, since a page reference is never in
+    # the Value cell (Angus Gray, 29 October 2026; pipeline-rules-reviewer, 23
+    # November 2026, on run6's whole-study side quoting p.15 beside "p.15, 24").
+    quote_from: str = Field(default="The quote is from {page}.", min_length=1)
+
+    @field_validator("quote_from")
+    @classmethod
+    def _names_the_page(cls, v: str) -> str:
+        if "{page}" not in v:
+            raise ValueError("must contain {page}, the quote's page")
+        return v
+
+    @field_validator("side_same_row")
+    @classmethod
+    def _names_the_row(cls, v: str) -> str:
+        if "{label}" not in v:
+            raise ValueError("must contain {label}, the row whose passage it is")
+        return v
+
+    @field_validator("side_also")
+    @classmethod
+    def _names_doc_and_value(cls, v: str) -> str:
+        if "{doc}" not in v or "{value}" not in v:
+            raise ValueError("must contain {doc}, the document, and {value}, what it read")
+        # Page 1 names the line by its words before the first placeholder
+        # (`ReportModel.also_read`), so there must be some.
+        if not v.split("{", 1)[0].strip():
+            raise ValueError("must start with words, which page 1 quotes")
+        return v
 
     @field_validator("entries_count")
     @classmethod
@@ -746,7 +843,7 @@ class ReportWording(BaseModel):
 
     @field_validator(
         "not_used", "no_value_chosen", "row_shown_provisional", "row_no_value_chosen",
-        "depends_on", "block_disagree", "row_disagree",
+        "depends_on", "block_disagree", "row_disagree", "same_passage",
     )
     @classmethod
     def _names_the_disagreement(cls, v: str) -> str:
@@ -1237,6 +1334,17 @@ def _validate_registry(groups: list[GroupDef], fields: list[FieldDef]) -> None:
                 errors.append(
                     f"Field {f.id} has periods may_word_differently naming keys that are not "
                     f"text keys of its schema: {', '.join(not_text)}"
+                )
+            not_text = [k for k in d2.names if k not in keys or keys[k].type != "text"]
+            if not_text:
+                errors.append(
+                    f"Field {f.id} has periods names naming keys that are not text keys of "
+                    f"its schema: {', '.join(not_text)}"
+                )
+            if set(d2.names) & {d2.order_key, *d2.one_per}:
+                errors.append(
+                    f"Field {f.id} has periods names including a key that orders or groups "
+                    f"the periods: {', '.join(sorted(set(d2.names) & {d2.order_key, *d2.one_per}))}"
                 )
             for s in d2.see_also:
                 if s.field not in pre_by_id or s.field == f.id:

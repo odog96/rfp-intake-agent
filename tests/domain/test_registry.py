@@ -978,12 +978,38 @@ class TestEntryKeysAndTheirDisplays:
         ({"display": dict(_PERIODS, see_also=[{"field": "g1.none", "wording": "{label}",
                                                "disagree": "{n}"}])},
          "see_also on a field it cannot use"),
+        # `names`, 23 November 2026: text keys only, and never the key that
+        # orders or groups the periods.
+        ({"display": dict(_PERIODS, names=["n"])},
+         "periods names naming keys that are not text keys of its schema: n"),
+        ({"display": dict(_PERIODS, names=["colour"])},
+         "periods names naming keys that are not text keys of its schema: colour"),
+        ({"display": dict(_PERIODS, one_per=["kind", "name"], names=["name"])},
+         "periods names including a key that orders or groups the periods: name"),
     ])
     def test_a_wrong_display_does_not_load(
         self, tmp_path: Path, extra: dict[str, Any], match: str
     ) -> None:
         with pytest.raises(RegistryValidationError, match=re.escape(match)):
             load_registry(self._write(tmp_path, **extra))
+
+    def test_a_name_is_no_difference_only_under_an_always_heading(
+        self, tmp_path: Path
+    ) -> None:
+        """plan-conformance-reviewer, second reading, 23 November 2026: a
+        stretch `when_stated` lists, or one no list names, prints the
+        document's own name, so there two names are two answers."""
+        from rfp_intake.domain.registry import PeriodsDisplay
+
+        registry = load_registry(self._write(tmp_path, display=dict(
+            self._PERIODS, always={"arm": "Arms"}, when_stated={"cohort": "Cohorts"},
+            names=["label"],
+        )))
+        display = registry.get_field("g1.parts").display
+        assert isinstance(display, PeriodsDisplay)
+        assert display.names_of("arm") == ["label"]
+        assert display.names_of("cohort") == []
+        assert display.names_of("mixed") == []
 
     @pytest.mark.parametrize(("key", "phrase"), [
         ("entries_count", "{kinds}"),
@@ -1293,7 +1319,7 @@ class TestTheKeysOfThe29October2026Layout:
         assert wording.row_disagree == "Documents disagree — see Disagreement {n}"
         assert wording.row_provisional == "Shown provisionally: {value} ({why})"
         assert wording.counted_note == (
-            "Worked out by the tool from {heading}, not read from a document."
+            "Counted by the tool from {heading}; no document states this count."
         )
 
     @pytest.mark.parametrize(("key", "phrase"), [
@@ -1311,3 +1337,17 @@ class TestTheKeysOfThe29October2026Layout:
         p.write_text(yaml.dump(data))
         with pytest.raises(Exception, match="must contain"):
             load_registry(p)
+
+
+def test_the_also_line_starts_with_words_page_one_quotes(fields_yaml_path: Path) -> None:
+    """Page 1 names the "Also read in the …" line by its words before the first
+    placeholder (`ReportModel.also_read`); a wording starting with "{doc}" would
+    leave it nothing to quote (pipeline-rules-reviewer, final reading)."""
+    from pydantic import ValidationError
+
+    from rfp_intake.domain.registry import ReportWording
+
+    wording = load_registry(fields_yaml_path).report_wording.model_dump()
+    with pytest.raises(ValidationError, match="must start with words"):
+        ReportWording.model_validate({**wording, "side_also": "{doc} also gives: {value}"})
+    assert ReportWording.model_validate(wording).side_also.startswith("Also read in the")

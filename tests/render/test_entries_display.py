@@ -121,16 +121,24 @@ def _durations() -> list[FieldRecord]:
     ]
 
 
-def _report(records: list[FieldRecord]) -> tuple[RunState, ReportModel]:
+def _report(
+    records: list[FieldRecord], page_texts: dict[str, dict[int, str]] | None = None,
+) -> tuple[RunState, ReportModel]:
+    """The report of `records`, through NORMALIZE, RECONCILE and GATE. Each
+    document's `page_texts` where given: a passage two rows share is found only
+    on a page whose text is known (`_Docs.same_passage`)."""
     from rfp_intake.gate import gate_node
     from rfp_intake.normalize import normalize_node
     from rfp_intake.reconcile import reconcile_node
 
+    texts = page_texts or {}
     state = RunState(
         run_id="r-1",
         documents=[
-            Document(id=AM, path="/runs/r-1/inputs/Amendment.pdf", kind="amendment", pages=120),
-            Document(id=RFP, path="/runs/r-1/inputs/RFP.pdf", kind="rfp", pages=6),
+            Document(id=AM, path="/runs/r-1/inputs/Amendment.pdf", kind="amendment", pages=120,
+                     page_texts=texts.get(AM, {})),
+            Document(id=RFP, path="/runs/r-1/inputs/RFP.pdf", kind="rfp", pages=6,
+                     page_texts=texts.get(RFP, {})),
         ],
         records=records,
     )
@@ -359,8 +367,14 @@ class TestVisitFrequency:
             "Later treatment (Month 4 onwards): Monthly, Day 1 (every 28 days)",
         ]
         assert "Other wordings are quoted in Appendix A." not in lines
-        assert row.where_notes == ["No schedule table found.",
-                                   "Other wordings are quoted in Appendix A."]
+        # Under each line worded more than one way, here only the later
+        # treatment's, not under the variable's own row (layout rule 4 of the
+        # 29 October 2026 plan).
+        assert row.where_notes == ["No schedule table found."]
+        assert [
+            b.heading for b in row.below
+            if b.where_notes == ["Other wordings are quoted in Appendix A."]
+        ] == ["Later treatment (Month 4 onwards)"]
         quotes = {e.quote for e in model.evidence if e.field_id == "visits.frequency_by_period"}
         assert {"Day 1 of all other months", "Every 28 days"} <= quotes
 
@@ -434,8 +448,8 @@ class TestTimeline:
             "End of treatment visit: 28–35 days after last dose",
             "Time window to budget for: Not found in the documents",
             f"Whole study: Documents disagree — see Disagreement {no}",
-            '  Amendment: 42 months — "42 months"',
-            '  RFP: 40 months — "40 months"',
+            '  Amendment: 42 months',
+            '  RFP: 40 months',
         ]
         # Each period's own pages; a stretch no document gives has none.
         printed = _printed(row)
@@ -445,13 +459,17 @@ class TestTimeline:
         assert printed[1] == (
             "Screening", "28 days before first dose", "Confirmed", "Amendment p.13")
         assert printed[2] == ("Run-in", "Not found in the documents", "Review", "")
+        # The "Not found" says what it refers to (angus-asks L13): run6's
+        # "Run-in" line gave no pages and no reason (report-usability-reviewer).
+        [run_in] = [t for t in row.table if t.variable == "Run-in"]
+        assert run_in.notes == [get_registry().report_wording.period_not_found]
         # The disagreement's sides are rows right under "Whole study", each
         # with its own pages (Angus Gray: "and then the information about
         # where it's found the disagreement").
         assert _whole_study(row) == [
             ("Whole study", f"Documents disagree — see Disagreement {no}", "Review", ""),
-            ("", 'Amendment: 42 months — "42 months"', "", "Amendment p.24"),
-            ("", 'RFP: 40 months — "40 months"', "", "RFP p.3"),
+            ("", 'Amendment: 42 months', "", "Amendment p.24"),
+            ("", 'RFP: 40 months', "", "RFP p.3"),
         ]
         # The whole study's disagreement keeps its number and its own label.
         [decision] = [d for d in model.decisions if d.no == no]
@@ -459,6 +477,66 @@ class TestTimeline:
         # Neither variable shown under the timeline has a row of its own.
         assert not [r for g in model.groups for r in g.rows
                     if r.field_id in ("timeline.total_duration", "timeline.budget_window")]
+
+    def test_a_window_on_the_rfps_side_of_the_disagreement_says_so(self) -> None:
+        # report-usability-reviewer, 23 November 2026: run6 printed the RFP's
+        # "40 month study duration" as the Confirmed time window to budget for,
+        # one line above the same passage as the RFP's side of Disagreement 2.
+        # The status stays GATE's; a grey note names the disagreement.
+        _, model = _report(_timeline() + _durations() + [
+            _rec("timeline.budget_window", "40 months", None, RFP, 3,
+                 "Study Duration 40 months; enrollment over 24 months"),
+        ], page_texts={RFP: {3: "Study Duration 40 months; enrollment over 24 months"}})
+        row = _row(model, "timeline.periods")
+        [no] = [d.no for d in model.decisions if d.field_id == "timeline.total_duration"]
+        [window] = [t for t in row.table if t.variable == "Time window to budget for"]
+        assert (window.values, window.where) == (["40 months"], "RFP p.3")
+        assert window.notes == [f"The RFP's side of Disagreement {no} quotes the same passage."]
+        # The whole study's own row says nothing of the kind: it is the disagreement.
+        [whole] = [t for t in row.table if t.variable == "Whole study"]
+        assert not any("quotes the same passage" in n for n in whole.notes)
+
+    def test_a_timeline_in_review_gives_its_reason_in_flagged_for_review(self) -> None:
+        # pipeline-rules-reviewer, final reading, 23 November 2026: listed in
+        # Flagged for review as one row (`review_as_one`), the patient timeline
+        # printed an empty reason; its lines carry GATE's.
+        f = "timeline.periods"
+        _, model = _report([
+            _rec(f, {"component": "treatment", "label": "Treatment Period",
+                     "duration": "24 months"}, None, RFP, 3, "Treatment Period 24 months"),
+            _rec(f, {"component": "treatment", "label": "Study drug treatment",
+                     "end": "approximately 156 primary endpoint events"}, None, AM, 12,
+                 "Study drug treatment until approximately 156 primary endpoint events"),
+        ])
+        [row] = [r for r in model.review_rows() if r.field_id == f]
+        assert row.reasons and all(row.reasons)
+
+    def test_a_passage_two_lines_share_is_named_under_both(self) -> None:
+        # pipeline-rules-reviewer, final reading, 23 November 2026: the note
+        # naming the disagreement that quotes a line's own passage was printed
+        # under the first line only, so the next line, on the same words, read
+        # as settled.
+        passage = ("Subjects will be treated until approximately 156 events and followed "
+                   "for survival; the total study duration is approximately 42 months.")
+        f = "timeline.periods"
+        records = [
+            _rec(f, {"component": "screening", "label": "Screening",
+                     "duration": "28 days before first dose"}, None, AM, 13,
+                 "Screening 28 days before first dose"),
+            _rec(f, {"component": "treatment", "label": "Treatment",
+                     "duration": "until approximately 156 events"}, None, AM, 15, passage),
+            _rec(f, {"component": "follow_up", "label": "Follow-up",
+                     "duration": "for survival"}, None, AM, 15, passage),
+            _rec("timeline.total_duration", "42 months", "study", AM, 15,
+                 "the total study duration is approximately 42 months"),
+            _rec("timeline.total_duration", "40 months", "study", RFP, 3, "40 months"),
+        ]
+        _, model = _report(records, page_texts={AM: {15: passage}, RFP: {3: "40 months"}})
+        row = _row(model, "timeline.periods")
+        [no] = [d.no for d in model.decisions if d.field_id == "timeline.total_duration"]
+        note = f"The Amendment's side of Disagreement {no} quotes the same passage."
+        notes = {t.variable: t.notes for t in row.table if t.variable}
+        assert note in notes["Treatment"] and note in notes["Follow-up"]
 
     def test_every_wording_of_the_whole_study_is_a_side_with_its_pages(self) -> None:
         # Run r-20261012-stage4check2 printed four wordings on one line; each
@@ -471,7 +549,7 @@ class TestTimeline:
         row = _row(model, "timeline.periods")
         sides = _whole_study(row)[1:]
         assert ("", f"Amendment: {long}", "", "Amendment p.15") in sides
-        assert ("", 'RFP: 40 months — "40 months"', "", "RFP p.3") in sides
+        assert ("", 'RFP: 40 months', "", "RFP p.3") in sides
         assert ("", "Amendment: 42 months", "", "Amendment p.24") in sides
         assert len(sides) == 3
 
@@ -485,8 +563,8 @@ class TestTimeline:
         ]
         _, model = _report(records)
         assert _whole_study(_row(model, "timeline.periods"))[1:] == [
-            ("", 'Amendment: 42 months — "42 months"', "", "Amendment p.24"),
-            ("", f'RFP: {rfp_says} — "{rfp_says}"', "", "RFP p.3"),
+            ("", 'Amendment: 42 months', "", "Amendment p.24"),
+            ("", f'RFP: {rfp_says}', "", "RFP p.3"),
         ]
 
     @pytest.mark.parametrize("wording", [
@@ -500,7 +578,7 @@ class TestTimeline:
         ]
         _, model = _report(records)
         assert _whole_study(_row(model, "timeline.periods"))[1] == (
-            "", f'Amendment: {wording} — "{wording}"', "", "Amendment p.24",
+            "", f'Amendment: {wording}', "", "Amendment p.24",
         )
 
     def test_a_document_with_two_values_gives_each_with_its_page(self) -> None:
@@ -515,7 +593,7 @@ class TestTimeline:
         sides = _whole_study(_row(model, "timeline.periods"))[1:]
         assert ("", "Amendment: about 3.5 years", "", "Amendment p.15") in sides
         assert ("", "Amendment: about 4 years", "", "Amendment p.24") in sides
-        assert ("", 'RFP: 40 months — "40 months"', "", "RFP p.3") in sides
+        assert ("", 'RFP: 40 months', "", "RFP p.3") in sides
 
     def test_without_a_disagreement_the_whole_study_row_gives_its_value(self) -> None:
         _, model = _report(_timeline() + _durations()[:1])
@@ -567,8 +645,32 @@ class TestTimeline:
         printed = _printed(_row(model, "timeline.periods"))
         assert ("Open-label extension", "OLE study, 12 months", "Review", "RFP p.3") in printed
         assert not any("NEOD001, 12 months" in p[1] for p in printed)
+        # An open-label extension's line starts with the document's name for
+        # it, so two names are two answers: "separate ... study" says what "OLE
+        # study" does not (plan-conformance-reviewer, second reading, 23
+        # November 2026). Only a heading `always` gives makes a name no
+        # difference. Each start is printed under the line with its page too.
         assert ("", "Label: documents differ — Separate open-label extension study of NEOD001",
                 "Review", "Amendment p.20") in printed
+        assert ("", "Start: documents differ — study completion", "Review",
+                "Amendment p.20") in printed
+        assert ("", "Start: documents differ — end of treatment", "Review", "RFP p.3") in printed
+
+    def test_two_documents_naming_a_screening_differently_print_no_difference(self) -> None:
+        """Under a heading `always` gives, the document's name is not printed,
+        so "Screening" and "Screening Period" are one answer
+        (plan-conformance-reviewer, 23 November 2026)."""
+        _, model = _report([
+            _rec("timeline.periods", {"component": "screening", "label": "Screening",
+                                      "duration": "28 days"},
+                 None, AM, 20, "Screening 28 days"),
+            _rec("timeline.periods", {"component": "screening", "label": "Screening Period",
+                                      "duration": "28 days"},
+                 None, RFP, 3, "Screening Period 28 days"),
+        ])
+        printed = _printed(_row(model, "timeline.periods"))
+        assert not any(p[1].startswith("Label: documents differ") for p in printed)
+        assert ("Screening", "28 days", "Confirmed", "Amendment p.20; RFP p.3") in printed
 
     def test_a_line_takes_its_words_from_a_passage_that_states_them(self) -> None:
         """pipeline-rules-reviewer, 23 November 2026: the more confident record
@@ -758,7 +860,7 @@ def test_the_pdf_prints_the_three_rows() -> None:
         "(budgeted separately)",
         "Patient timeline",
         "Whole study Documents disagree — see Disagreement",
-        'Amendment: 42 months — "42 months"',
+        'Amendment: 42 months',
     ):
         assert said in text, said
     # No page reference is printed inside a value, and no confidence figure.

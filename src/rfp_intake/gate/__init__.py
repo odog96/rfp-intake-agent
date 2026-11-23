@@ -292,9 +292,14 @@ def periods_agree(rf: ResolvedField, field_def: FieldDef | None) -> bool:
     ):
         return False
     display = field_def.display
+    entries = [merge_entry(field_def, group) for group in period_groups(rf.statements, display)]
     return all(
-        not merge_entry(field_def, group).stated_two_ways(display.may_word_differently)
-        for group in period_groups(rf.statements, display)
+        not entry.stated_two_ways(
+            display.may_word_differently,
+            display.names_of(entry.value(display.order_key)),
+            grouped_by=[display.order_key, *display.one_per],
+        )
+        for entry in entries
     )
 
 

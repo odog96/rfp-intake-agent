@@ -618,6 +618,22 @@ class TestAModelThatCannotAnswer:
         assert result["contradictions"][0].explanation == "real"
         assert result["errors"] == []
 
+    def test_a_budget_drivers_conflict_is_high_whatever_the_model_rated(
+        self, fields_yaml_path, monkeypatch,
+    ) -> None:  # type: ignore[no-untyped-def]
+        # config/precedence.yaml: high is "field has budget_driver: true". Run
+        # r-20261123-oct29-run6 stored "medium" for the placebo-matching conflict.
+        _use_real_registry(fields_yaml_path)
+        import rfp_intake.adjudicate as adjudicate
+
+        fake = _Failing(0, AdjudicationResult(
+            verdict="conflict", explanation="real", severity="medium",
+        ))
+        monkeypatch.setattr(adjudicate, "get_structured_output_for_role", lambda llm, role: fake)
+        records = [_record(75, "amend", "amendment"), _record(80, "rfp", "rfp")]
+        result = adjudicate_node(RunState(run_id="t", contradictions=[_candidate(records)]))
+        assert result["contradictions"][0].severity == "high"  # ops.sites_total
+
     def test_a_candidate_never_judged_is_still_a_disagreement_with_a_row(
         self, fields_yaml_path, monkeypatch,
     ) -> None:  # type: ignore[no-untyped-def]

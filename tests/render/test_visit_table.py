@@ -153,7 +153,10 @@ class TestTheRealProtocol:
     def test_every_count_cites_its_page(self, protocol_state: RunState) -> None:
         [table] = _row(get_registry(), protocol_state, TABLE).visit_tables
         assert table.sources == "Protocol p.26 (printed p.24), 27 (printed p.25)"
-        # The EOT/ETD column, timed by its footnote, also cites the footnote's page.
+        # Every row gives its pages, though the heading gives them too: a value
+        # keeps its page in its Where cell (plan-conformance-reviewer, second
+        # reading, 23 November 2026). The EOT/ETD column, timed by its
+        # footnote, also cites the footnote's page.
         assert all(cells[5] == table.sources for i, cells in enumerate(table.rows) if i != 10)
         assert table.rows[10][5].startswith(table.sources + ", 28 (printed p.26)")
 

@@ -1049,7 +1049,13 @@ dropped. The records stay in the contradiction, so Appendix A still quotes each 
 knows what the field asks for.
 
 `severity: high` when the field feeds a budget driver (site count, subject count, visit count, monitoring
-frequency, duration). Mark this in `fields.yaml` with `budget_driver: true`.
+frequency, duration). Mark this in `fields.yaml` with `budget_driver: true`. Since 2026-11-23 code sets
+it, not the model, in one place, `FieldDef.severity` (`domain/registry.py`): ADJUDICATE stores what it
+returns, "high" for a budget driver whatever the model rated, and the report applies the same function
+to a run stored before (run `r-20261123-oct29-run6` stored "medium" for the placebo-matching conflict;
+report-usability-reviewer; pipeline-rules-reviewer asked for the one producer). So the report can
+print "high" where an older run's `extraction.json` holds "medium"; `eval/golden/contradictions.yaml`
+expects "high" for `ops.sites_total`, a budget driver.
 
 **Because in-app adjudication is deferred (§11), the report is the only place a contradiction gets resolved.**
 That raises the bar on this node's output: the explanation must be complete enough for an analyst to act on
@@ -1208,9 +1214,17 @@ included.
   rival answers, so the several-values rule does not apply where its periods agree
   (`periods_agree`): every period, grouped as the report groups them
   (`reconcile/entries.py:period_groups`), reads the same in every record stating it, in one document
-  or two (`MergedEntry.stated_two_ways`). The text keys the display lists in `may_word_differently`
-  — `label`, `start` and `end`, which name the period, a day or a visit — may be worded differently
-  while one document states them ("Day -1" and "Month 1-Day 1" for the end of the amendment's
+  or two (`MergedEntry.stated_two_ways`). A key the display lists in `names` — `label`, the
+  period's own name — is no difference, whoever words it ("Screening" and "Screening Period";
+  plan-conformance-reviewer, 23 November 2026), where the period's heading comes from `always`,
+  which the report prints instead of the document's name (`PeriodsDisplay.names_of`), and another of
+  the period's keys, not one it is grouped by, is stated by two documents: an RFP "Treatment Period"
+  of 24 months and an amendment "Study drug treatment" until 156 events share no key but the name, and
+  are reviewed (pipeline-rules-reviewer, the same day). Otherwise the name is compared as the
+  `may_word_differently` keys are. The text keys the display lists in
+  `may_word_differently` — `label`, `start` and `end`, which name the period, a day or a visit — may
+  be worded differently while one document states them ("Day -1" and "Month 1-Day 1" for the end of
+  the amendment's
   screening); two documents stating one of them with no wording in common keep the row in review,
   because an `end` can hold the event a treatment runs until ("approximately 300 primary endpoint
   events" against "approximately 250", or "24 months after the last subject is randomized" against
@@ -1339,7 +1353,11 @@ whether or not a document states them ("Not found in the documents" where none d
 further periods printed only where a document states one, each starting with the document's own name
 for it ("Separate open-label extension study of NEOD001, from study completion"), and
 `may_word_differently` the keys GATE lets one document word two ways, and two documents word
-differently where they share one wording (§4.9); a schedule
+differently where they share one wording (§4.9), and `names` the keys that only name a period, which
+any document may word any way under a heading `always` gives, as the report prints that heading instead
+of the document's name, where another key of the period is compared (§4.9); a `when_stated` or
+unlisted period's line prints the document's name, so there two names are two answers
+(`PeriodsDisplay.names_of`); a schedule
 consideration's `show: false` leaves it out of Key considerations but still out of the Assessments
 count. A period's line takes its words from one passage where one passage gives them all, and cites
 every passage whose words it prints, never a passage that states only the period's name
@@ -1364,9 +1382,52 @@ per site" give a value after the dash. The value shown for an entry's key, withi
 whose quote states the key (§4.6's entries, `reconcile/entries.py:quote_states`), and a period's line,
 where several passages give it all, takes its words from one whose quote states them
 (`_one_passage`). Under a budget driver in review because ADJUDICATE dismissed a difference, the other
-values the on-topic passages give are listed with their pages ("Also stated: Yes, in an appendix —
-Amendment p.111 (printed p.109)", `_also_stated`), leaving out a value another row of the same
-difference already shows. Appendix A prints no scope for a whole-study passage (`_evidence_scope`).
+values the on-topic passages give are sides under the row, each with its quote and its own pages
+(`Row.others`, `_also_sides`), leaving out a value another row of the same difference already shows;
+until the last readings of run 6 they were one "Also stated: …" note under the pages, which put two
+page lists in one Where cell. Each reads "Also read in the RFP: …" (`report_wording.side_also`), so it
+is not taken for one side of a disagreement, and page 1 says what such a line is, in the words
+`side_also` starts with (`ReportModel.also_read`). Where its passage is
+another variable's row's own, it names that row instead of repeating the passage
+(`report_wording.side_same_row`, `_point_to_rows`): the RFP's "Likely needed" unblinded monitoring
+reads 'read from the same passage as "Pharmacy monitoring visits"' (angus-asks B8). Appendix A, the
+Disagreements table and Appendix B print no scope for a whole-study passage (`_evidence_scope`,
+`_whole_study`).
+
+Rules added after the last readings of run `r-20261123-oct29-run6`, render only. A side's quote is its
+whole passage where that is at most 240 characters (`SIDE_QUOTE_WHOLE`), else the first sentence cut
+at 160, and a side resting on several passages quotes the one its value is from: the placebo row's
+amendment side now says the saline bag "will look identical to the NEOD001 infusion bag" (Angus Gray,
+1 October 2026, angus-asks B5). A side citing several pages names the page whose text holds its
+quote in grey under them (`report_wording.quote_from`, `_Docs.quote_page`), not the page its record
+cites, which EXTRACT checks only against its task's pages, and nothing where no cited page holds it
+whole; never in the Value cell. A quote that only repeats the side's value is not printed. A row whose passage is also a side of another variable's numbered
+Disagreement has the grey note `report_wording.same_passage` and keeps its status
+(`_note_shared_passages`): the RFP's "40 month study duration" is the time window to budget for and
+its side of Disagreement 2. Two quotes are one passage (`_Docs.same_passage`) where they are on the
+same page of the same document, one holds the other as whole words, the shorter has at least
+`SAME_PASSAGE_WORDS` (2) words, and the page's text is known and holds the longer as whole words
+and the shorter exactly once, so the
+shorter can only have been read from the longer's passage; each row is compared with its own passages
+only (`_own_passages`: a period or arm line's own records, each page's own quote where RECONCILE kept
+one per page (`ResolvedField.source_quotes`), the records of a row's own difference that
+state its value where ADJUDICATE wrote the row (`_stating_records`, the records `_stating` cites),
+else the page holding its quote), so "75" sites is not "750 visits", "1-2 subjects enrolled", in two
+rows of RFP p.4's table, is neither row's, and a report rebuilt without its input PDFs shares no
+passage (pipeline-rules-reviewer). A timeline stretch the display's `always` lists and no part of the study
+states has `report_wording.period_not_found` under it, and "Other wordings are quoted in Appendix
+A." is under every line worded more than one way, not under the timeline's own row, which has no value
+(layout 4); both notes, the `same_passage` notes and a side's `quote_from` are printed on every line
+that has them, not once per variable as a reason is (`_once_each`). Every row of the counted visit table gives its pages, the table's own included (rule
+2), though the heading gives them too. A field with `show_quote` prints its row's quote after its one
+value, "No — "Standard of Care in Subjects with Light Chain (AL) Amyloidosis"", cut as a side's quote
+is and then marked "…", with the quote's page in grey where the row cites several (Angus Gray, 1 October 2026: "the report should say no and show
+the phrase that proves it"; `design.healthy_volunteers`). Flagged for review explains only the
+reasons its rows give, and the patient timeline, listed there as one row (`review_as_one`), gives
+its lines' reasons. In ADJUDICATE's text a range of record numbers names
+every passage once, after it ("records 3 to 5 (Amendment p.26, 111)"), a code word followed by its own
+last words reads once, and `scope="total"` reads 'the scope "total"' (`_name_settings`).
+`report_wording.terms` lists the documents' abbreviations after the variables in the word list.
 GATE's predicates are public (`documents_state_it`, `periods_agree`, `rival_values`,
 `entry_listings`) and `_review_reasons` calls them, so the printed reason is the rule GATE applied, on
 an arm row too.
@@ -1386,7 +1447,7 @@ is what makes the whole pipeline testable without a filesystem.
   this order: (1) five lines naming the documents, the counts and what to do with the report; (2) **All
   variables** — every variable by group, with value, status, confidence and pages. Since 2026-10-12 a row
   in a numbered disagreement states each side on the row — one line per document and value, with only
-  the pages stating that value and the passage's first sentence where it rests on one passage — then
+  the pages stating that value and its passage (whole up to 240 characters, else the first sentence) — then
   "Shown provisionally: … See Disagreement N" or "No value chosen. See Disagreement N"; (3) **Disagreements between the documents** — each one numbered,
   with both sides' values and pages and the verdict (see §4.7 — this is where conflicts get resolved in
   MVP); (4) **Flagged for review** — every other value needing a look, each with the reason it is flagged;

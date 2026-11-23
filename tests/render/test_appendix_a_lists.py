@@ -33,7 +33,9 @@ def _real_registry(fields_yaml_path) -> None:  # type: ignore[no-untyped-def]
 
 
 _F = "monitoring.unblinded_factors"
-_LIST = "IP accountability; Separate blinded unblinded staff; Drug preparation requirements"
+_LIST = (
+    "Study drug accountability; Separate blinded and unblinded staff; Drug preparation requirements"
+)
 
 
 def _factors() -> list[FieldRecord]:
@@ -102,8 +104,8 @@ class TestAListWithAPassageForEachPage:
         ]
         lines = _lines(records, _F)
         assert {(e.value, e.quote) for e in lines} == {
-            ("IP accountability", "Accountability by an unblinded monitor"),
-            ("IP accountability", "Unblinded accountability"),
+            ("Study drug accountability", "Accountability by an unblinded monitor"),
+            ("Study drug accountability", "Unblinded accountability"),
         }
 
     def test_the_pdf_prints_the_list_once_and_no_dash_before_a_passage(self) -> None:

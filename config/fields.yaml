@@ -162,6 +162,47 @@ report_wording:
   # Appendix A's marker on a passage the adjudicating reviewer said is not about the
   # variable (fix 5); the reviewer's reason is printed in Appendix B.
   off_topic: "Not about this variable — see Appendix B"
+  # Under a stretch of the patient timeline that its `always` list prints and no document
+  # gives, so "Not found in the documents" says what it refers to (angus-asks L13).
+  period_not_found: "No passage in the documents describes this stage."
+  # Under a row whose passage is also one document's side of another variable's numbered
+  # Disagreement: the RFP's "40 month study duration" is the time window to budget for and
+  # its side of the whole study's disagreement (report-usability-reviewer, 23 November 2026).
+  same_passage: "The {doc}'s side of Disagreement {n} quotes the same passage."
+  # In place of the quote on a side printed under a row (a value of a dismissed difference)
+  # whose passage is another row's own: the RFP's pharmacy monitoring request is the
+  # "Pharmacy monitoring visits" row at the top of its section, and is not repeated
+  # (angus-asks B8; plan-conformance-reviewer, 23 November 2026).
+  side_same_row: 'read from the same passage as "{label}"'
+  # A line under a row in review giving another value the tool read in the passages, which
+  # is not one document's side of a disagreement (report-usability-reviewer, 23 November
+  # 2026: "RFP: Likely needed" read as if the RFP said so).
+  side_also: "Also read in the {doc}: {value}"
+  # Under the pages of a row or a side citing several pages and printing one quote: the
+  # quote's page, as no page reference is printed in the Value cell.
+  quote_from: "The quote is from {page}."
+  # Abbreviations the documents use that the report prints in quotes and values, explained
+  # in "Words used in this report" after the variables. Page 1 says the abbreviations are
+  # there; run r-20261123-oct29-run6 printed EOT, IXRS and IP with no entry
+  # (report-usability-reviewer, 23 November 2026), and IV, CRO, DSMB and PM, the last two in
+  # Appendix B (plan-conformance-reviewer, the same day).
+  # CRF is not here: "Number of CRF pages" above already explains it.
+  terms:
+    CEC: Clinical Events Committee, the independent group that decides whether a death or
+      hospital stay counts as an event the study measures.
+    CRO: Contract research organization, the company a sponsor hires to run the study.
+    DSMB: Data Safety Monitoring Board, the independent group that reviews safety data while the
+      study runs.
+    EOT: End of treatment, the visit after a participant's last dose of study drug.
+    ETD: Early treatment discontinuation, stopping the study drug early; the ETD visit follows.
+    IP: Investigational product, the study drug or the placebo given in its place.
+    IV: Intravenous, given into a vein; here the study drug is an IV infusion.
+    IXRS: Interactive response system, the phone or web system that randomizes each participant
+      and assigns the study drug supply (IWRS is the web-only kind).
+    PM: Project management, the CRO's work running the study, which grows with its length.
+    # RFP: page 1 names the RFP's file and never spelled the word out
+    # (plan-conformance-reviewer, final reading, 23 November 2026).
+    RFP: Request for proposal, the sponsor's document asking a CRO to plan and price the study.
   # Words a label the documents worded may start with that are never given a capital
   # letter, because they are units and "Mg" is not "mg" (Prompt B item 8). The report
   # capitalises the first word of such a label only when it is all lower case, so "mL"
@@ -731,6 +772,9 @@ fields:
       Whether some participants are healthy people rather than patients who have the disease being
       treated. Healthy-volunteer groups are usually run at different sites.
     source_priority: protocol
+    # The answer with the phrase that proves it, "No — subjects with AL amyloidosis" (Angus
+    # Gray, 1 October 2026; docs/ANALYST_PROCEDURE_PROTOCOL.md section 2).
+    show_quote: true
 
   - id: design.healthy_volunteer_scope
     group: study_design
@@ -1112,13 +1156,22 @@ fields:
       when_stated:
         open_label_extension: Open-label extension
         long_term_follow_up: Long-term follow-up
-      # The keys that name a day, a visit or the period itself, which one document may word
-      # two ways and still give one answer ("Day -1", "Month 1-Day 1" for the end of
-      # screening). Two documents wording one of them differently are reviewed, as an `end`
-      # can hold the event a treatment runs until. A length must read the same in every
+      # The keys that name a period or the day or visit it starts or ends at, which one
+      # document may word two ways and still give one answer ("Day -1", "Month 1-Day 1" for the
+      # end of screening). Two documents wording one of them differently are reviewed, as an
+      # `end` can hold the event a treatment runs until. A length must read the same in every
       # passage stating it, or the timeline is reviewed and each length is printed under its
       # line with its pages (pipeline-rules-reviewer, 23 November 2026).
       may_word_differently: [label, start, end]
+      # A period's own name, which documents word freely ("Screening", "Screening Period"),
+      # is no difference where `always` gives the period a heading, which the report prints
+      # instead of the document's name (plan-conformance-reviewer, 23 November 2026), and
+      # another of its keys is stated by two documents, so the two passages are compared on
+      # something: a "Treatment Period" of 24 months and a "Study drug treatment" until 156
+      # events share no key but the name (pipeline-rules-reviewer, the same day). Any other
+      # period's line starts with the document's name, so there two names are two answers
+      # ("a separate open-label extension study" is not this study's budget).
+      names: [label]
       # The first alternative whose keys are all stated, so the longer ones come first.
       lines: ["{duration}, {start} to {end}", "{duration}, from {start}",
               "{duration}, until {end}", "{duration}", "From {start} until {end}",
@@ -1249,9 +1302,13 @@ fields:
       partially_blinded: Partly blinded
     aliases: ["open-label", "single-blind", "double-blind", "double-masked", "triple-blind",
               "blinded", "unblinded study"]
+    # Not "so separate staff are needed": a placebo that matches as supplied needs none, and
+    # Angus Gray put the need on the drug not matching when it arrives (1 October 2026;
+    # report-usability-reviewer, 23 November 2026, on run r-20261123-oct29-run6's word list).
     plain: >
       Who is kept from knowing which treatment a participant is on. Open-label: everyone knows.
-      Double-blind: neither the participant nor the site staff does, so separate staff are needed.
+      Double-blind: neither the participant nor the site staff knows. Whether separate, unblinded
+      staff are needed depends on the rows below it, such as whether the placebo matches.
     source_priority: protocol
     budget_driver: true
 
@@ -1365,6 +1422,18 @@ fields:
              pharmacy_manual_requirements, separate_blinded_unblinded_staff,
              drug_preparation_requirements, treatment_allocation_visibility,
              sponsor_specific_requirements, protocol_or_rfp_instruction]
+    # Run r-20261123-oct29-run6 printed "Separate blinded unblinded staff" and "Blinded vs
+    # open design" (report-usability-reviewer, 23 November 2026).
+    value_words:
+      blinded_vs_open_design: Blinded design
+      ip_accountability: Study drug accountability
+      randomisation_blinding_procedures: Randomization and blinding procedures
+      pharmacy_manual_requirements: Pharmacy manual requirements
+      separate_blinded_unblinded_staff: Separate blinded and unblinded staff
+      drug_preparation_requirements: Drug preparation requirements
+      treatment_allocation_visibility: Who can see the treatment allocation
+      sponsor_specific_requirements: The sponsor's own requirements
+      protocol_or_rfp_instruction: An instruction in the protocol or RFP
     source_priority: any
 
   - id: monitoring.unblinded_rationale

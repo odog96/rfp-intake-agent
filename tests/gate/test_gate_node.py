@@ -675,6 +675,53 @@ class TestAPeriodsDisplayIsOneAnswerWhenItsPeriodsAgree:
         ])
         assert out.status == "confirmed"
 
+    def test_two_documents_naming_a_period_differently_agree(self, fields_yaml_path) -> None:  # type: ignore[no-untyped-def]
+        """plan-conformance-reviewer, 23 November 2026: a period's own name is
+        no difference, whoever words it (`names: [label]`). Before, "Screening"
+        and "Screening Period" in two documents put the timeline in review."""
+        field = self._field(fields_yaml_path, from_schedule=False)
+        key = self._key(field)
+        out = self._gate(field, [
+            ("doc-am", {key: "screening", "label": "Screening", "duration": "28 days",
+                        "end": "Day -1"}),
+            ("doc-rfp", {key: "screening", "label": "Screening Period", "duration": "28 days",
+                         "end": "Day -1"}),
+        ])
+        assert out.status == "confirmed"
+
+    def test_a_length_and_an_end_under_two_names_are_reviewed(self, fields_yaml_path) -> None:  # type: ignore[no-untyped-def]
+        """pipeline-rules-reviewer, 23 November 2026: with the name never a
+        difference, an RFP "Treatment Period" of 24 months and an amendment
+        "Study drug treatment" until about 156 events shared no key to compare,
+        and the line "24 months, until approximately 156 primary endpoint
+        events", which neither document says, was Confirmed. A name is no
+        difference only where another key is compared."""
+        field = self._field(fields_yaml_path, from_schedule=False)
+        key = self._key(field)
+        out = self._gate(field, [
+            ("doc-rfp", {key: "treatment", "label": "Treatment Period",
+                         "duration": "24 months"}),
+            ("doc-am", {key: "treatment", "label": "Study drug treatment",
+                        "end": "approximately 156 primary endpoint events"}),
+        ])
+        assert out.status == "needs_review"
+
+    def test_two_names_for_an_extension_are_reviewed(self, fields_yaml_path) -> None:  # type: ignore[no-untyped-def]
+        """An open-label extension's line prints the document's own name, which
+        can say what the heading cannot ("a separate open-label extension study"
+        is not this study's budget), so two names are two answers
+        (plan-conformance-reviewer, second reading, 23 November 2026)."""
+        field = self._field(fields_yaml_path, from_schedule=False)
+        key = self._key(field)
+        out = self._gate(field, [
+            ("doc-am", {key: "open_label_extension",
+                        "label": "Separate open-label extension study of NEOD001",
+                        "duration": "12 months"}),
+            ("doc-rfp", {key: "open_label_extension", "label": "OLE study",
+                         "duration": "12 months"}),
+        ])
+        assert out.status == "needs_review"
+
     def test_two_unlisted_periods_are_not_one_period(self, fields_yaml_path) -> None:  # type: ignore[no-untyped-def]
         """An enrolment period and an end of treatment visit, neither in the
         component list, are two stretches as the report prints them

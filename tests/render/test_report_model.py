@@ -529,13 +529,29 @@ class TestNothingLost:
         ]
 
     def test_the_worst_conflict_comes_first(self) -> None:
-        a = _contradiction("ops.sites_total", "conflict",
-                           [("75", 1, "d-prot"), ("70", 2, "d-rfp")], severity="low")
+        a = _contradiction("design.healthy_volunteers", "conflict",
+                           [("false", 1, "d-prot"), ("true", 2, "d-rfp")], severity="low")
         b = _contradiction("interim.count", "conflict",
                            [("0", 3, "d-prot"), ("1", 4, "d-rfp")], severity="high")
         state = RunState(run_id="r-1", contradictions=[a, b])
         model = build_report_model(state, get_registry())
-        assert [d.field_id for d in model.decisions] == ["interim.count", "ops.sites_total"]
+        assert [d.field_id for d in model.decisions] == [
+            "interim.count", "design.healthy_volunteers",
+        ]
+
+    def test_a_budget_drivers_disagreement_is_high_whatever_the_model_rated(self) -> None:
+        # config/precedence.yaml: high is "field has budget_driver: true". Run
+        # r-20261123-oct29-run6 stored "medium" for the placebo-matching conflict
+        # (report-usability-reviewer, 23 November 2026).
+        a = _contradiction("blinding.placebo_matching", "conflict",
+                           [("not_matching_stated", 53, "d-prot"),
+                            ("matching_stated", 3, "d-rfp")], severity="medium")
+        b = _contradiction("design.healthy_volunteers", "conflict",
+                           [("false", 1, "d-prot"), ("true", 2, "d-rfp")], severity="medium")
+        model = build_report_model(RunState(run_id="r-1", contradictions=[a, b]), get_registry())
+        assert [(d.field_id, d.severity) for d in model.decisions] == [
+            ("blinding.placebo_matching", "high"), ("design.healthy_volunteers", "medium"),
+        ]
 
     def test_a_reconcilable_verdict_is_not_a_disagreement_to_settle(self) -> None:
         """Change 1 of the 2026-10-07 review: follow the reviewer's conclusion.
@@ -1228,9 +1244,23 @@ class TestANotAConflictWrittenAsOneRow:
         [row] = [r for r in model.all_rows() if r.field_id == "visits.schedule_present"]
         [line] = row.values
         assert line.sources == "Protocol p.13, 26"
-        assert row.where_notes == [
-            get_registry().report_wording.others_checked,
-            "Also stated: Yes, in an appendix — Protocol p.111; No — RFP p.1.",
+        # One page list in the Where cell: the other values are sides under the
+        # row, each with its quote and its own pages (plan-conformance-reviewer
+        # and report-usability-reviewer, 23 November 2026, on run6).
+        assert row.where_notes == [get_registry().report_wording.others_checked]
+        assert [(s.doc, s.text, s.quote, s.sources) for s in row.others] == [
+            ("Protocol", "Yes, in an appendix", "yes_appendix", "Protocol p.111"),
+            ("RFP", "No", "no", "RFP p.1"),
+        ]
+        [own, *under] = row.table
+        assert own.where == "Protocol p.13, 26"
+        # Each reads as another value the tool read, not as one side of a
+        # disagreement, and a quote that is only the value again is left out
+        # (report-usability-reviewer, on run6).
+        assert [(t.kind, t.values, t.where) for t in under] == [
+            ("side", ['Also read in the Protocol: Yes, in an appendix — "yes_appendix"'],
+             "Protocol p.111"),
+            ("side", ["Also read in the RFP: No"], "RFP p.1"),
         ]
         assert row.decision_no is None
 
@@ -1980,14 +2010,117 @@ class TestModelTextAndQuotePages:
             "Records 1 (Amendment p.15) and 2 (Amendment p.24) agree; Record 3 (the RFP) "
             "gives 40; record 7 is unknown; records 2 (Amendment p.24)/3 (RFP p.3) differ."
         )
+        # A range names every passage in it, once, after it: run6 printed
+        # "records 3 (Amendment p.26)-5 (Amendment p.111)", hiding record 4.
         assert _name_records("Records 1\u20133 agree.", c, self._docs()) \
-            == "Records 1 (Amendment p.15)\u20133 (RFP p.3) agree."
+            == "Records 1 to 3 (Amendment p.15, 24; RFP p.3) agree."
+        assert _name_records("judging on records 2-3 and 1", c, self._docs()) \
+            == "judging on records 2 to 3 (Amendment p.24; RFP p.3) and 1 (Amendment p.15)"
+        assert _name_records("Records 2 to 9 differ.", c, self._docs()) \
+            == "Records 2 (Amendment p.24) to 9 differ."
         # After the singular, or with a space around it, a dash is not a range:
         # the number after it is a value.
         assert _name_records("Record 2 - 1 interim analysis", c, self._docs()) \
             == "Record 2 (Amendment p.24) - 1 interim analysis"
         assert _name_records("Records 2 and 3 \u2013 1 visit per site", c, self._docs()) \
             == "Records 2 (Amendment p.24) and 3 (RFP p.3) \u2013 1 visit per site"
+
+    def test_a_code_word_followed_by_its_own_last_words_reads_once(self) -> None:
+        from rfp_intake.render.report_model import _name_values
+
+        fd = get_registry().get_field("blinding.placebo_matching")
+        # Run r-20261123-oct29-run6's Appendix B: 'i.e. "Yes, matching as
+        # supplied" as supplied'.
+        assert _name_values("i.e. matching_stated as supplied. Both", fd) \
+            == 'i.e. "Yes, matching as supplied". Both'
+        assert _name_values("not_matching_stated, as supplied", fd) \
+            == '"No, not matching as supplied", as supplied'
+        assert _name_values("matching_stated supplied by the sponsor", fd) \
+            == '"Yes, matching as supplied" supplied by the sponsor'
+
+    def test_a_side_quotes_a_short_passage_whole(self) -> None:
+        from rfp_intake.render.report_model import _sides
+
+        quote = ("A matching placebo will not be provided for this study. Subjects who are "
+                 "randomized to the placebo arm will be administered a 250 mL IV bag of 0.9% "
+                 "saline, which will look identical to the NEOD001 infusion bag.")
+        records = [
+            FieldRecord(field_id="blinding.placebo_matching", group="g",
+                        raw_value="not_matching_stated", value="not_matching_stated",
+                        quote=quote, provenance=_prov(53, "doc-8488122a", "amendment"),
+                        confidence=0.9),
+            FieldRecord(field_id="blinding.placebo_matching", group="g",
+                        raw_value="matching_stated", value="matching_stated",
+                        quote="Placebo: Matching placebo for NEOD001",
+                        provenance=_prov(3, "doc-ab170554", "rfp"), confidence=0.9),
+        ]
+        c = Contradiction(field_id="blinding.placebo_matching", verdict="conflict",
+                          severity="high", explanation="x", records=records)
+        fd = get_registry().get_field("blinding.placebo_matching")
+        amendment, rfp = _sides(c, fd, self._docs())
+        # Angus Gray, 1 October 2026 (angus-asks B5): "not matching as supplied"
+        # told apart from "looks identical once prepared", on the row itself.
+        assert amendment.quote == quote and not amendment.quote_cut
+        assert rfp.quote == "Placebo: Matching placebo for NEOD001"
+        long = quote + " " + "The bag is labelled with the subject's number only. " * 3
+        records[0] = records[0].model_copy(update={"quote": long})
+        amendment, _ = _sides(c.model_copy(update={"records": records}), fd, self._docs())
+        assert amendment.quote == "A matching placebo will not be provided for this study."
+
+    def test_a_side_resting_on_several_passages_quotes_its_own(self) -> None:
+        from rfp_intake.render.report_model import _sides
+
+        def record(page: int, quote: str, confidence: float) -> FieldRecord:
+            return FieldRecord(
+                field_id="timeline.total_duration", group="g", raw_value="42 months",
+                value="approximately 42 months", quote=quote,
+                provenance=_prov(page, "doc-8488122a", "amendment"), confidence=confidence,
+            )
+
+        c = Contradiction(
+            field_id="timeline.total_duration", verdict="conflict", severity="high",
+            explanation="x", records=[
+                record(15, "Total study duration is approximately 42 months.", 0.95),
+                record(24, "a total study duration of 42 months", 0.9),
+                FieldRecord(field_id="timeline.total_duration", group="g",
+                            raw_value="40 months", value="40 month study duration",
+                            quote="40 month study duration",
+                            provenance=_prov(3, "doc-ab170554", "rfp"), confidence=0.9),
+            ],
+        )
+        fd = get_registry().get_field("timeline.total_duration")
+        amendment, rfp = _sides(c, fd, self._docs())
+        # Layout 6 of the 29 October 2026 plan: each side shows its quote. Run6
+        # printed the amendment's side with none (plan-conformance-reviewer).
+        assert amendment.sources == "Amendment p.15, 24"
+        assert amendment.quote == "Total study duration is approximately 42 months."
+        assert amendment.passages == 2
+        assert rfp.quote == "40 month study duration" and rfp.passages == 1
+
+    def test_the_word_list_explains_the_documents_abbreviations(self) -> None:
+        # Page 1 says every clinical term is in the word list; run6 printed EOT,
+        # IXRS and IP with no entry (report-usability-reviewer, 23 November 2026).
+        model = build_report_model(RunState(run_id="r-1"), get_registry())
+        terms = {t.label: t.plain for t in model.glossary}
+        assert {"EOT", "IXRS", "IP"} <= set(terms)
+        assert list(terms)[-len(get_registry().report_wording.terms):] == list(
+            get_registry().report_wording.terms
+        )
+        # A placebo that matches as supplied needs no separate staff (Angus
+        # Gray, 1 October 2026): the word list no longer says double-blind does.
+        assert "so separate staff are needed" not in terms["Blinding design"]
+
+    def test_a_setting_written_as_code_reads_as_words(self) -> None:
+        from rfp_intake.render.report_model import _name_settings
+
+        assert _name_settings(
+            'which the field definition assigns scope="statistical minimum" rather than '
+            'scope="total"; source_priority = "rfp".'
+        ) == (
+            'which the field definition assigns the scope "statistical minimum" rather than '
+            'the scope "total"; the source priority "rfp".'
+        )
+        assert _name_settings('He said "yes" = agreed.') == 'He said "yes" = agreed.'
 
     def test_appendix_a_prints_no_scope_for_the_whole_study(self) -> None:
         from rfp_intake.render.report_model import _evidence_scope
@@ -2004,3 +2137,257 @@ class TestModelTextAndQuotePages:
 
         assert _reading_date("2026-11-23T06:50:21.116934+00:00") == "23 November 2026, 06:50 UTC"
         assert _reading_date("not a date") == "not a date"
+
+
+class TestASideOnAnotherRowsPassage:
+    """plan-conformance-reviewer, second reading, 23 November 2026: run6
+    printed the RFP's pharmacy monitoring request as the "Pharmacy monitoring
+    visits" row and again as the RFP's side of "Unblinded monitoring likely
+    required". A side under a row whose passage is another variable's row's
+    own names that row instead (angus-asks B8: a pointer, not a repeat)."""
+
+    @staticmethod
+    def _rows(side_quote: str, side_page: int) -> tuple[Row, Row]:
+        from rfp_intake.render.report_model import Side, ValueLine, _Docs, _point_to_rows
+
+        def resolved(field_id: str, quote: str, page: int) -> ResolvedField:
+            return ResolvedField(
+                field_id=field_id, value="x", status="confirmed", confidence=0.9,
+                sources=[Provenance(doc_id="doc-rfp", doc_kind="rfp", page=page)],
+                quote=quote,
+            )
+
+        def row(field_id: str, label: str, rf: ResolvedField) -> Row:
+            return Row(
+                field_id=field_id, label=label, scope=None, budget_driver=True,
+                status="confirmed",
+                values=[ValueLine(items=["x"], status="confirmed", confidence=0.9,
+                                  sources="RFP p.4", entries=[rf])],
+            )
+
+        pharmacy = row("a.pharmacy", "Pharmacy monitoring visits", resolved(
+            "a.pharmacy", "Pharmacy Monitoring Visits & 4 visits per site for a total of "
+            "300 visits; an average of 4 hours per visit", 4,
+        ))
+        unblinded = row("a.unblinded", "Unblinded monitoring likely required", resolved(
+            "a.unblinded", "An Unblinded Monitor will be assigned", 54,
+        ))
+        unblinded.others = [Side(
+            sources=f"RFP p.{side_page}", text="Likely needed", quote=side_quote, doc="RFP",
+            also=True, passage=("doc-rfp", side_page, side_quote),
+        )]
+        page_4 = (
+            "Pharmacy Monitoring Visits & 4 visits per site for a total of 300 visits; an "
+            "average of 4 hours per visit. Interim Monitoring Visits & 10 visits per site "
+            "for a total of 750 visits"
+        )
+        state = RunState(run_id="r-1", documents=[Document(
+            id="doc-rfp", path="/runs/r-1/inputs/RFP.pdf", kind="rfp", pages=6,
+            page_texts={4: page_4},
+        )])
+        _point_to_rows([pharmacy, unblinded], _Docs(state), get_registry().report_wording, {})
+        return pharmacy, unblinded
+
+    def test_the_side_names_the_row_instead_of_repeating_its_passage(self) -> None:
+        from rfp_intake.render.report_model import _side_text
+
+        _, unblinded = self._rows(
+            "Pharmacy Monitoring Visits & 4 visits per site for a total of 300 visits;", 4,
+        )
+        [side] = unblinded.others
+        assert _side_text(side, get_registry().report_wording) == (
+            'Also read in the RFP: Likely needed — read from the same passage as '
+            '"Pharmacy monitoring visits"'
+        )
+
+    def test_a_number_inside_another_passage_is_not_that_passage(self) -> None:
+        """pipeline-rules-reviewer, 23 November 2026: "75" sites sits inside
+        "10 visits per site for a total of 750 visits"."""
+        _, unblinded = self._rows("75", 4)
+        [side] = unblinded.others
+        assert side.pointer is None
+
+    def test_the_same_words_on_another_page_are_another_passage(self) -> None:
+        _, unblinded = self._rows(
+            "Pharmacy Monitoring Visits & 4 visits per site for a total of 300 visits;", 5,
+        )
+        [side] = unblinded.others
+        assert side.pointer is None and side.quote is not None
+
+
+class TestTheFinalRulesReading:
+    """pipeline-rules-reviewer's final reading, 23 November 2026: three faults
+    of the day's render changes, none of which fired on run
+    r-20261123-oct29-run6, and two smaller ones."""
+
+    @staticmethod
+    def _record(field_id: str, doc: str, kind: str, page: int, value: str, quote: str,
+                confidence: float = 0.9) -> FieldRecord:
+        return FieldRecord(
+            field_id=field_id, group="g", raw_value=value, value=value, quote=quote,
+            provenance=Provenance(doc_id=doc, doc_kind=kind, page=page),  # type: ignore[arg-type]
+            confidence=confidence,
+        )
+
+    def test_a_side_names_the_page_that_holds_its_quote(self) -> None:
+        """A side citing several pages named the page its chosen record cites;
+        EXTRACT checks a record's page only against its task's pages, and saved
+        runs cite p.4 for a sentence on p.98."""
+        from rfp_intake.render.report_model import _Docs, _sides
+
+        sentence = "Total study duration is approximately 42 months."
+        state = RunState(run_id="r-1", documents=[Document(
+            id="doc-am", path="/runs/r-1/inputs/Amendment.pdf", kind="amendment", pages=120,
+            page_texts={15: f"Study design. {sentence} Enrolment.", 24: "Sample size."},
+        )])
+        f = "timeline.total_duration"
+        c = Contradiction(field_id=f, verdict="conflict", severity="high", explanation="x",
+                          records=[
+                              self._record(f, "doc-am", "amendment", 15, "42 months",
+                                           "approximately 42 months", 0.8),
+                              # The most confident record cites p.24 for p.15's sentence.
+                              self._record(f, "doc-am", "amendment", 24, "42 months",
+                                           sentence, 0.95),
+                          ])
+        [side] = _sides(c, get_registry().get_field(f), _Docs(state))
+        assert side.sources == "Amendment p.15, 24" and side.quote == sentence
+        assert side.quote_from == "Amendment p.15"
+
+    def test_a_dismissed_rows_passages_are_the_ones_stating_its_value(self) -> None:
+        """ADJUDICATE's one row cites every on-topic page: "Needed" was given
+        RFP p.4's passage, which the tool read as "Likely needed"."""
+        from rfp_intake.render.report_model import ValueLine, _Docs, _own_passages
+
+        f = "x.unblinded"
+        needed = self._record(f, "doc-am", "amendment", 54, "Needed",
+                              "An Unblinded Monitor will be assigned")
+        likely = self._record(f, "doc-rfp", "rfp", 4, "Likely needed",
+                              "Pharmacy Monitoring Visits & 4 visits per site")
+        c = Contradiction(field_id=f, verdict="not_a_conflict", severity="low",
+                          explanation="x", records=[needed, likely], winning_record_index=1)
+
+        def row(contradiction: Contradiction) -> Row:
+            rf = ResolvedField(
+                field_id=f, value="Needed", status="needs_review", confidence=0.9,
+                sources=[needed.provenance, likely.provenance], quote=needed.quote,
+                contradiction=contradiction,
+            )
+            return Row(
+                field_id=f, label="Unblinded monitoring likely required", scope=None,
+                budget_driver=True, status="needs_review",
+                values=[ValueLine(items=["Needed"], status="needs_review", confidence=0.9,
+                                  sources="Amendment p.54", entries=[rf])],
+            )
+
+        docs = _Docs(RunState(run_id="r-1"))
+        assert _own_passages(row(c), docs, {}) == [
+            ("doc-am", 54, "An Unblinded Monitor will be assigned"),
+        ]
+        # Another variable's disagreement (`follows_conflict_of`) is not the
+        # row's: its own quote stands, and it cites two pages, neither holding it.
+        borrowed = c.model_copy(update={"field_id": "x.other"})
+        assert _own_passages(row(borrowed), docs, {}) == []
+
+    def test_no_passage_is_shared_without_the_pages_text(self) -> None:
+        from rfp_intake.render.report_model import _Docs
+
+        request = "Approximately every 6 weeks or per every 1-2 subjects enrolled"
+        a, b = ("doc-rfp", 4, request), ("doc-rfp", 4, "1-2 subjects enrolled")
+        assert not _Docs(RunState(run_id="r-1")).same_passage(a, b)
+        once = RunState(run_id="r-1", documents=[Document(
+            id="doc-rfp", path="/runs/r-1/inputs/RFP.pdf", kind="rfp", pages=6,
+            page_texts={4: f"Monitoring Frequency {request}"},
+        )])
+        assert _Docs(once).same_passage(a, b)
+
+    def test_a_quote_cut_inside_a_number_is_not_the_pages_passage(self) -> None:
+        """pipeline-rules-reviewer, last reading, 23 November 2026: "0 visits
+        per site" is in "10 visits per site" as letters only, and "0 visits"
+        is on the page once, in another row."""
+        from rfp_intake.render.report_model import _Docs
+
+        state = RunState(run_id="r-1", documents=[Document(
+            id="doc-rfp", path="/runs/r-1/inputs/RFP.pdf", kind="rfp", pages=6,
+            page_texts={4: "Site Initiation Visits 10 visits per site. Remote Monitoring "
+                           "Visits 0 visits per protocol; on request only"},
+        )])
+        a, b = ("doc-rfp", 4, "0 visits per site"), ("doc-rfp", 4, "0 visits")
+        assert not _Docs(state).same_passage(a, b)
+
+    def test_each_sides_quote_page_is_printed(self) -> None:
+        from rfp_intake.render.report_model import TableRow, _once_each
+
+        note = "The quote is from Amendment p.15."
+        rows = [TableRow(kind="part"), TableRow(kind="side", notes=[note]),
+                TableRow(kind="part"), TableRow(kind="side", notes=[note])]
+        assert [t.notes for t in _once_each(rows)] == [[], [note], [], [note]]
+
+    def test_a_proof_cut_short_is_marked(self) -> None:
+        from rfp_intake.render.report_model import ValueLine, _add_proof, _Docs, _table_rows
+
+        f = "design.healthy_volunteers"
+        quote = "Subjects with AL amyloidosis who are newly diagnosed " * 5 + ". Then more."
+        rf = ResolvedField(
+            field_id=f, value="no", status="confirmed", confidence=0.9,
+            sources=[Provenance(doc_id="doc-am", doc_kind="amendment", page=11)], quote=quote,
+        )
+        row = Row(
+            field_id=f, label="Healthy volunteers included", scope=None, budget_driver=False,
+            status="confirmed",
+            values=[ValueLine(items=["No"], status="confirmed", confidence=0.9,
+                              sources="Amendment p.11", entries=[rf])],
+        )
+        wording = get_registry().report_wording
+        _add_proof(row, get_registry().get_field(f), [rf], _Docs(RunState(run_id="r-1")),
+                   wording)
+        assert row.proof_cut
+        first = _table_rows(row, wording)[0]
+        assert first.values[0].startswith('No — "Subjects with AL amyloidosis')
+        assert first.values[0].endswith('"…')
+
+    def test_page_one_names_the_line_as_the_config_words_it(self) -> None:
+        model = build_report_model(RunState(run_id="r-1"), get_registry())
+        assert model.also_read == "Also read in the"
+        assert get_registry().report_wording.side_also.startswith(model.also_read)
+
+
+@pytest.mark.slow
+class TestPassagesOnTheRealRfp:
+    """The passage matching on samples/Synthetic_RFP_NEOD001.pdf as the first
+    parsing method reads it, so a parser change that moves the counts it rests
+    on fails here (plan-conformance-reviewer, final reading, 23 November 2026).
+    Run r-20261123-oct29-run6 matched the two passages below; "1-2 subjects
+    enrolled" is in two rows of page 4's table, so it is neither row's."""
+
+    @pytest.fixture
+    def docs(self, samples_dir: Path):  # type: ignore[no-untyped-def]
+        from rfp_intake.ingest.parsers.rung1 import Rung1Parser
+        from rfp_intake.render.report_model import _Docs
+
+        pdf = samples_dir / "Synthetic_RFP_NEOD001.pdf"
+        if not pdf.exists():
+            pytest.skip("Synthetic_RFP_NEOD001.pdf not available")
+        parsed = Rung1Parser().parse(pdf).to_document("doc-rfp")
+        return _Docs(RunState(run_id="r-1", documents=[Document(
+            id="doc-rfp", path=str(pdf), kind="rfp", pages=parsed.pages,
+            page_texts=parsed.page_texts,
+        )]))
+
+    def test_the_study_duration_is_one_passage_on_page_3(self, docs) -> None:  # type: ignore[no-untyped-def]
+        window = ("doc-rfp", 3, "Study Duration 40 month study duration")
+        assert docs.same_passage(window, ("doc-rfp", 3, "40 month study duration"))
+
+    def test_the_pharmacy_request_is_one_passage_on_page_4(self, docs) -> None:  # type: ignore[no-untyped-def]
+        row = ("doc-rfp", 4, "Pharmacy Monitoring Visits & 4 visits per site")
+        assert docs.same_passage(row, ("doc-rfp", 4, "Pharmacy Monitoring Visits"))
+
+    def test_words_twice_on_page_4_are_no_ones_passage(self, docs) -> None:  # type: ignore[no-untyped-def]
+        request = ("doc-rfp", 4, "Approximately every 6 weeks or per every 1-2 subjects enrolled")
+        assert not docs.same_passage(request, ("doc-rfp", 4, "1-2 subjects enrolled"))
+
+    def test_words_not_on_the_page_are_no_ones_passage(self, docs) -> None:  # type: ignore[no-untyped-def]
+        # A quote read from a table block, over a page break, or citing the
+        # wrong page: the page does not hold it, so nothing says it was read
+        # from the longer quote's passage.
+        long = ("doc-rfp", 3, "a cell reading Months 6, 9 and 12 of the study")
+        assert not docs.same_passage(long, ("doc-rfp", 3, "Months 6, 9 and 12"))

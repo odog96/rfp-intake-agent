@@ -21,6 +21,7 @@ dropped: they stay in `by_doc` and in Appendix A.
 from __future__ import annotations
 
 import re
+from collections.abc import Collection
 from dataclasses import dataclass
 from typing import Any
 
@@ -101,7 +102,10 @@ class MergedEntry:
             )
         ]
 
-    def stated_two_ways(self, may_word_differently: list[str]) -> list[str]:
+    def stated_two_ways(
+        self, may_word_differently: list[str], names: Collection[str] = (),
+        grouped_by: Collection[str] = (),
+    ) -> list[str]:
         """The keys some two records give different values for, whether two
         documents state them or one document states them twice. Unlike
         `differing`, one document can disagree with itself here: a treatment
@@ -120,13 +124,31 @@ class MergedEntry:
         "approximately 300 primary endpoint events" in one document and
         "approximately 250" in the other, or "24 months after the last subject
         is randomized" and "24 months after the first" (pipeline-rules-reviewer,
-        second reading, 23 November 2026)."""
+        second reading, 23 November 2026).
+
+        The text keys `names` names only name the entry ("Screening",
+        "Screening Period") and are no difference, whoever words them, where
+        another key is stated by two documents, so the documents' passages are
+        compared on something: a "Treatment Period" of 24 months and a "Study
+        drug treatment" until 156 events share no key but the name, and their
+        names are then compared as `may_word_differently` keys are
+        (pipeline-rules-reviewer, 23 November 2026). The caller passes them
+        only where the report prints the entry under a heading of its own
+        (`PeriodsDisplay.names_of`). The keys the entries are grouped by
+        (`grouped_by`), which every record of the entry states alike, compare
+        nothing."""
+        compared = any(
+            len(m.by_doc) > 1 for name, m in self.keys.items()
+            if name not in names and name not in grouped_by
+        )
         out = []
         for name, m in self.keys.items():
+            if name in names and compared:
+                continue
             if m.key.type != "text":
                 if not m.agreed:
                     out.append(name)
-            elif name in may_word_differently:
+            elif name in may_word_differently or name in names:
                 wordings = [{same_key(v) for v, _ in vs} for vs in m.by_doc.values()]
                 if len(wordings) > 1 and not set.intersection(*wordings):
                     out.append(name)

@@ -156,7 +156,7 @@ run-comparison-reviewer read run 4. What changed:
   document and page ("Record 3 (RFP p.3)"); the reader is never shown the numbers otherwise. A
   budget driver in review because a difference was dismissed lists the other values under its
   pages ("Also stated: Yes, in an appendix — Amendment p.111 (printed p.109)."), so the reason
-  says what to check. Appendix A prints no "[Total]" before a whole-study passage. Page 1 gives
+  says what to check (since "After the last readings of run 6", a side under the row instead). Appendix A prints no "[Total]" before a whole-study passage. Page 1 gives
   the date in words and no longer prints the registry's id.
 - Hints (these take effect from run 5): no hint names a person, because ADJUDICATE is shown the
   hint and run 4's Appendix B told Angus the stratification factors were left out "as Angus Gray
@@ -168,6 +168,174 @@ run-comparison-reviewer read run 4. What changed:
 Today's GATE, run again over runs 3 and 4, changes no status, so the re-rendered run 4 report is
 what the current code makes of run 4's extraction.
 
+**After the last readings of run 6.** report-usability-reviewer read run 6's re-rendered report as
+Angus would, and plan-conformance-reviewer read the branch against the 29 October plan. What
+changed, all shown by re-rendering run 6 (no new run):
+- The placebo row's amendment side prints its whole passage where it is at most 240 characters
+  (`SIDE_QUOTE_WHOLE`), so it reads "A matching placebo will not be provided for this study.
+  Subjects who are randomized to the placebo arm will be administered a 250 mL IV bag of 0.9%
+  saline, which will look identical to the NEOD001 infusion bag." Angus asked on 1 October for
+  "not matching as supplied" to be told apart from "identical once prepared" (angus-asks B5);
+  the second sentence was only in Appendix A. A side resting on several passages quotes the one
+  its value is from (layout 6 of the plan): the whole study's amendment side had no quote.
+- "Also stated: …" under the pages is gone. The other values of a dismissed difference are sides
+  under the row, each with its quote and its own pages (`Row.others`, `_also_sides`), so a Where
+  cell holds one page list (layout 3) and the reader sees that the RFP's "Likely needed" for
+  unblinded monitoring was read from "Pharmacy Monitoring Visits & 4 visits per site…", not
+  stated, and that the amendment's appendix schedule is the one for patients who stop early.
+- The time window to budget for keeps GATE's Confirmed, with a grey note: "The RFP's side of
+  Disagreement 2 quotes the same passage." (`report_wording.same_passage`,
+  `_note_shared_passages`). Whether that window is the budget's is question 4 to Angus.
+- A disagreement on a budget driver is high severity, as `config/precedence.yaml` defines it:
+  ADJUDICATE stores "high" whatever the model rated, and the report prints "high" for a run made
+  before that (run 6 stored "medium" for the placebo).
+- The word list no longer says double-blind needs separate staff (a placebo that matches as
+  supplied needs none), and explains CEC, EOT, ETD, IP and IXRS (`report_wording.terms`). The
+  factors driving unblinded monitoring read in words ("Separate blinded and unblinded staff",
+  "Blinded design").
+- A timeline stretch no document gives says so in grey ("No passage in the documents describes
+  this stage.", `report_wording.period_not_found`; angus-asks L13), and "Other wordings are quoted
+  in Appendix A." moved from the timeline's own row, which has no value (layout 4), to the first
+  line worded more than one way.
+- Table 1 left a row's Where cell empty where it was the table's own pages. Taken back in the
+  final readings below: every value keeps its page in its Where cell.
+- Appendix B: "records 3-5" reads "records 3 to 5 (Amendment p.26 (printed p.24), 111 (printed
+  p.109))" instead of hiding record 4; a code word followed by its own last words reads once
+  ('"Yes, matching as supplied"', not '… as supplied" as supplied'); `scope="total"` reads
+  'the scope "total"'. The Disagreements lead says the tool "says why it shows that one", not
+  that "a fixed rule" picked it: the rule for both provisional values is the extraction model's
+  own rating of the clearest passage.
+- GATE: a period's own name is no difference, whoever words it (`names: [label]` on the periods
+  display; narrowed in the final readings below). Before, two documents calling a 28-day
+  screening "Screening" and "Screening Period" put the whole timeline in review with the reason
+  "Budget driver holding more than one value" (plan-conformance-reviewer's probe). This pair
+  cannot show it: the RFP states no periods. A start or end two documents word differently with
+  no wording in common ("Month 1 Day 1" against "Month 1-Day 1") still reviews.
+
+**The final readings.** pipeline-rules-reviewer, plan-conformance-reviewer and
+report-usability-reviewer read the changes above and the report they make. What changed, all
+shown by re-rendering run 6 (no new run):
+- A period's name is no difference only under a heading `always` gives, which the report prints
+  instead of the document's name (`PeriodsDisplay.names_of`), and only where another of the
+  period's keys is stated by two documents (`MergedEntry.stated_two_ways`, `grouped_by`). An
+  open-label extension's line starts with the document's name for it, so "Separate open-label
+  extension study of NEOD001" against "OLE study" is reviewed again (plan-conformance-reviewer);
+  an RFP "Treatment Period" of 24 months against an amendment "Study drug treatment" until 156
+  events share nothing but the name, and the line "24 months, until approximately 156 primary
+  endpoint events", which neither says, was Confirmed until this (pipeline-rules-reviewer).
+  `may_word_differently` is `[label, start, end]` again.
+- The "Also read in" lines: a value of a dismissed difference reads "Also read in the RFP: Likely
+  needed", not "RFP: Likely needed", which looked like a side of a disagreement
+  (report-usability-reviewer; `report_wording.side_also`; page 1 says what the line is). Where its
+  passage is another variable's row's own it names that row instead of repeating the passage: the
+  RFP's pharmacy request was printed twice in one section (plan-conformance-reviewer; angus-asks
+  B8; `side_same_row`, `_point_to_rows`). A side's quote that only repeats its value is left out
+  ("RFP: 40 month study duration").
+- Two quotes are one passage only on the same page of the same document, whole words, two words
+  or more, and not twice on that page, and each row is compared with its own passages
+  (`_Docs.same_passage`, `_own_passages`): "75" sites matched "750 visits", "1-2 subjects
+  enrolled" is in two rows of RFP p.4's table, and a period line was compared with every period's
+  passages (pipeline-rules-reviewer).
+- A side citing several pages names its quote's page in grey under them ("The quote is from
+  Amendment p.15 (printed p.13).", `report_wording.quote_from`); the whole study's amendment side
+  quoted p.15 beside "p.15, 24" (pipeline-rules-reviewer). Never in the Value cell (Angus, 29
+  October).
+- "Other wordings are quoted in Appendix A." is under every line worded more than one way, and
+  "No passage in the documents describes this stage." under every stretch no part of the study
+  states: `_once_each` printed each only once per variable, under Screening (both reviewers).
+- Table 1 gives every row's pages again, the table's own included (plan-conformance-reviewer: the
+  plan's rule 2, "every value shown keeps its page in the Where cell"), though the heading gives
+  them too. The report is 14 pages, not 13.
+- Severity has one producer, `FieldDef.severity`, which ADJUDICATE stores and the report applies to
+  older runs (pipeline-rules-reviewer); `eval/golden/contradictions.yaml` expects "high" for
+  `ops.sites_total`, a budget driver.
+- "Healthy volunteers included" reads 'No — "Standard of Care in Subjects with Light Chain (AL)
+  Amyloidosis"', with the quote's page in grey: the procedure (section 2, 1 October) says the
+  report should "say no and show the phrase that proves it" (report-usability-reviewer). It is
+  `show_quote: true` on the field; any other field can take it.
+- Words: the counted rows' note reads "Counted by the tool from Table 1: Schedule of Events; no
+  document states this count." (it read as if the table were the tool's own), the derived reason
+  "Worked out by the tool from what the documents give; no document states it as such."; the
+  Disagreements table and Appendix B print no "(Total)" or "(Study)"; Flagged for review explains
+  only the reasons its rows give; the word list explains CRO, DSMB, IV and PM too, and page 1 and
+  the word list's own heading promise only what the list gives: what most variables mean (the 28
+  of 42 with a `plain` paragraph; page 1 said "each variable", plan-conformance-reviewer's last
+  reading) and the abbreviations used.
+- pipeline-rules-reviewer's final reading found three faults in this round's render code, none of
+  which fired on run 6, all fixed: a `same_passage` note was printed under the first line of a
+  variable only (`_once_each`), so a second arm or period line on the same words read as settled; a
+  side's "The quote is from …" named the page its record cites, not the page whose text holds the
+  quote (`_Docs.quote_page`); and a row ADJUDICATE wrote took every record of its difference on its
+  cited pages as its own passages, other values' too (`_stating_records`). Also: a `show_quote`
+  phrase cut short ends in "…"; without a page's text no passage is shared; page 1 names the "Also
+  read in the …" line in the words `side_also` starts with (and the registry refuses a `side_also`
+  with no words before its first placeholder). Re-rendering run 6 changes only that page-1 phrase.
+- The last readings of both reviewers: two quotes are one passage only where the page holds the
+  longer quote as whole words and the shorter exactly once (the page a record cites may not hold
+  its quote: a record citing the wrong page, or quoting a table block; and "0 visits per site" is in
+  "10 visits per site" as letters only); the patient timeline, listed in Flagged
+  for review as one row since 60e968c, printed an empty reason and now gives its lines' reasons
+  (both pipeline-rules-reviewer); two type errors where a scope could be None (`_decisions`,
+  `_dismissed`); RFP is in the word list; `tests/render/test_report_model.py::TestPassagesOnTheRealRfp`
+  checks the passage matching on `samples/Synthetic_RFP_NEOD001.pdf` itself
+  (plan-conformance-reviewer). Re-rendering run 6 adds only the word list's RFP line.
+
+Read in the final readings and not changed, each recorded for Oliver or a new run:
+- The time window to budget for stays Confirmed with its grey note. report-usability-reviewer
+  asked for "Depends on Disagreement 2" (`follows_conflict_of`), as the interim timing reads; but
+  Angus said on 1 October to ignore the protocol's 42 months, and whether the RFP's 40 months is
+  the window is question 1 of the email. Oliver's call.
+- Table 1 counts 12 visits in Months 1 to 3, six of them (Days 8, 15 and 22 of Months 2 and 3)
+  marked by footnote 17 "Perform only if subject returns to study site for this visit", and
+  Amendment p.13 says "not all visits are required to be at the study site". The report does not
+  say so; it is in the email as an example of the schedule against the text (S16). A fix is in
+  READ_SCHEDULE's footnotes or EXTRACT, and needs a new run.
+- Table 1 counts PK sampling on Days 8, 15 and 22 of Month 3, where the table marks Day 8 only
+  (the JOURNAL records the Month 1 case): READ_SCHEDULE, a new run.
+- Disagreement 2's amendment side cites p.24, the sample-size assumption ("a total study
+  duration of 42 months"), which the procedure says to ignore (section 4): EXTRACT, a new run.
+- The synthetic RFP prints its page footers mid-page, so some RFP lines carry the printed page of
+  the footer above them ("RFP p.3 (printed p.10)" for lines on printed pages 11 to 14); the PDF
+  page is right. `ingest/page_labels.py`.
+- Each visit row could say on site, as the RFP's table heads them "… Visits & Time on Site" (M4):
+  the visit fields have no key for it, so it needs a registry change and a new run.
+- The provisional values (0 interim analyses, 42 months) rest on the extraction model's rating of
+  the clearest passage, and both go against the RFP; which document wins is Oliver's decision.
+- Appendix A still prints object records as "Component: …; Label: …" and table cells with pipes,
+  and Appendix B keeps the model's words "field" and "candidates" (F8, skipped before).
+- "multicenter, international" stays in the design row (EXTRACT's words; a new run).
+- "Healthy volunteers included" is the one row whose Value cell holds a quote, against the
+  29 October layout's "values only", because the procedure (section 2) asks for the phrase that
+  proves the "No"; and the phrase EXTRACT quoted starts "Standard of Care in", where the
+  procedure's example is "subjects with AL amyloidosis". A shorter quote needs a new run
+  (plan-conformance-reviewer).
+- The report prints "high" severity for placebo matching where run 6's `extraction.json` stores
+  "medium": the report applies `FieldDef.severity` to runs stored before it. A new run stores
+  "high".
+- `SAME_PASSAGE_WORDS` stays 2, against plan-conformance-reviewer's proposed 4: a quote of two
+  words or more found only once on its page, inside another row's quote that the page also holds,
+  can only have been read from that passage, so a higher number would only lose true matches.
+  `TestPassagesOnTheRealRfp` takes its cases from the real RFP's pages 3 and 4.
+- A row with no value (the Run-in line, "Source data monitoring expectations") reads Review with
+  its reason under its pages, as page 1's key says, but page 1's count names only the
+  disagreements and the values flagged for review: a reader counts 11 Review labels against 8
+  (report-usability-reviewer).
+- Appendix A's "[Arm:NEOD001] Name: …; Kind: arm; …" lines and Appendix B's "scope",
+  "off-topic" and "field definition" are still the tool's words (report-usability-reviewer
+  again; F8 above).
+- When the patient timeline itself is in review (two documents naming a period two ways, say), the
+  main table prints GATE's reason under the Screening line, not under the line that differs. It does
+  not happen on run 6; `scripts/check_flag_reasons.py` reads the member rows, so it does not catch it
+  (pipeline-rules-reviewer). Flagged for review's empty reason for the same row is fixed, above.
+
+Not changed, and why: the subjects row cites Amendment p.24 because its headline says
+"randomized 1:1", which p.24 states (the approved layout of 12 October); "Blinding design" cites
+p.24, whose passage names a blinded committee, and the population row's words "treatment-naive",
+"aged >= 18", "cardiac involvement" and "bortezomib" come from passages its quote is not, both
+EXTRACT's choices that only a new run could change; the arm rows print the first infusion's 120
+minutes, the protocol's own words; Flagged for review still repeats its five rows, which Angus
+has not asked to drop.
+
 **Runs** (all on `Example protocol 2.pdf` and `Synthetic_RFP_NEOD001.pdf`):
 
 | Run | Code | Must-hold facts | 29 October check | Clusters | EXTRACT errors | What it showed |
@@ -178,7 +346,7 @@ what the current code makes of run 4's extraction.
 | `r-20261123-oct29-run3` | `761bc0a` | 14 of 14 | 18 pass, 1 look (after the check script stopped counting a disagreement's sides as rows) | 11 | 4 | 429 s; the reviewers' findings and the content fixes of `60e968c` |
 | `r-20261123-oct29-run4` | `60e968c` | 14 of 14 | 19 pass, 0 fail, 0 look | 10 | 2 | 398 s; "Values found for 41 of 42 variables"; the reviewers' second reading and report-usability-reviewer's reading of it gave the fixes "After run 4" |
 | `r-20261123-oct29-run5` | the fixes after run 4 | 14 of 14 | 19 pass, 0 fail, 0 look | 10 | 2 | 393 s; the unblinded-monitoring reason no longer restates the placebo, and Appendix B no longer names Angus; but the treatment line read the power assumption "a treatment/follow-up period of 18 months" (Amendment p.24) as its length, printed Confirmed, and the open-label extension read "from At the time of study completion": the timeline hint changed |
-| `r-20261123-oct29-run6` | run 5's code with the new timeline hint | 14 of 14 | 19 pass, 0 fail, 0 look | 11 | 3 | 410 s; the final run, "Values found for 41 of 42 variables"; the treatment line reads "From Month 1-Day 1 until approximately 156 primary endpoint events" and the extension "…, from study completion". EXTRACT scoped the 236 subjects "total" and ADJUDICATE called it off-topic, so the "Statistical minimum: 236" line of runs 4 and 5 is only in Appendices A and B (decision 2 in CLAUDE.md). The report to send is its `report-rerender.pdf`: two Appendix B wording fixes were made while it ran |
+| `r-20261123-oct29-run6` | run 5's code with the new timeline hint | 14 of 14 | 19 pass, 0 fail, 0 look | 11 | 3 | 410 s; the final run, "Values found for 41 of 42 variables"; the treatment line reads "From Month 1-Day 1 until approximately 156 primary endpoint events" and the extension "…, from study completion". EXTRACT scoped the 236 subjects "total" and ADJUDICATE called it off-topic, so the "Statistical minimum: 236" line of runs 4 and 5 is only in Appendices A and B (decision 2 in CLAUDE.md). The report to send is its `report-rerender.pdf`, made with the final code (the fixes "After the last readings of run 6" and "The final readings"): 14 pages, and still 14 of 14, 19 pass and 13 of 13 |
 
 **Must-hold fact 9 is translated, to be confirmed by Oliver.** It was "40 of 44 fields have a
 value": three fields these documents never give (healthy-volunteer scope, SDV, SDR) and one field

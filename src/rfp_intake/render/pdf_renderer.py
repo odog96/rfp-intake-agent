@@ -57,6 +57,10 @@ from rfp_intake.domain.registry import Registry
 from rfp_intake.domain.schemas import RunState
 from rfp_intake.render.report_model import (
     DECISION_VALUE_CHARS,
+    REASON_DERIVED,
+    REASON_DISMISSED_DISAGREEMENT,
+    REASON_LOW_CONFIDENCE,
+    REASON_MANY_VALUES,
     STATUS_CONFIRMED,
     STATUS_REVIEW,
     Decision,
@@ -248,9 +252,11 @@ def _header_block(model: ReportModel, generated_at: str, styles: dict) -> list: 
         f'<font color="{_AMBER.hexval()}"><b>Review</b></font> means check it before using it, '
         "for the reason given under its pages and in <b>Flagged for review</b>, or in the "
         "<b>Disagreement</b> it names. Where the documents disagree, each document's side is "
-        "listed under the variable with its pages. Every quote is in Appendix A, and any "
-        "clinical term used here is explained in <b>Words used in this report</b> on the last "
-        "pages.",
+        "listed under the variable with its pages; a line starting "
+        f"\"{escape(model.also_read)} …\" gives "
+        "another value the tool read in the passages of a row in review. Every quote is in "
+        "Appendix A, and <b>Words used in this report</b>, on the last pages, says in plain "
+        "words what most variables mean and spells out the abbreviations used.",
         styles["body"],
     ))
     return story
@@ -294,7 +300,7 @@ def _disagreements(model: ReportModel, styles: dict) -> list:  # type: ignore[ty
     story.append(Paragraph(
         "Each row is one variable where the documents say different things. Pick the value that "
         "belongs in the budget, or ask the sponsor. The tool does not choose for you: where it "
-        "shows a provisional value, it says which fixed rule picked it. The tool's reasoning "
+        "shows a provisional value, it says why it shows that one. The tool's reasoning "
         "for each is in Appendix B.",
         styles["body"],
     ))
@@ -563,17 +569,19 @@ def _flagged(model: ReportModel, styles: dict) -> list:  # type: ignore[type-arg
     if not rows:
         story.append(Paragraph("No other values need review.", styles["body"]))
         return story
+    # What each reason means, for the reasons these rows give only: the list
+    # explained a reason no row used and left out one two rows used
+    # (report-usability-reviewer, 23 November 2026, on run6).
+    given = {reason for r in rows for reason in r.reasons}
+    meanings = [
+        text for reason, text in _REASON_MEANINGS
+        if any(g.startswith(reason[:24]) for g in given)
+    ]
     story.append(Paragraph(
         "The documents do not contradict each other on these; each is here for the reason in the "
         "<b>Why it is flagged</b> column. A value stays flagged until a person confirms it — the "
-        "tool never clears one by itself. What the reasons mean: "
-        "<b>budget driver holding more than one value</b> — which of them belongs in a budget is a "
-        "person's judgement, so the tool will not pick; "
-        "<b>budget driver, the passages differ, but the tool's check found no "
-        "contradiction</b> — Appendix B gives the tool's reasoning, and a person still confirms "
-        "the value before it goes in the budget; "
-        "<b>the document does not state it clearly</b> — read the quoted passage in Appendix A "
-        "before using it.",
+        "tool never clears one by itself."
+        + (" What the reasons mean: " + "; ".join(meanings) + "." if meanings else ""),
         styles["body"],
     ))
     story.append(Spacer(1, 3))
@@ -600,6 +608,21 @@ def _flagged(model: ReportModel, styles: dict) -> list:  # type: ignore[type-arg
         ])
     story.append(_table(data, _FLAGGED_COLS))
     return story
+
+
+# Each review reason Flagged for review can give, and what it means for the
+# reader; the introduction explains those its rows give.
+_REASON_MEANINGS = [
+    (REASON_MANY_VALUES, "<b>budget driver holding more than one value</b> — which of them "
+     "belongs in a budget is a person's judgement, so the tool will not pick"),
+    (REASON_DISMISSED_DISAGREEMENT, "<b>budget driver, the passages differ, but the tool's "
+     "check found no contradiction</b> — Appendix B gives the tool's reasoning, and a person "
+     "still confirms the value before it goes in the budget"),
+    (REASON_LOW_CONFIDENCE, "<b>the document does not state it clearly</b> — read the quoted "
+     "passage in Appendix A before using it"),
+    (REASON_DERIVED, "<b>worked out by the tool</b> — the tool counted or worked the value out "
+     "from what the documents give, and shows its working under the variable"),
+]
 
 
 def _flagged_pages(r: Row) -> str:
@@ -634,7 +657,9 @@ def _glossary(model: ReportModel, styles: dict) -> list:  # type: ignore[type-ar
     return [
         Paragraph("Words used in this report", styles["section"]),
         Paragraph(
-            "What each variable means, in plain words.",
+            # Most, not each: a variable is listed only where config/fields.yaml gives it a
+            # `plain` paragraph, 28 of the 42 (plan-conformance-reviewer, 23 November 2026).
+            "What most variables mean, in plain words, then the abbreviations used in this report.",
             styles["meta"],
         ),
         Spacer(1, 3),

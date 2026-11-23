@@ -22,7 +22,7 @@ from __future__ import annotations
 
 import re
 from collections import Counter, defaultdict
-from collections.abc import Callable
+from collections.abc import Callable, Collection, Mapping
 from dataclasses import dataclass, field, replace
 from pathlib import PurePath
 from typing import Any
@@ -164,14 +164,29 @@ class Side:
 
     sources: str  # "Amendment p.15, 24"
     text: str
-    # The passage's first sentence, when the side rests on one passage. Where a
-    # document states its side in several different passages there is no one
-    # quote to print; each is in Appendix A with its page.
+    # The passage, whole where it is short (SIDE_QUOTE_WHOLE), else its first
+    # sentence. Where a document states its side in several passages, the
+    # passage of the side's own value (`_sides`); each is in Appendix A.
     quote: str | None
     quote_cut: bool = False  # the sentence was longer, and is cut short
+    # How many different passages the side rests on; a block line quotes only a
+    # side resting on one, since it prints every page beside the quote.
+    passages: int = 1
     # The side's document as the report names it ("Amendment"): the side's row
     # starts with it, and its pages are in the Where cell (29 October 2026).
     doc: str = ""
+    # The document, page and words of the passage `quote` is from.
+    passage: tuple[str, int, str] | None = None
+    # The page `quote` is on ("p.15 (printed p.13)"), where the side cites
+    # several pages and so the Where cell does not say which one.
+    quote_from: str | None = None
+    # In place of the quote, where the passage is another row's own: 'read from
+    # the same passage as "Pharmacy monitoring visits"' (`_point_to_rows`).
+    pointer: str | None = None
+    # Another value the tool read in the passages of a row in review, not one
+    # side of a disagreement: printed "Also read in the RFP: …"
+    # (`report_wording.side_also`).
+    also: bool = False
 
 
 @dataclass
@@ -242,6 +257,19 @@ class Row:
     # and the line under them: the value precedence chose, or that none was
     # chosen. Fix 2 of the 2026-10-12 brief. See _sides.
     sides: list[Side] = field(default_factory=list)
+    # Under a budget driver in review because ADJUDICATE dismissed a difference:
+    # each other value the on-topic passages give, as a side with its quote and
+    # its own pages (`_also_sides`), so the Where cell holds one page list.
+    others: list[Side] = field(default_factory=list)
+    # The phrase that proves the row's value, printed after it, where the
+    # field's `show_quote` asks for it ("No — "…(AL) Amyloidosis""), and
+    # whether it was cut short, which prints "…" after it as a side's quote does.
+    proof: str | None = None
+    proof_cut: bool = False
+    # The document, page and quote of each passage this row's value rests on,
+    # where the row is one line of a variable (a period, an arm) and its values
+    # carry the whole variable (`_own_passages`).
+    passages: list[tuple[str, int, str]] | None = None
     decision_line: str | None = None
     # The disagreement `sides` were drawn from, so a line pointing at this row
     # (a `periods` display's see_also) names the same one.
@@ -490,6 +518,10 @@ class ReportModel:
     removed: list[RemovedText] = field(default_factory=list)
     # The entries kept in extraction.json only (`report_entries`).
     kept_out: list[ResolvedField] = field(default_factory=list)
+    # How a line of another value read under a row in review starts, as page 1
+    # names it: `report_wording.side_also` up to its first placeholder, so
+    # page 1 follows the config (pipeline-rules-reviewer, final reading).
+    also_read: str = "Also read in the"
 
     def all_rows(self) -> list[Row]:
         """Every row with a value, a row of a `scopes` display as its parts and
@@ -741,6 +773,43 @@ class _Docs:
                 return self.pages([p])
         return None
 
+    def holds(self, doc_id: str, page: int, quote: str) -> bool:
+        """Whether the page's text holds `quote` whole."""
+        wanted = comparable_text(quote).casefold()
+        return bool(wanted) and wanted in self._texts.get((doc_id, page), "").casefold()
+
+    def same_passage(
+        self, a: tuple[str, int, str], b: tuple[str, int, str],
+    ) -> bool:
+        """Whether two quotes, each with its document and page, are one passage:
+        the same page of the same document, one quote holding the other as
+        whole words, the shorter at least SAME_PASSAGE_WORDS words long, and
+        that page's text holding the longer as whole words and the shorter
+        exactly once. Without the whole words and the count, "75" sites was the
+        passage "10 visits per site for a total of 750 visits", and "1-2
+        subjects enrolled", in two rows of RFP p.4's table, was each row's
+        passage (pipeline-rules-reviewer, 23 November 2026)."""
+        if (a[0], a[1]) != (b[0], b[1]):
+            return False
+        one, two = (comparable_text(q).casefold() for q in (a[2], b[2]))
+        short, long = sorted((one, two), key=len)
+        if len(short.split()) < SAME_PASSAGE_WORDS:
+            return False
+        bounded = re.compile(rf"(?<!\w){re.escape(short)}(?!\w)")
+        if not bounded.search(long):
+            return False
+        # The page must hold the longer quote, and the shorter exactly once, so
+        # the shorter can only have been read from the longer's passage. Not
+        # where the page lacks its text (a report rebuilt without its input
+        # PDFs matched "1-2 subjects enrolled" with each RFP p.4 row again), nor
+        # where it lacks the quotes: a record citing the wrong page, or quoting
+        # a table block (pipeline-rules-reviewer, final readings).
+        # The longer as whole words too: "0 visits per site" is in "10 visits
+        # per site" as letters only (pipeline-rules-reviewer, last reading).
+        page = self._texts.get((a[0], a[1]), "").casefold()
+        whole = re.compile(rf"(?<!\w){re.escape(long)}(?!\w)")
+        return bool(whole.search(page)) and len(bounded.findall(page)) == 1
+
     def name_ids(self, text: str) -> str:
         """Swap document ids in model-written text for the names the report uses.
         Only the ids change; the adjudicator's words are otherwise left as written.
@@ -991,13 +1060,31 @@ def build_report_model(state: RunState, registry: Registry) -> ReportModel:
             r.heading = None
         section.rows += rows_under
 
+    wording = registry.report_wording
+    numbered = [c for c in state.contradictions if _signature(c) in decision_no]
+    # The notes that say something of their own line, printed under every line
+    # that has it (`_once_each`): a note naming the disagreement that quotes a
+    # line's own passage is one, as an arm or a period line sharing a passage
+    # with another lost it under every line but the first
+    # (pipeline-rules-reviewer, final reading, 23 November 2026).
+    per_line = {wording.other_wordings, wording.period_not_found}
+    for section in sections:
+        for r in section.rows:
+            per_line |= _note_shared_passages(
+                r, numbered, decision_no, docs, wording, field_by_id,
+            )
+    _point_to_rows(
+        [r for section in sections for r in section.rows], docs, wording, field_by_id,
+    )
+
     # A variable's further rows (another scope, a value kept apart) follow its
     # first with an empty Variable cell, its scope in grey where it has one.
-    wording = registry.report_wording
     for section in sections:
         prev = None
         for r in section.rows:
-            r.table = _once_each(_table_rows(r, wording, None if r.field_id != prev else ""))
+            r.table = _once_each(
+                _table_rows(r, wording, None if r.field_id != prev else ""), per_line,
+            )
             prev = r.field_id
         for sch in section.schedules:
             for r in sch.rows:
@@ -1016,13 +1103,15 @@ def build_report_model(state: RunState, registry: Registry) -> ReportModel:
         variables_found=found,
         removed=_removed(state, docs),
         kept_out=kept_out,
+        also_read=registry.report_wording.side_also.split("{", 1)[0].strip(),
     )
 
 
 def _glossary(registry: Registry, schedule: VisitSchedule | None) -> list[Term]:
     """Each field's `plain`, and with a visit table printed, what its Key
     considerations column means, after the table variable's own term
-    (follow-up 4 of Prompt C)."""
+    (follow-up 4 of Prompt C); then the abbreviations in
+    `report_wording.terms`."""
     terms = []
     config = registry.schedule_table
     for f in registry.fields:
@@ -1032,6 +1121,7 @@ def _glossary(registry: Registry, schedule: VisitSchedule | None) -> list[Term]:
                 and schedule.tables):
             w = config.wording
             terms.append(Term(w.considerations, w.considerations_plain))
+    terms += [Term(term, plain) for term, plain in registry.report_wording.terms.items()]
     return terms
 
 
@@ -1164,10 +1254,13 @@ def _rows_for(
             ) else [],
         ))
         _add_sides(row, fd, docs, decision_no, wording)
+        _add_proof(row, fd, group, docs, wording)
         if REASON_DISMISSED_DISAGREEMENT in row.reasons:
-            row.where_notes += [
-                n for rf in group if (n := _also_stated(rf, fd, docs, entries, wording))
-            ]
+            for rf in group:
+                row.others += [
+                    s for s in _also_sides(rf, fd, docs, entries, wording)
+                    if (s.doc, s.text) not in {(o.doc, o.text) for o in row.others}
+                ]
         if row.status == "needs_review" and all(rf.derived_from for rf in group):
             _add_derived(row, group, docs, wording)
         if borrowed is not None and no is not None:
@@ -1178,48 +1271,168 @@ def _rows_for(
     return rows
 
 
-# Under a budget driver in review because ADJUDICATE dismissed a difference: the
-# other values the passages give, so the reason names what to check.
-NOTE_ALSO_STATED = "Also stated: {values}."
+def _note_shared_passages(
+    row: Row,
+    numbered: list[Contradiction],
+    decision_no: dict[tuple[object, ...], int],
+    docs: _Docs,
+    wording: ReportWording,
+    fields: Mapping[str, FieldDef],
+) -> set[str]:
+    """Under a row whose passage — the same document, page and words — is also
+    one side of another variable's numbered Disagreement, a grey note naming
+    it, so a value is never read as settled one line above the same words in
+    dispute. Run r-20261123-oct29-run6 printed the RFP's "40 month study
+    duration" as the time window to budget for, Confirmed, and the same
+    passage as the RFP's side of Disagreement 2, the whole study's duration
+    (report-usability-reviewer, 23 November 2026). The status is GATE's and
+    is left as it is: whether that window is the budget's is asked of Angus
+    Gray (angus-asks question 4). A row with its own disagreement, or one that
+    already depends on one, says it already. Rows printed under the row too.
+    Returns the notes written, each its own line's (`_once_each`)."""
+    written: set[str] = set()
+    for r in (*row.below, *row.under, *row.parts):
+        written |= _note_shared_passages(r, numbered, decision_no, docs, wording, fields)
+    if row.depends_on is not None or (row.sides and row.decision_no is not None):
+        return written
+
+    # The same passage: the same page of the same document, one quote holding
+    # the other (`_Docs.same_passage`). Run6's window quoted "Study Duration 40
+    # month study duration; enrollment over", the disagreement "40 month study
+    # duration".
+    stated = _own_passages(row, docs, fields)
+
+    def shares(r: FieldRecord) -> bool:
+        return any(
+            docs.same_passage(own, (r.provenance.doc_id, r.provenance.page, r.quote))
+            for own in stated
+        )
+
+    for c in numbered:
+        if c.field_id == row.field_id:
+            continue
+        shared = next((r for r in c.records if shares(r)), None)
+        if shared is None:
+            continue
+        note = ReportWording.fill(
+            wording.same_passage, decision_no[_signature(c)],
+            doc=docs.code(shared.provenance.doc_id),
+        )
+        if note not in row.where_notes:
+            row.where_notes.append(note)
+        written.add(note)
+    return written
 
 
-def _also_stated(
+def _own_passages(
+    row: Row, docs: _Docs, fields: Mapping[str, FieldDef],
+) -> list[tuple[str, int, str]]:
+    """The document, page and words of each passage a row's value rests on:
+    the passages its line prints where the row is one line of a variable
+    (`Row.passages`); each page's own quote where RECONCILE kept one per page
+    (`ResolvedField.source_quotes`); the records of the row's own difference
+    that state its value (`_stating_records`), where ADJUDICATE wrote the row;
+    else the row's one quote on the page that holds it (pipeline-rules-reviewer,
+    23 November 2026: a period line was compared with every period's passages,
+    and one quote with every page its row cites). Not every record of the
+    difference on a page the row cites: ADJUDICATE's one row cites every
+    on-topic page, the other values' too, and a difference borrowed through
+    `follows_conflict_of` is another variable's (pipeline-rules-reviewer, final
+    reading: "Needed" was given RFP p.4's passage, read as "Likely needed")."""
+    if row.passages is not None:
+        return row.passages
+    out: list[tuple[str, int, str]] = []
+    for v in row.values:
+        for rf in v.entries:
+            stating = _stating_records(rf, fields.get(rf.field_id))
+            if rf.source_quotes and len(rf.source_quotes) == len(rf.sources):
+                out += [
+                    (p.doc_id, p.page, q)
+                    for p, q in zip(rf.sources, rf.source_quotes, strict=True) if q
+                ]
+            elif stating is not None:
+                out += [
+                    (r.provenance.doc_id, r.provenance.page, r.quote)
+                    for r in stating if r.quote
+                ]
+            elif rf.quote:
+                # Only a page that holds the quote: `_Docs.same_passage` finds
+                # nothing on any other (plan-conformance-reviewer, last reading).
+                holding = [p for p in rf.sources if docs.holds(p.doc_id, p.page, rf.quote)]
+                out += [(p.doc_id, p.page, rf.quote) for p in holding[:1]]
+    return out
+
+
+def _point_to_rows(
+    rows: list[Row], docs: _Docs, wording: ReportWording, fields: Mapping[str, FieldDef],
+) -> None:
+    """A side printed under a row (`Row.others`) whose passage is another
+    variable's row's own (`_Docs.same_passage`) names that row in place of its
+    quote (`report_wording.side_same_row`), so a passage is printed once. Run
+    r-20261123-oct29-run6 printed the RFP's pharmacy monitoring request as the
+    "Pharmacy monitoring visits" row at the top of its section and again as
+    the RFP's side of "Unblinded monitoring likely required", the RFP's
+    "Likely needed" having been read from it (plan-conformance-reviewer,
+    second reading, 23 November 2026; angus-asks B8 asks for a pointer, not a
+    repeat). A numbered disagreement's sides keep their quotes: they are what
+    the reader decides between."""
+
+    def walk(rs: list[Row]) -> list[Row]:
+        return [x for r in rs for x in (r, *walk([*r.below, *r.under, *r.parts]))]
+
+    every = walk(rows)
+    owned = [(r, _own_passages(r, docs, fields)) for r in every if r.label]
+    for row in every:
+        for side in row.others:
+            if side.passage is None:
+                continue
+            other = next((
+                r for r, passages in owned
+                if r.field_id != row.field_id
+                and any(docs.same_passage(own, side.passage) for own in passages)
+            ), None)
+            if other is not None:
+                side.pointer = ReportWording.fill(wording.side_same_row, label=other.label)
+
+
+def _also_sides(
     rf: ResolvedField,
     fd: FieldDef,
     docs: _Docs,
     entries: list[ResolvedField],
     wording: ReportWording,
-) -> str | None:
+) -> list[Side]:
     """What the on-topic passages of the row's dismissed difference say other
-    than the row's value, each with its pages: "Also stated: Yes, in an appendix
-    — Amendment p.111 (printed p.109)." The review reason alone, "the passages
-    differ", did not say what to check (report-usability-reviewer, 23 November
-    2026, on run r-20261123-oct29-run4's "Schedule of activities present").
+    than the row's value, as sides printed under the row: "RFP: Likely needed —
+    "Pharmacy Monitoring Visits …"", with its pages in the Where cell. The
+    review reason alone, "the passages differ", did not say what to check
+    (report-usability-reviewer, 23 November 2026, on run
+    r-20261123-oct29-run4's "Schedule of activities present"). A side, not a
+    note under the pages: a Where cell holds one page list, and the quote shows
+    whether the passage states the value or the tool read it from other words
+    (plan-conformance-reviewer and report-usability-reviewer, on run
+    r-20261123-oct29-run6, where RFP p.4 gave "Likely needed" from the words
+    "Pharmacy Monitoring Visits").
 
     A value another row of the same difference already shows is left out: where
-    ADJUDICATE chose no value, each record is its own row, and the note would
+    ADJUDICATE chose no value, each record is its own row, and the side would
     only repeat those rows."""
     c = rf.contradiction
     if c is None or c.field_id != rf.field_id:
-        return None
+        return []
     off = set(c.off_topic_record_indexes)
     own = _signature(c)
     shown = {
         _value_key(_items(e, fd, wording)) for e in entries
         if e.contradiction is not None and _signature(e.contradiction) == own
     } | {_value_key(format_value(rf.value, fd))}
-    others: dict[str, tuple[str, list[Provenance]]] = {}
-    for i, r in enumerate(c.records, start=1):
-        items = _record_items(r, fd)
-        key = _value_key(items)
-        if i in off or key in shown:
-            continue
-        others.setdefault(key, ("; ".join(items), []))[1].append(r.provenance)
-    if not others:
-        return None
-    return NOTE_ALSO_STATED.format(values="; ".join(
-        f"{text} — {docs.pages(provs)}" for text, provs in others.values()
-    ))
+    sides = _sides(
+        c, fd, docs,
+        skip=lambda i, r: i in off or _value_key(_record_items(r, fd)) in shown,
+    )
+    for side in sides:
+        side.also = True
+    return sides
 
 
 def _not_found_row(
@@ -1414,7 +1627,7 @@ def _block_lines(
             text = (
                 fill(wording.block_side, pages=side.sources, quote=side.quote,
                      cut="…" if side.quote_cut else "")
-                if side.quote
+                if side.quote and side.passages == 1
                 else fill(wording.block_side_value, pages=side.sources, value=side.text)
             )
             out.append(BlockText(text, indent=1))
@@ -1507,31 +1720,52 @@ def _add_sides(
         )
 
 
-def _sides(c: Contradiction, fd: FieldDef | None, docs: _Docs) -> list[Side]:
-    """One side per document and value, in the order the records came.
+def _sides(
+    c: Contradiction,
+    fd: FieldDef | None,
+    docs: _Docs,
+    skip: Callable[[int, FieldRecord], bool] | None = None,
+) -> list[Side]:
+    """One side per document and value, in the order the records came; a
+    record `skip` names (its number, from 1, and the record) is left out.
 
     A side's pages are the pages of the records giving that value, and no
     other: a page beside a value must state it (fix 2 of 2026-10-09). So a
     document that gives two values is two sides, and neither value leaves the
     row (pipeline-rules-reviewer, 2026-10-12). The text is the chosen record's
-    when it is among them, else the most confident. Each record, with its own
-    value, page and quote, is also in Appendix A (_evidence).
+    when it is among them, else the most confident, and so is the quote: a
+    side resting on several passages quotes the one its text is from
+    (layout 6 of the 29 October 2026 plan; run r-20261123-oct29-run6 printed
+    the amendment's "approximately 42 months" with no quote). Each record, with
+    its own value, page and quote, is also in Appendix A (_evidence).
     """
     groups: dict[tuple[str, str], list[tuple[int, FieldRecord]]] = {}
     for i, r in enumerate(c.records, 1):
+        if skip is not None and skip(i, r):
+            continue
         key = (r.provenance.doc_id, _value_key(_record_items(r, fd)))
         groups.setdefault(key, []).append((i, r))
-    # A document giving several wordings prints them without quotes, which would
+    # A document giving several values prints them without quotes, which would
     # make the row the length of Appendix A; each quote is there with its page.
     sides_of = Counter(doc_id for doc_id, _ in groups)
     out = []
     for (doc_id, _), recs in groups.items():
         chosen = next((r for i, r in recs if i == c.winning_record_index), None)
         best = chosen or max((r for _, r in recs), key=lambda r: r.confidence)
-        quotes = {" ".join(r.quote.split()) for _, r in recs}
-        quote, cut = (
-            _first_sentence(quotes.pop())
-            if len(quotes) == 1 and sides_of[doc_id] == 1 else (None, False)
+        quote, cut = _side_quote(best.quote) if sides_of[doc_id] == 1 else (None, False)
+        passages = len({" ".join(r.quote.split()) for _, r in recs})
+        # A side on several pages quotes one passage, so it says whose page that
+        # is: run6's whole-study amendment side quoted p.15's sentence beside
+        # "Amendment p.15 (printed p.13), 24 (printed p.22)", and p.24 words it
+        # otherwise (pipeline-rules-reviewer, 23 November 2026).
+        # The page whose text holds the quote, not the page the record cites:
+        # EXTRACT checks a record's page only against its task's pages, and
+        # saved runs cite p.4 for a sentence on p.98 (pipeline-rules-reviewer,
+        # final reading). None where no cited page holds it whole.
+        several = len({r.provenance.page for _, r in recs}) > 1
+        quote_from = (
+            docs.quote_page(best.quote, [r.provenance for _, r in recs])
+            if quote and several else None
         )
         out.append(Side(
             sources=docs.pages([r.provenance for _, r in recs]),
@@ -1539,14 +1773,37 @@ def _sides(c: Contradiction, fd: FieldDef | None, docs: _Docs) -> list[Side]:
             quote=quote,
             quote_cut=cut,
             doc=docs.code(doc_id),
+            passages=passages,
+            passage=(best.provenance.doc_id, best.provenance.page, best.quote),
+            quote_from=quote_from,
         ))
     return out
 
 
+# Fewest words a quote may have to be called the same passage as another
+# (`_Docs.same_passage`), so a bare "75" is never one; run6's shortest such
+# quote is "40 month study duration".
+SAME_PASSAGE_WORDS = 2
+
 # Longest a side's quote may be before it is cut short. The whole passage is in
 # Appendix A.
 SIDE_QUOTE_CHARS = 160
+# Longest a passage may be to print whole on a side. Angus Gray asked on 1
+# October 2026 for "not matching as supplied" to be told apart from "looks
+# identical once prepared" (angus-asks B5); in run r-20261123-oct29-run6 the
+# amendment's side said only "A matching placebo will not be provided for this
+# study.", and its next sentence, "…which will look identical to the NEOD001
+# infusion bag.", was only in Appendix A (report-usability-reviewer).
+SIDE_QUOTE_WHOLE = 240
 _SENTENCE_END = re.compile(r"(?<=[.!?])\s")
+
+
+def _side_quote(quote: str) -> tuple[str, bool]:
+    """A side's quote: the whole passage, flattened onto one line, where it is
+    at most SIDE_QUOTE_WHOLE characters; else its first sentence
+    (`_first_sentence`)."""
+    flat = " ".join(quote.split())
+    return (flat, False) if len(flat) <= SIDE_QUOTE_WHOLE else _first_sentence(flat)
 
 
 def _first_sentence(quote: str) -> tuple[str, bool]:
@@ -1871,6 +2128,9 @@ def _entries_row(
             None, docs.name_ids, docs.listing.get(fd.id, set()),
         )
         part.block_lines = part_lines
+        part.passages = [
+            (r.provenance.doc_id, r.provenance.page, r.quote) for r in rf.statements if r.quote
+        ]
         # A note RECONCILE wrote on a part that is not for review (the reasons
         # of one that is include it) is printed under its pages.
         if rf.review_note and rf.status != "needs_review":
@@ -2211,7 +2471,23 @@ def _periods_row(
     if display.always:
         by_part.setdefault(None, [])
     below: list[Row] = []
-    reworded = False
+    # Each line whose passages word it more than one way: "Other wordings are
+    # quoted in Appendix A." goes under its own pages. Not under the variable's
+    # own row, which has no value, status or pages (layout rule 4 of the 29
+    # October 2026 plan; plan-conformance-reviewer, on run r-20261123-oct29-run6),
+    # and not under the first such line alone, where it read as that line's
+    # only (plan-conformance-reviewer, second reading: run 6's treatment and
+    # follow-up are worded two ways too).
+    reworded: list[Row] = []
+    # A stretch some part of the study states is not "Not found" for the
+    # study (pipeline-rules-reviewer, 23 November 2026: "Screening: Not found
+    # … No passage in the documents describes this stage." printed above
+    # "Screening (Part: A): 28 days").
+    stated_anywhere = {
+        str(merge_entry(fd, group).value(display.order_key))
+        for said in by_part.values()
+        for group in period_groups([r for _, r in said], display)
+    }
     for part, said in sorted(by_part.items(), key=lambda kv: kv[0] is not None):
         scope = (
             _capital(_scope_words(docs.name_ids(part), wording), wording) if part else None
@@ -2226,7 +2502,11 @@ def _periods_row(
             # A variable the Schedule of Events replaces keeps GATE's older rule,
             # and so its older lines.
             unsettled = (
-                entry.stated_two_ways(display.may_word_differently)
+                entry.stated_two_ways(
+                    display.may_word_differently,
+                    display.names_of(entry.value(display.order_key)),
+                    grouped_by=[display.order_key, *display.one_per],
+                )
                 if fd.from_schedule is None else entry.differing(None)
             )
             words = _entry_words(entry, None, wording, set(unsettled))
@@ -2282,20 +2562,28 @@ def _periods_row(
             text = f"{text} {note}" if note else text
             rfs = list({id(rf): rf for rf, r in said if any(r is g for g in group)}.values())
             status = min((rf.status for rf in rfs), key=lambda st: _STATUS_RANK.get(st, 0))
+            stating = _period_stating(entry, group, printed, shown)
             line = _line_row(
-                fd, heading, text, status,
-                docs.pages([r.provenance for r in _period_stating(entry, group, printed, shown)]),
+                fd, heading, text, status, docs.pages([r.provenance for r in stating]),
                 rfs, scope, docs.name_ids,
             )
+            line.passages = [
+                (r.provenance.doc_id, r.provenance.page, r.quote) for r in stating if r.quote
+            ]
             line.below = _differ_rows(fd, entry, unsettled, group, {}, docs, wording)
             lines.append((place(value), line))
-            reworded = reworded or _reworded(entry, set(display.one_per))
+            if _reworded(entry, set(display.one_per)):
+                reworded.append(line)
         if part is None:
             for value, label in display.always.items():
-                if value not in stated:
-                    lines.append((place(value), _line_row(
-                        fd, label, wording.not_found, "not_found", "", [], None,
-                    )))
+                if value not in stated and value not in stated_anywhere:
+                    # What the "not found" refers to (angus-asks L13): a line
+                    # with no pages said nothing about where the tool looked
+                    # (report-usability-reviewer, on run r-20261123-oct29-run6's
+                    # "Run-in").
+                    missing = _line_row(fd, label, wording.not_found, "not_found", "", [], None)
+                    missing.where_notes.append(wording.period_not_found)
+                    lines.append((place(value), missing))
         lines.sort(key=lambda t: t[0])
         below += [row for _, row in lines]
     for see in display.see_also:
@@ -2317,10 +2605,9 @@ def _periods_row(
             below.append(_line_row(
                 fd, None, leftover.text, rf.status, docs.pages(rf.sources), [rf],
             ))
-    row = _display_row(
-        fd, list(rows_by_field.get(fd.id, [])), "", "", [],
-        [wording.other_wordings] if reworded else [],
-    )
+    for line in reworded:
+        line.where_notes.append(wording.other_wordings)
+    row = _display_row(fd, list(rows_by_field.get(fd.id, [])), "", "", [], [])
     row.below = below
     # Flagged for review lists the variable as one row, in its lines' words, not
     # as its entries' raw keys (plan-conformance-reviewer, 23 November 2026):
@@ -2329,6 +2616,9 @@ def _periods_row(
     questioned = [b for b in below if b.heading and b.below]
     given = questioned or [b for b in below if b.heading and b.status != "not_found"]
     row.review_as_one = True
+    # Listed as one row, it gives its members' reasons: since it was, the row
+    # printed an empty reason (pipeline-rules-reviewer, final reading).
+    row.reasons = list(dict.fromkeys(x for m in row.members for x in m.reasons))
     row.review_text = "; ".join(
         f"{b.heading}: " + (
             "; ".join(d.values[0].text for d in b.below) if b.below else b.values[0].text
@@ -2571,6 +2861,11 @@ def _visit_table(
             for p in pages
         ])
 
+    # Every row gives its pages, those of the table's own included: a value
+    # keeps its page in its Where cell (rule 2), though the heading gives the
+    # table's pages too (plan-conformance-reviewer, second reading, 23 November
+    # 2026, over report-usability-reviewer's ask to print them once).
+    sources = docs.pages(_schedule_pages(s))
     rows: list[list[str]] = []
     for c in s.columns:
         timing = c.timing
@@ -2596,7 +2891,7 @@ def _visit_table(
     ]
     return VisitTable(
         heading=s.heading,
-        sources=docs.pages(_schedule_pages(s)),
+        sources=sources,
         head=[
             w.period, w.timing, w.visits,
             w.every_mark if config.count_non_assessments else w.assessments,
@@ -2787,19 +3082,31 @@ def _stating(rf: ResolvedField, fd: FieldDef | None) -> list[Provenance]:
     Appendix A (_evidence), and a conflict's positions are in the Disagreements
     table.
     """
+    records = _stating_records(rf, fd)
+    if records is None:
+        return list(rf.sources)
+    pages = {(r.provenance.doc_id, r.provenance.page) for r in records}
+    return [p for p in rf.sources if (p.doc_id, p.page) in pages]
+
+
+def _stating_records(rf: ResolvedField, fd: FieldDef | None) -> list[FieldRecord] | None:
+    """The records of the entry's own disagreement that state its value, on the
+    pages it cites: on topic, and reading as the entry's value does
+    (`_value_key`). None where the entry has no disagreement of its own
+    (`_own_disagreement`); none where no value was chosen."""
     c = _own_disagreement(rf)
     if c is None:
-        return list(rf.sources)
+        return None
     if rf.value is None:
         return []
     want = _value_key(format_value(rf.value, fd))
     off = set(c.off_topic_record_indexes)
-    pages = {
-        (r.provenance.doc_id, r.provenance.page)
-        for i, r in enumerate(c.records, start=1)
+    cited = {(p.doc_id, p.page) for p in rf.sources}
+    return [
+        r for i, r in enumerate(c.records, start=1)
         if i not in off and _value_key(_record_items(r, fd)) == want
-    }
-    return [p for p in rf.sources if (p.doc_id, p.page) in pages]
+        and (r.provenance.doc_id, r.provenance.page) in cited
+    ]
 
 
 def _fold_rewordings(fd: FieldDef, row: Row) -> Row:
@@ -2843,7 +3150,9 @@ def _fold_rewordings(fd: FieldDef, row: Row) -> Row:
 # same customer asked us to cut. What each phrase means is spelled out once, in
 # the lead paragraph of pdf_renderer._flagged, and the phrases below are the
 # keys that paragraph explains: changing one means changing that paragraph too.
-REASON_DERIVED = "Worked out by the tool, not read from a document."
+REASON_DERIVED = (
+    "Worked out by the tool from what the documents give; no document states it as such."
+)
 REASON_DISAGREE = "The documents disagree"  # "— see Disagreement 3." is appended
 # "The passages differ", not "the documents answer differently": the same row
 # can also carry NOTE_RECONCILABLE ("checked, the same answer"), and the two
@@ -2967,13 +3276,20 @@ def _decisions(
             no=len(out) + 1,
             field_id=c.field_id,
             label=_label(field_by_id, c.field_id),
+            # A whole-study scope ("total", "study") is not printed, as Appendix A
+            # and the Variable cell leave it out (report-usability-reviewer, on
+            # run r-20261123-oct29-run6: "Number of interim analyses (Total)").
             scope=_capital(_scope_words(docs.name_ids(c.records[0].scope), wording), wording)
-            if c.records and c.records[0].scope else None,
+            if c.records and c.records[0].scope and not _whole_study(c.records[0].scope)
+            else None,
             verdict=c.verdict,
-            severity=c.severity,
+            # A budget driver's disagreement is high, as ADJUDICATE now stores
+            # it (config/precedence.yaml `severity`); a run made before that
+            # holds the model's own rating (run r-20261123-oct29-run6: "medium").
+            severity=fd.severity(c.severity) if fd is not None else c.severity,
             positions=_positions(c, fd, docs),
             provisional=_provisional(c, fd, docs, wording),
-            explanation=_name_records(_name_values(docs.name_ids(c.explanation), fd), c, docs)
+            explanation=_model_text(c.explanation, c, fd, docs)
             if c.explanation else None,
             signature=_signature(c),
         ))
@@ -3058,8 +3374,12 @@ def _dismissed(
         out.append(Dismissed(
             field_id=c.field_id,
             label=_label(field_by_id, c.field_id),
+            # A whole-study scope ("total", "study") is not printed, as Appendix A
+            # and the Variable cell leave it out (report-usability-reviewer, on
+            # run r-20261123-oct29-run6: "Number of interim analyses (Total)").
             scope=_capital(_scope_words(docs.name_ids(c.records[0].scope), wording), wording)
-            if c.records and c.records[0].scope else None,
+            if c.records and c.records[0].scope and not _whole_study(c.records[0].scope)
+            else None,
             values=_positions(c, fd, docs),
             # Through `name_ids`, like the Disagreements explanations in
             # `_decisions`: ADJUDICATE's prompt prints `doc_id=` for every
@@ -3067,10 +3387,30 @@ def _dismissed(
             # internal ids such as `doc-2ea4cd79` routinely. On the first render
             # of this line, Appendix B of r-20261008-review2-run3 showed four
             # of them where the Disagreements table shows "Amendment" and "RFP".
-            explanation=_name_records(_name_values(docs.name_ids(c.explanation), fd), c, docs)
+            explanation=_model_text(c.explanation, c, fd, docs)
             if c.explanation else "",
         ))
     return out
+
+
+def _model_text(text: str, c: Contradiction, fd: FieldDef | None, docs: _Docs) -> str:
+    """ADJUDICATE's explanation in the report's words: document names for ids
+    (`_Docs.name_ids`), the report's words for code words (`_name_values`),
+    each numbered passage with its page (`_name_records`), and a setting
+    written as code read as words (`_name_settings`)."""
+    return _name_settings(_name_records(_name_values(docs.name_ids(text), fd), c, docs))
+
+
+# A setting the adjudicating model wrote as code, from the field definition it
+# was shown: `scope="statistical minimum"`.
+_SETTING = re.compile(r'\b([a-z][a-z_]*)\s*=\s*"([^"]*)"')
+
+
+def _name_settings(text: str) -> str:
+    """`scope="total"` reads `the scope "total"`: run r-20261123-oct29-run6's
+    Appendix B printed `scope="statistical minimum" rather than scope="total"`
+    (run-comparison-reviewer, 23 November 2026)."""
+    return _SETTING.sub(lambda m: f'the {m.group(1).replace("_", " ")} "{m.group(2)}"', text)
 
 
 def _name_values(text: str, fd: FieldDef | None) -> str:
@@ -3084,10 +3424,21 @@ def _name_values(text: str, fd: FieldDef | None) -> str:
         return text
     for token in sorted(fd.values or [], key=len, reverse=True):
         words = format_value(token, fd)[0]
+        # Words after the code word that its printed words already end with are
+        # dropped: "matching_stated as supplied" read '"Yes, matching as
+        # supplied" as supplied' in run r-20261123-oct29-run6's Appendix B
+        # (plan-conformance-reviewer, 23 November 2026). Two words at least, so
+        # one common word is never taken.
+        tail = re.findall(r"[^\W_]+", words)
+        repeats = "|".join(
+            r"\s+".join(map(re.escape, tail[-k:])) for k in range(len(tail) - 1, 1, -1)
+        )
+        again = rf"(?i:\s+(?:{repeats})\b)?" if repeats else ""
         if "_" in token:
-            text = re.sub(rf"[\"']?\b{re.escape(token)}\b[\"']?", f'"{words}"', text)
+            pattern = rf"[\"']?\b{re.escape(token)}\b[\"']?{again}"
         else:
-            text = re.sub(rf"([\"']){re.escape(token)}\1", f'"{words}"', text)
+            pattern = rf"([\"']){re.escape(token)}\1{again}"
+        text = re.sub(pattern, f'"{words}"', text)
     return text
 
 
@@ -3102,6 +3453,8 @@ _RECORD_NUMBERS = re.compile(
     r"|\b(Record)\s+(\d+(?:\s*(?:,|/|&|and|or)\s*\d+)*)\b",
     re.IGNORECASE,
 )
+# A range inside those numbers: "3-5", "3–5" or "3 to 5".
+_RECORD_RANGE = re.compile(r"(\d+)(?:[-\u2013]|\s+to\s+)(\d+)", re.IGNORECASE)
 
 
 def _name_records(text: str, c: Contradiction, docs: _Docs) -> str:
@@ -3118,15 +3471,30 @@ def _name_records(text: str, c: Contradiction, docs: _Docs) -> str:
         # (printed p.109)" (docs/ARCHITECTURE.md §3, printed_page).
         return docs.pages([c.records[n - 1].provenance])
 
+    def one(d: re.Match[str]) -> str:
+        ref = page(int(d.group(0)))
+        return f"{d.group(0)} ({ref})" if ref else d.group(0)
+
+    def span(r: re.Match[str]) -> str:
+        # "records 3-5" reads "records 3 to 5 (Amendment p.26, 111)": every
+        # passage of the range, once, after it. Run r-20261123-oct29-run6
+        # printed "records 3 (Amendment p.26)-5 (Amendment p.111)", which hid
+        # record 4 (plan-conformance-reviewer, 23 November 2026).
+        a, b = int(r.group(1)), int(r.group(2))
+        if not 1 <= a < b <= len(c.records):
+            return re.sub(r"\d+", one, r.group(0))
+        return f"{a} to {b} ({docs.pages([c.records[n - 1].provenance for n in range(a, b + 1)])})"
+
     def numbered(m: re.Match[str]) -> str:
         if m.string[m.end():].lstrip().startswith("("):
             return m.group(0)
         word, numbers = (m.group(1), m.group(2)) if m.group(1) else (m.group(3), m.group(4))
-        return f"{word} " + re.sub(
-            r"\d+",
-            lambda d: f"{d.group(0)} ({ref})" if (ref := page(int(d.group(0)))) else d.group(0),
-            numbers,
-        )
+        out, pos = [], 0
+        for r in _RECORD_RANGE.finditer(numbers):
+            out += [re.sub(r"\d+", one, numbers[pos:r.start()]), span(r)]
+            pos = r.end()
+        out.append(re.sub(r"\d+", one, numbers[pos:]))
+        return f"{word} " + "".join(out)
 
     return _RECORD_NUMBERS.sub(numbered, text)
 
@@ -3509,17 +3877,83 @@ def _under_rows(fd: FieldDef, shown_as: dict[str, Row], field_rows: list[Row]) -
     return out
 
 
-def _once_each(rows: list[TableRow]) -> list[TableRow]:
+def _once_each(rows: list[TableRow], own: Collection[str] = ()) -> list[TableRow]:
     """`rows` with each grey note printed once: a reason or note that a row
     above it in the same variable already gives is not repeated, so five
     periods of one list flagged for the same reason say it once, under the
-    first."""
+    first. A note in `own` says something of its own line ("Other wordings are
+    quoted in Appendix A.", a stretch no document describes) and is printed
+    under every line that has it (pipeline-rules-reviewer, 23 November 2026).
+    So is a side's: its one note names its own quote's page (`_side_row`)."""
     seen: set[str] = set()
     for t in rows:
-        kept = [n for n in dict.fromkeys(t.notes) if n not in seen]
+        if t.kind == "side":
+            continue
+        kept = [n for n in dict.fromkeys(t.notes) if n not in seen or n in own]
         seen.update(kept)
         t.notes = kept
     return rows
+
+
+def _said(quote: str) -> str:
+    """A quote as a side's value is compared with it: one line, in one case."""
+    return " ".join(quote.split()).casefold()
+
+
+def _side_text(side: Side, wording: ReportWording) -> str:
+    """A side as its row prints it: "RFP: 1 — "Interim Efficacy Analysis…"",
+    with "…" outside the quotation marks where the quote was cut short. A value
+    the tool also read under a row in review reads "Also read in the RFP: …"
+    (`report_wording.side_also`), not as one side of a disagreement
+    (report-usability-reviewer, on run r-20261123-oct29-run6). A quote that
+    is only the value again is left out: "RFP: 40 month study duration"."""
+    if side.also and side.doc:
+        text = ReportWording.fill(wording.side_also, doc=side.doc, value=side.text)
+    else:
+        text = f"{side.doc}: {side.text}" if side.doc else side.text
+    if side.pointer:
+        text += f" — {side.pointer}"
+    elif _quoted(side):
+        text += f' — "{side.quote}"' + ("…" if side.quote_cut else "")
+    return text
+
+
+def _quoted(side: Side) -> bool:
+    """Whether a side prints its quote: not where a pointer stands in its place,
+    nor where the quote is only the value again."""
+    return bool(side.quote) and not side.pointer and (
+        _said(side.quote or "").strip(" .;") != _said(side.text).strip(" .;")
+    )
+
+
+def _side_row(side: Side, wording: ReportWording) -> TableRow:
+    """A side as a table row: its text, its pages in the Where cell, and, where
+    it cites several pages and prints one quote, the quote's page in grey
+    under them, never in the Value cell (Angus Gray, 29 October 2026)."""
+    return TableRow(
+        kind="side", values=[_side_text(side, wording)], where=side.sources,
+        notes=[ReportWording.fill(wording.quote_from, page=side.quote_from)]
+        if side.quote_from and _quoted(side) else [],
+    )
+
+
+def _add_proof(
+    row: Row, fd: FieldDef, group: list[ResolvedField], docs: _Docs, wording: ReportWording,
+) -> None:
+    """The phrase that proves a row's one value, where the field's `show_quote`
+    asks for it: "No — "Standard of Care in Subjects with Light Chain (AL)
+    Amyloidosis"" (Angus Gray, 1 October 2026: "the report should say no and
+    show the phrase that proves it"). Its page, where the row cites several,
+    in grey under them."""
+    if not fd.show_quote or row.decision_no is not None or row.sides or len(group) != 1:
+        return
+    rf = group[0]
+    if not rf.quote or rf.status not in ("confirmed", "needs_review"):
+        return
+    row.proof, row.proof_cut = _side_quote(rf.quote)
+    page = docs.quote_page(rf.quote, rf.sources)
+    if page:
+        row.where_notes.append(ReportWording.fill(wording.quote_from, page=page))
 
 
 def _table_rows(
@@ -3556,10 +3990,7 @@ def _table_rows(
             first.grey.append(r.provisional)
         first.status = STATUS_REVIEW
         for side in r.sides:
-            text = f"{side.doc}: {side.text}" if side.doc else side.text
-            if side.quote:
-                text += f' — "{side.quote}"' + ("…" if side.quote_cut else "")
-            out.append(TableRow(kind="side", values=[text], where=side.sources))
+            out.append(_side_row(side, wording))
         for v in r.values:
             if not v.on_sides:
                 out.append(TableRow(
@@ -3575,7 +4006,10 @@ def _table_rows(
             first.status = STATUS_REVIEW
         elif shown:
             texts, v = shown[0]
-            first.values = texts
+            first.values = (
+                [f'{texts[0]} — "{r.proof}"' + ("…" if r.proof_cut else ""), *texts[1:]]
+                if r.proof else texts
+            )
             first.where = v.sources or (r.evidence_pages or "")
             one = len(r.values) == 1
             first.status = STATUS_REVIEW if forced else status_word(r.status if one else v.status)
@@ -3588,6 +4022,10 @@ def _table_rows(
             # Lines only, as an `entries` part's: the row's status and pages.
             first.where = r.values[0].sources
             first.status = STATUS_REVIEW if forced else status_word(r.status)
+        # The other values a dismissed difference holds, each with its quote
+        # and its own pages, under the row's (`_also_sides`), whatever the row
+        # shows above them.
+        out += [_side_row(side, wording) for side in r.others]
         first.lines = list(r.block_lines)
         if r.depends_on is not None:
             first.alert = r.depends_on

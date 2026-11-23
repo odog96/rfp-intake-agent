@@ -163,7 +163,7 @@ def _unjudged(
     marked = contradiction.model_copy(update={
         "verdict": "conflict",
         "explanation": UNJUDGED_EXPLANATION,
-        "severity": "high" if field_def.budget_driver else None,
+        "severity": field_def.severity(None),
     })
     return _handle_conflict(marked, field_def)
 
@@ -180,7 +180,11 @@ def _adjudicate_one(
     adjudicated = contradiction.model_copy(update={
         "verdict": result.verdict,
         "explanation": result.explanation,
-        "severity": result.severity,
+        # High on a budget driver whatever the model rated it, as
+        # config/precedence.yaml's `severity` and config/fields.yaml's header
+        # define it: run r-20261123-oct29-run6 rated the placebo-matching
+        # conflict "medium" (report-usability-reviewer, 23 November 2026).
+        "severity": field_def.severity(result.severity),
         "off_topic_record_indexes": _off_topic(contradiction, result),
     })
 
