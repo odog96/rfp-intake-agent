@@ -9,6 +9,12 @@ bespoke logic, not something a YAML edit alone can express. A derived field
 with no registered rubric degrades to not_specified rather than crashing
 the run, and is logged as an error so the gap is visible.
 
+No rubric is registered and no field in config/fields.yaml is derived, since
+2026-11-23: the visit-intensity rating and what to assume about the placebo
+were removed with their fields at Angus Gray's request of 29 October 2026 (see
+derive/rubric.py). What DERIVE still writes is the visit totals of each stage,
+added up from the Schedule of Events (`stage_totals`, `from_schedule`).
+
 A rubric receives every row of each input, never one picked for it. Until
 2026-10-11 DERIVE kept one row per field id and the last row won, so a small
 "Months 1-3" row replaced the study's nine-item evidence row and the visit
@@ -24,22 +30,16 @@ from typing import Any
 
 import structlog
 
-from rfp_intake.derive.rubric import (
-    RubricResult,
-    compute_placebo_assumption,
-    compute_visit_intensity,
-)
+from rfp_intake.derive.rubric import RubricResult
 from rfp_intake.domain.registry import Registry, ScopeLeftOut, get_registry, scope_has_phrase
 from rfp_intake.domain.schemas import Provenance, ResolvedField, RunError, RunState
 
 logger = structlog.get_logger()
 
 # A rubric reads the registry for the labels and `value_words` its plain-words
-# reasons are written in (fix 8 of the 2026-10-12 brief).
-DERIVE_RUBRICS: dict[str, Callable[[dict[str, list[ResolvedField]], Registry], RubricResult]] = {
-    "visits.intensity_rating": compute_visit_intensity,
-    "blinding.placebo_assumption": compute_placebo_assumption,
-}
+# reasons are written in (fix 8 of the 2026-10-12 brief). Empty since
+# 2026-11-23; see the module docstring.
+DERIVE_RUBRICS: dict[str, Callable[[dict[str, list[ResolvedField]], Registry], RubricResult]] = {}
 
 
 def derive_node(state: RunState) -> dict[str, Any]:
@@ -111,7 +111,7 @@ def derive_node(state: RunState) -> dict[str, Any]:
                 derived_from=field_def.derived_from or [],
             ))
 
-    # After the rubrics, so visit intensity reads only what the documents state.
+    # After the rubrics, so a rubric reads only what the documents state.
     # Caught like a rubric, so a schedule it cannot add up loses no other field.
     try:
         computed += stage_totals(state, registry)
