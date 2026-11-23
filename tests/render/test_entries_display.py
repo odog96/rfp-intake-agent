@@ -429,8 +429,6 @@ class TestTimeline:
             "Run-in: Not found in the documents",
             "Treatment: 18 months after enrolment ends",
             "Follow-up: Every 3 months until the last event is adjudicated",
-            "Open-label extension: Not found in the documents",
-            "Long-term follow-up: Not found in the documents",
             "Overall patient participation: Not found in the documents",
             "Enrolment: 24 months",
             "End of treatment visit: 28–35 days after last dose",
@@ -524,6 +522,27 @@ class TestTimeline:
         assert _whole_study(_row(model, "timeline.periods")) == [
             ("Whole study", "42 months", "Confirmed", "Amendment p.24"),
         ]
+
+    def test_an_additional_period_has_a_line_only_where_a_document_states_it(
+        self,
+    ) -> None:
+        """Angus Gray, 29 October 2026: "and then any additional timelines,
+        whether there's an open-label extension, or a long-term follow-up", then
+        the overall patient participation."""
+        _, model = _report(_timeline())
+        lines = _lines(_row(model, "timeline.periods"))
+        assert not any(line.startswith(("Open-label extension", "Long-term follow-up"))
+                       for line in lines)
+        _, model = _report(_timeline() + [_rec(
+            "timeline.periods",
+            {"component": "open_label_extension", "label": "OLE study",
+             "duration": "up to 2 years"},
+            None, AM, 47, "an open-label extension study of up to 2 years",
+        )])
+        lines = _lines(_row(model, "timeline.periods"))
+        ole = lines.index("Open-label extension: Up to 2 years")
+        assert lines[ole + 1].startswith("Overall patient participation")
+        assert not any(line.startswith("Long-term follow-up") for line in lines)
 
     def test_a_stated_start_and_end_are_printed_beside_the_duration(self) -> None:
         _, model = _report([_rec(

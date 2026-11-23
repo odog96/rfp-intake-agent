@@ -36,6 +36,7 @@ from __future__ import annotations
 
 import io
 import re
+from typing import Any
 from xml.sax.saxutils import escape
 
 from reportlab.lib import colors
@@ -365,7 +366,7 @@ def _variables(model: ReportModel, styles: dict) -> list:  # type: ignore[type-a
                 spans.append(len(data))
                 data.append([_visit_cell(r, styles), "", "", ""])
     table = _table(data, _MAIN_COLS)
-    extra = [("LINEBELOW", (0, i), (-1, i), 0.3, _FAINT) for i in faint]
+    extra: list[tuple[Any, ...]] = [("LINEBELOW", (0, i), (-1, i), 0.3, _FAINT) for i in faint]
     for i in bands:
         extra += [
             ("SPAN", (0, i), (-1, i)),

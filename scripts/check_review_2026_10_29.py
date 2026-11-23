@@ -72,6 +72,9 @@ TIMELINE_LINES = (
     "Time window to budget for",
     "Whole study",
 )
+# "and then any additional timelines, whether there's an open-label extension, or a
+# long-term follow-up" (29 Oct 00:01:14): printed only where a document states one.
+OPTIONAL_TIMELINE_LINES = ("Open-label extension", "Long-term follow-up")
 BLINDING_GROUP = "Blinding and Unblinded Monitoring"
 PAGE_REF = re.compile(r"\bp\.\s?\d")
 STATUS_WORDS = {"Confirmed", "Review", ""}
@@ -158,7 +161,7 @@ def check_timeline(report: c7.Report) -> Result:
     named = [s for s in lines if s]
     notes = [f"{r.scope}: {_value(r)} | {r.cell('Status')} | {r.cell('Where')}"
              for r in _children(rows, starts[0]) if r.scope]
-    missing = [w for w in TIMELINE_LINES if w not in named]
+    missing = [w for w in TIMELINE_LINES if w not in named and w not in OPTIONAL_TIMELINE_LINES]
     order = [w for w in named if w in TIMELINE_LINES]
     if missing:
         return Result("T3 T4 T8", title, "FAIL", f"missing lines: {', '.join(missing)}", notes)

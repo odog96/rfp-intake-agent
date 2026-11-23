@@ -975,6 +975,8 @@ class TestEntryKeysAndTheirDisplays:
         # 29 October 2026: `always` names values of the order_key, like `notes`.
         ({"display": dict(_PERIODS, always={"arm": "Arms", "dose_level": "Dose"})},
          "periods always for values its order_key does not allow: dose_level"),
+        ({"display": dict(_PERIODS, when_stated={"dose_level": "Dose"})},
+         "periods when_stated for values its order_key does not allow: dose_level"),
         ({"display": dict(_PERIODS, see_also=[{"field": "g1.none", "wording": "{label}",
                                                "disagree": "{n}"}])},
          "see_also on a field it cannot use"),
@@ -1018,10 +1020,22 @@ class TestEntryKeysAndTheirDisplays:
 
     def test_a_periods_always_heading_needs_words(self, tmp_path: Path) -> None:
         """A line with no heading would print an empty bold Variable cell."""
-        with pytest.raises(ValidationError, match="every value in always needs a heading"):
+        with pytest.raises(ValidationError, match="every value in always and when_stated"):
             load_registry(self._write(
                 tmp_path, display=dict(self._PERIODS, always={"arm": " "}),
             ))
+        with pytest.raises(ValidationError, match="every value in always and when_stated"):
+            load_registry(self._write(
+                tmp_path, display=dict(self._PERIODS, when_stated={"arm": " "}),
+            ))
+
+    def test_a_period_is_listed_in_always_or_when_stated_not_both(
+        self, tmp_path: Path
+    ) -> None:
+        with pytest.raises(ValidationError, match="listed in both always and when_stated: arm"):
+            load_registry(self._write(tmp_path, display=dict(
+                self._PERIODS, always={"arm": "Arm"}, when_stated={"arm": "Arm"},
+            )))
 
     def test_a_headline_wording_names_the_value(self, tmp_path: Path) -> None:
         with pytest.raises(ValidationError, match="must contain"):

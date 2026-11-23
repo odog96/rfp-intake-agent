@@ -2098,7 +2098,7 @@ def _periods_row(
                  == len(placeholders(w))],
                 words,
             )
-            heading = display.always.get(str(value)) or _capital(named or "—", wording)
+            heading = display.named(str(value)) or _capital(named or "—", wording)
             # No line wording applies: the document's own name for the stretch,
             # where the heading is not already that name.
             text = _pick(line_wordings, words) or (
@@ -2174,8 +2174,9 @@ def _period_stating(
 
 def _period_groups(records: list[FieldRecord], display: PeriodsDisplay) -> list[list[FieldRecord]]:
     """`records` grouped one per stretch, by the `one_per` keys. Where the
-    display lists the stretches it `always` prints, a stretch it does not list
-    (`other`) is also told apart by the keys its heading names: two stretches
+    display lists the stretches it `always` prints, a stretch it names in
+    neither `always` nor `when_stated` (`other`) is also told apart by the keys
+    its heading names: two stretches
     the documents name differently, such as an enrolment period and an end of
     treatment visit, are two rows, each with its own pages, not one row
     citing the other's page."""
@@ -2186,7 +2187,7 @@ def _period_groups(records: list[FieldRecord], display: PeriodsDisplay) -> list[
     out: list[list[FieldRecord]] = []
     for group in groups:
         value = group[0].value.get(display.order_key) if isinstance(group[0].value, dict) else None
-        if named and str(value) not in display.always:
+        if named and display.named(str(value)) is None:
             out += group_entries(group, display.one_per + list(dict.fromkeys(named)))
         else:
             out.append(group)

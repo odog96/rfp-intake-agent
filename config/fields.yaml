@@ -1049,8 +1049,9 @@ fields:
       schedule describes it: screening, run_in (also called lead-in), treatment, follow_up after
       treatment ends, open_label_extension, long_term_follow_up, and overall_participation - how
       long one patient takes part in all, from screening to their last visit. `label` names the
-      period as the document does. `duration` is only its length ("28 days", "14-21 days"),
-      never the words around it. `start` and
+      period as the document does. `duration` is only its length, as a number and a unit
+      ("28 days", "14-21 days", also where the document writes "a 28-day period"), never the
+      words around it. `start` and
       `end` are ONLY the day or visit that opens and closes it, as the document numbers them
       ("Day -28", "Day -1", "Month 1 Day 1", "Last dose", "End-of-treatment visit"): never a
       sentence, and never what happens on that day. Write "Day -1", not "prior to the first
@@ -1080,16 +1081,21 @@ fields:
       one_per: [component]
       heading: ["{label}"]
       # The periods every patient timeline names, printed whether or not a document states
-      # them ("Not found in the documents" where none does), under these names. `other` is
+      # them ("Not found in the documents" where none does), under these names. Angus Gray,
+      # 29 October 2026: screening, run-in, treatment and follow-up, "and then any additional
+      # timelines, whether there's an open-label extension, or a long-term follow-up", and
+      # then the overall patient participation. So the two additional periods are printed
+      # only where a document states them (`when_stated`), in the same order. `other` is
       # printed only where a document states one, under its own label.
       always:
         screening: Screening
         run_in: Run-in
         treatment: Treatment
         follow_up: Follow-up
+        overall_participation: Overall patient participation
+      when_stated:
         open_label_extension: Open-label extension
         long_term_follow_up: Long-term follow-up
-        overall_participation: Overall patient participation
       # The first alternative whose keys are all stated, so the longer ones come first.
       lines: ["{duration}, {start} to {end}", "{duration}, from {start}",
               "{duration}, until {end}", "{duration}", "From {start} until {end}",

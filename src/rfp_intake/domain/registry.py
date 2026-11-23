@@ -365,6 +365,11 @@ class PeriodsDisplay(BaseModel):
     of `order_key`'s values, also where a document states it, and a value no
     document states reads "Not found in the documents". A value not listed gets
     a line only where a document states one, under the `heading` wordings.
+    `when_stated` maps further values to their heading in the same way, but each
+    gets a line only where a document states it: Angus Gray, 29 October 2026,
+    listed screening, run-in, treatment and follow-up, "and then any additional
+    timelines, whether there's an open-label extension, or a long-term
+    follow-up".
     """
 
     kind: Literal["periods"]
@@ -375,14 +380,26 @@ class PeriodsDisplay(BaseModel):
     notes: dict[str, str] = Field(default_factory=dict)
     see_also: list[SeeAlso] = Field(default_factory=list)
     always: dict[str, str] = Field(default_factory=dict)
+    when_stated: dict[str, str] = Field(default_factory=dict)
 
-    @field_validator("always")
+    @field_validator("always", "when_stated")
     @classmethod
     def _always_has_words(cls, v: dict[str, str]) -> dict[str, str]:
         # A line with no heading would print an empty bold cell.
         if any(not str(label).strip() for label in v.values()):
-            raise ValueError("every value in always needs a heading")
+            raise ValueError("every value in always and when_stated needs a heading")
         return v
+
+    @model_validator(mode="after")
+    def _listed_once(self) -> PeriodsDisplay:
+        both = sorted(set(self.always) & set(self.when_stated))
+        if both:
+            raise ValueError(f"listed in both always and when_stated: {', '.join(both)}")
+        return self
+
+    def named(self, value: str) -> str | None:
+        """The heading `always` or `when_stated` gives a value, if either does."""
+        return self.always.get(value) or self.when_stated.get(value)
 
 
 class BreakdownDisplay(BaseModel):
@@ -1200,6 +1217,12 @@ def _validate_registry(groups: list[GroupDef], fields: list[FieldDef]) -> None:
                 errors.append(
                     f"Field {f.id} has periods always for values its order_key does not allow: "
                     f"{', '.join(unknown)}"
+                )
+            unknown = [v for v in d2.when_stated if order is None or v not in order.values]
+            if unknown:
+                errors.append(
+                    f"Field {f.id} has periods when_stated for values its order_key does not "
+                    f"allow: {', '.join(unknown)}"
                 )
             for s in d2.see_also:
                 if s.field not in pre_by_id or s.field == f.id:
