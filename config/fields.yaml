@@ -1020,26 +1020,34 @@ fields:
     # One variable since 29 October 2026 (Angus Gray): "Overall study duration" and
     # "Timeline components" are not different variables. A line per period of one patient's
     # time, each laid out as the screening line was ("28 days, Day -28 to Day 1"), and no
-    # accrual period, which is the study's recruitment and not a patient's time.
+    # accrual period, which is the study's recruitment and not a patient's time. Telephone
+    # follow-up of patients who stopped treatment is left out (Angus Gray, 1 October 2026:
+    # "I would ignore that... I don't think the tool needs to extract stuff like that").
     hint: >
-      One entry per period of ONE PATIENT'S time in the study that the document states:
-      screening, run_in (also called lead-in), treatment, follow_up after treatment ends,
-      open_label_extension, long_term_follow_up, and overall_participation - how long one
-      patient takes part in all, from screening to their last visit or contact. `label` names
-      the period as the document does; `duration` is how long it lasts; `start` and `end` are
-      when it begins and ends. Write `start` and `end` as the day or visit the document uses
-      ("Day -28", "Day 1", "Month 1 Day 1", "last dose"), without explaining what happens on
-      that day: "first administration of study drug" belongs to the dosing schedule, not here.
+      One entry per period of ONE PATIENT'S time in the study, as the study design or the
+      schedule describes it: screening, run_in (also called lead-in), treatment, follow_up after
+      treatment ends, open_label_extension, long_term_follow_up, and overall_participation - how
+      long one patient takes part in all, from screening to their last visit. `label` names the
+      period as the document does. `duration` is how long it lasts ("28 days"). `start` and
+      `end` are ONLY the day or visit that opens and closes it, as the document numbers them
+      ("Day -28", "Day -1", "Month 1 Day 1", "Last dose", "End-of-treatment visit"): never a
+      sentence, and never what happens on that day. Write "Day -1", not "prior to the first
+      administration of study drug on Day 1".
       Where treatment has no fixed length - it runs until a number of events has occurred, or
       until the study ends - leave `duration` out and put that condition in `end`, in the
-      document's words ("approximately 156 primary endpoint events have occurred").
+      document's words ("approximately 300 primary endpoint events"). A follow-up visit set a
+      time after the last dose is follow_up: `duration` that time ("14-21 days"), `start` "Last
+      dose", `end` that visit's name.
       overall_participation for such a study often depends on when the patient enrols ("up to
       about 4 years for patients who enrol first, about 2 years for those who enrol last"):
-      give it as the document does.
-      Leave out the enrolment or accrual period, study start-up, database lock and the final
-      analysis: they are stages of the study, not of a patient's time. Leave out single visits
-      ("Month 1", "Day 8"), which are the visit schedule, and the whole study's duration, which
-      is timeline.total_duration. Omit periods the document does not mention.
+      give it in `duration` as the document does.
+      Leave out: the enrolment or accrual period, study start-up, database lock and the final
+      analysis, which are stages of the study, not of a patient's time; the accrual and
+      follow-up times a sample-size or statistical section assumes ("an accrual period of 30
+      months and a follow-up period of 12 months"), which describe the whole study; telephone or
+      vital-status calls to patients who have stopped treatment; single visits ("Month 1",
+      "Day 8"), which are the visit schedule; and the whole study's duration, which is
+      timeline.total_duration. Omit periods the document does not mention.
     source_priority: any
     budget_driver: true
     # One row: a line per period in the order of `component`'s values, each under its own
@@ -1072,12 +1080,14 @@ fields:
     aliases: ["for budgeting purposes", "budget assumption", "assume a treatment duration",
               "study duration", "planned study duration"]
     # Angus Gray, 29 October 2026: where treatment runs until a number of events, the budget
-    # still needs a time window, which the RFP (or the sponsor) gives.
+    # still needs a time window ("We need to put a time window on these things"), which "would
+    # be in either one of the documents. Or maybe an email".
     hint: >
       The length of time the sponsor asks the CRO to plan and cost the study or its treatment
       for, in the document's own words: a budgeting assumption ("for budgeting purposes, assume
-      48 months of treatment") or the study duration the RFP states ("40 month study
-      duration"). Read it from an RFP or another request addressed to the CRO only.
+      48 months of treatment") or the study duration the RFP states ("36 month study
+      duration"). Copy only the words that give that time: leave out an enrolment or accrual
+      period given beside it. Read it from an RFP or another request addressed to the CRO only.
     plain: >
       How long the sponsor wants the study, or its treatment, budgeted for. It matters most where
       treatment has no fixed length and runs until a number of events has occurred.
@@ -1087,6 +1097,10 @@ fields:
     # timeline and the whole-study duration record.
     only_from: [rfp]
     shown_under: timeline.periods
+    # Where the RFP gives no window, the row says so, so the question can go back to the
+    # sponsor before the budget is built.
+    when_not_found:
+      lines: ["Not stated in the RFP: ask the sponsor."]
 
   - id: timeline.total_duration
     group: timelines
@@ -1588,6 +1602,10 @@ fields:
       problems. Checking everything costs far more than a sample.
     source_priority: rfp
     budget_driver: true
+    # Says what was looked for when no document gives it (Angus Gray, 7 October 2026: a row
+    # that says nothing was specified should say what it refers to).
+    when_not_found:
+      lines: ["No document gives a source data verification (SDV), source data review (SDR) or CRF percentage."]
 
   - id: monitoring.strategy_guidance
     group: clinical_monitoring
