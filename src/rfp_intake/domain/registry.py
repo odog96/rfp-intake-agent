@@ -356,6 +356,15 @@ class PeriodsDisplay(BaseModel):
     stated and read differently ("{period} ({label})" is passed over where the
     label only repeats the period); `lines` are alternatives, as in
     `EntriesDisplay`. `notes` adds a note to the line of an `order_key` value.
+
+    Since 29 October 2026 (Angus Gray) each line is its own row of the report's
+    table, its heading in bold in the Variable column, so a line's wording no
+    longer needs `{heading}`; where one still names it, the report leaves the
+    heading out of the value. `always` maps `order_key` values to the heading
+    their line is printed under: every value listed gets a line, in the order
+    of `order_key`'s values, also where a document states it, and a value no
+    document states reads "Not found in the documents". A value not listed gets
+    a line only where a document states one, under the `heading` wordings.
     """
 
     kind: Literal["periods"]
@@ -365,6 +374,15 @@ class PeriodsDisplay(BaseModel):
     lines: list[str] = Field(min_length=1)
     notes: dict[str, str] = Field(default_factory=dict)
     see_also: list[SeeAlso] = Field(default_factory=list)
+    always: dict[str, str] = Field(default_factory=dict)
+
+    @field_validator("always")
+    @classmethod
+    def _always_has_words(cls, v: dict[str, str]) -> dict[str, str]:
+        # A line with no heading would print an empty bold cell.
+        if any(not str(label).strip() for label in v.values()):
+            raise ValueError("every value in always needs a heading")
+        return v
 
 
 class BreakdownDisplay(BaseModel):
@@ -509,6 +527,14 @@ class FieldDef(BaseModel):
     follow_wording: FollowWording | None = None
     # How the report lays out this variable's rows. See Display.
     display: Display | None = None
+    # Another variable whose row this one is printed under, as further lines at
+    # the end of it, instead of a row of its own in All variables (Angus Gray,
+    # 29 October 2026: the whole study's duration and the time window to budget
+    # for are lines of "Patient timeline"). Each line is labelled by this
+    # variable's `scopes` display heading or, with none, its own label. A
+    # disagreement about it keeps its number and its own label in the
+    # Disagreements table, and a variable no document gives still gets its line.
+    shown_under: str | None = None
     # The word report.pdf prints for an enum value whose own spelling reads as
     # software: `not_matching_stated` as "Not matching". Never sent to a model,
     # like `plain`. A value not listed is printed by render/report_model.py's
@@ -638,6 +664,22 @@ class ReportWording(BaseModel):
     # "mg" not "Mg" (Prompt B item 8). Matched exactly; see
     # render/report_model.py:_capital.
     never_capitalised: list[str] = Field(default_factory=list)
+    # The 29 October 2026 layout (Angus Gray): Variable | Value | Status | Where.
+    # Defaulted, so a config/fields.yaml written before it still loads; each can
+    # be reworded there. `not_found` is the value of a variable no document
+    # gives (rule 3 keeps it apart from "Not specified" and "N/A");
+    # `row_disagree` is the red line on a row with its own numbered
+    # Disagreement, and `row_provisional` the grey line under it where
+    # precedence chose a value; `counted_note` is the grey note under the
+    # pages of a row the tool counted from a Schedule of Events, `{heading}`
+    # the table's heading.
+    not_found: str = Field(default="Not found in the documents", min_length=1)
+    row_disagree: str = Field(default="Documents disagree — see Disagreement {n}", min_length=1)
+    row_provisional: str = Field(default="Shown provisionally: {value} ({why})", min_length=1)
+    counted_note: str = Field(
+        default="Worked out by the tool from {heading}, not read from a document.",
+        min_length=1,
+    )
 
     @field_validator("entries_count")
     @classmethod
@@ -669,7 +711,7 @@ class ReportWording(BaseModel):
 
     @field_validator(
         "not_used", "no_value_chosen", "row_shown_provisional", "row_no_value_chosen",
-        "depends_on", "block_disagree",
+        "depends_on", "block_disagree", "row_disagree",
     )
     @classmethod
     def _names_the_disagreement(cls, v: str) -> str:
@@ -677,7 +719,7 @@ class ReportWording(BaseModel):
             raise ValueError("must contain {n}, the Disagreement number")
         return v
 
-    @field_validator("row_shown_provisional")
+    @field_validator("row_shown_provisional", "row_provisional")
     @classmethod
     def _says_the_value(cls, v: str) -> str:
         if "{value}" not in v or "{why}" not in v:
@@ -738,6 +780,13 @@ class ReportWording(BaseModel):
             raise ValueError("must contain {pages} and {value}, the side's pages and value")
         return v
 
+    @field_validator("counted_note")
+    @classmethod
+    def _names_the_table(cls, v: str) -> str:
+        if "{heading}" not in v:
+            raise ValueError("must contain {heading}, the table the tool counted")
+        return v
+
     @field_validator("scope_kind")
     @classmethod
     def _names_kind_and_name(cls, v: str) -> str:
@@ -782,12 +831,19 @@ class ScheduleStage(BaseModel):
 class Consideration(BaseModel):
     """What a schedule row is for, matched on its label by `wording`. A row whose
     consideration has `assessment: false` is not an assessment (randomization,
-    dosing), so its marks are left out of the Assessments count by default."""
+    dosing), so its marks are left out of the Assessments count by default.
+
+    `show: false` keeps a consideration out of the visit table's Key
+    considerations column (Angus Gray, 29 October 2026) and changes nothing
+    else: it is still matched, still left out of the Assessments count where
+    `assessment` is false, and still named in the sentence saying what that
+    count leaves out."""
 
     id: str
     label: str
     wording: list[str]
     assessment: bool = True
+    show: bool = True
 
 
 class ScheduleWording(BaseModel):
@@ -1010,6 +1066,22 @@ def _validate_registry(groups: list[GroupDef], fields: list[FieldDef]) -> None:
                 "extracted field"
             )
 
+    # A variable printed under another is printed under one that has a row of
+    # its own: a real other variable, not itself shown under a third.
+    for f in fields:
+        target = f.shown_under
+        if target is None:
+            continue
+        if target == f.id:
+            errors.append(f"Field {f.id} is shown under itself")
+        elif target not in seen_ids:
+            errors.append(f"Field {f.id} is shown under an unknown field: {target}")
+        elif next(o for o in fields if o.id == target).shown_under is not None:
+            errors.append(
+                f"Field {f.id} is shown under {target}, which is itself shown under "
+                "another field"
+            )
+
     # A follower's wording needs a disagreement to follow.
     for f in fields:
         if f.follow_wording is not None and f.follows_conflict_of is None:
@@ -1102,6 +1174,12 @@ def _validate_registry(groups: list[GroupDef], fields: list[FieldDef]) -> None:
             if unknown:
                 errors.append(
                     f"Field {f.id} has periods notes for values its order_key does not allow: "
+                    f"{', '.join(unknown)}"
+                )
+            unknown = [v for v in d2.always if order is None or v not in order.values]
+            if unknown:
+                errors.append(
+                    f"Field {f.id} has periods always for values its order_key does not allow: "
                     f"{', '.join(unknown)}"
                 )
             for s in d2.see_also:
