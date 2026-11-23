@@ -22,14 +22,30 @@ import re
 from dataclasses import dataclass
 from typing import Any
 
-from rfp_intake.domain.registry import EntryKey, FieldDef, scope_has_phrase
+from rfp_intake.domain.registry import (
+    EntryKey,
+    FieldDef,
+    PeriodsDisplay,
+    placeholders,
+    scope_has_phrase,
+)
 from rfp_intake.domain.schemas import FieldRecord
+from rfp_intake.normalize.duration import amounts_in
 from rfp_intake.reconcile.precedence import apply_precedence
 
 
 def same_key(value: Any) -> str:
     """Two values read the same if they differ only in case and spacing."""
     return re.sub(r"\s+", " ", str(value)).strip().casefold()
+
+
+def length_key(value: Any) -> str:
+    """A text value as `MergedEntry.stated_two_ways` compares it: the lengths
+    it gives, in order ("28 days" of "a 28-day period"), where it gives any,
+    else its words as `same_key` reads them. Nothing is converted: 4 weeks and
+    28 days are two lengths."""
+    amounts = amounts_in(str(value))
+    return repr(amounts) if amounts else same_key(value)
 
 
 @dataclass(frozen=True)
@@ -83,6 +99,26 @@ class MergedEntry:
             )
         ]
 
+    def stated_two_ways(self, may_word_differently: list[str]) -> list[str]:
+        """The keys some two records give different values for, whether two
+        documents state them or one document states them twice, but the text
+        keys `may_word_differently` names. Unlike `differing`, one document can
+        disagree with itself here: a treatment period of 24 months on one page
+        and 36 months on another is a difference a person must see
+        (pipeline-rules-reviewer, 23 November 2026). A text key is compared by
+        the lengths it gives where it gives any (`length_key`), so "28 days" and
+        "a 28-day period" read the same and "28 days" and "4 weeks" do not."""
+        out = []
+        for name, m in self.keys.items():
+            if m.key.type != "text":
+                if not m.agreed:
+                    out.append(name)
+            elif name not in may_word_differently and len(
+                {length_key(v) for vs in m.by_doc.values() for v, _ in vs}
+            ) > 1:
+                out.append(name)
+        return out
+
     def one_answer(self, may_word_differently: list[str]) -> bool:
         """The documents state this entry as one answer: every key two or more
         documents state reads the same in each, but the keys that only name the
@@ -125,7 +161,7 @@ def merge_entry(field_def: FieldDef, statements: list[FieldRecord]) -> MergedEnt
             seen = by_doc.setdefault(doc, [])
             if all(same_key(v) != same_key(said) for v, _ in seen):
                 seen.append((said, r))
-            if doc not in best or _rank(field_def, r) > _rank(field_def, best[doc]):
+            if doc not in best or record_rank(field_def, r) > record_rank(field_def, best[doc]):
                 best[doc] = r
         shown = _shown(field_def, key, list(best.values()))
         keys[key.name] = KeyMerge(
@@ -140,11 +176,11 @@ def _shown(field_def: FieldDef, key: EntryKey, candidates: list[FieldRecord]) ->
     winner = apply_precedence(field_def, as_key).winner
     if winner is not None:
         return candidates[as_key.index(winner)]
-    top = max(_rank(field_def, r) for r in candidates)
-    return next(r for r in candidates if _rank(field_def, r) == top)
+    top = max(record_rank(field_def, r) for r in candidates)
+    return next(r for r in candidates if record_rank(field_def, r) == top)
 
 
-def _rank(field_def: FieldDef, record: FieldRecord) -> tuple[bool, float]:
+def record_rank(field_def: FieldDef, record: FieldRecord) -> tuple[bool, float]:
     """A record read from one of the field's `prefer_sections` (the schedule
     table) before any other, whatever their confidence; then the more confident.
     Addition 1 to stage 6 of the 2026-10-12 plan."""
@@ -163,3 +199,25 @@ def group_entries(statements: list[FieldRecord], one_per: list[str]) -> list[lis
         k = tuple(same_key(r.value.get(name, "")) for name in one_per)
         groups.setdefault(k, []).append(r)
     return list(groups.values())
+
+
+def period_groups(records: list[FieldRecord], display: PeriodsDisplay) -> list[list[FieldRecord]]:
+    """`records` grouped one per stretch, by the `one_per` keys. Where the
+    display lists the stretches it `always` prints, a stretch it names in
+    neither `always` nor `when_stated` (`other`) is also told apart by the keys
+    its heading names: two stretches
+    the documents name differently, such as an enrolment period and an end of
+    treatment visit, are two rows, each with its own pages, not one row
+    citing the other's page."""
+    groups = group_entries(records, display.one_per)
+    if not display.always:
+        return groups
+    named = [k for w in display.heading for k in placeholders(w) if k not in display.one_per]
+    out: list[list[FieldRecord]] = []
+    for group in groups:
+        value = group[0].value.get(display.order_key) if isinstance(group[0].value, dict) else None
+        if named and display.named(str(value)) is None:
+            out += group_entries(group, display.one_per + list(dict.fromkeys(named)))
+        else:
+            out.append(group)
+    return out

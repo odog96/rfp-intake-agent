@@ -181,10 +181,31 @@ def normalize_text(raw: str) -> str:
     return text
 
 
+# A length written as one hyphenated word, the whole of a value: "28-day",
+# "14-21-day", "24-month". The patient timeline's hint asks for "28 days", and
+# the model still wrote "28-day" for "a 28-day Screening period" (Amendment
+# p.47, run r-20261123-oct29-run3), so the same length read two ways.
+_HYPHENATED_AMOUNT = re.compile(
+    r"^(\d+(?:\.\d+)?(?:\s*(?:-|–|to)\s*\d+(?:\.\d+)?)?)-(hour|day|week|month|year)s?$",
+    re.IGNORECASE,
+)
+
+
+def amount_words(text: str) -> str:
+    """A length written as one hyphenated word, as a number and a unit: "28-day"
+    gives "28 days", "1-week" gives "1 week". Any other text is returned as it is."""
+    m = _HYPHENATED_AMOUNT.match(text)
+    if m is None:
+        return text
+    n, unit = m.group(1), m.group(2).lower()
+    return f"{n} {unit}" if n == "1" else f"{n} {unit}s"
+
+
 def normalize_entry(raw: str, keys: list[EntryKey]) -> dict[str, Any] | None:
     """One `object[]` entry, the JSON object EXTRACT validated, with its keys in
     `schema` order: an int key as an int, an enum key as its allowed value, text
-    with its whitespace collapsed. A key stated empty, or one that does not
+    with its whitespace collapsed and a length written as one hyphenated word
+    as a number and a unit (`amount_words`). A key stated empty, or one that does not
     normalize, is left out, so a missing key and an unstated one read the same.
     None when `raw` is not a JSON object. Added 2026-10-12, fix 1 of that day's
     brief.
@@ -208,7 +229,7 @@ def normalize_entry(raw: str, keys: list[EntryKey]) -> dict[str, Any] | None:
         elif key.type == "enum":
             normalized = normalize_enum(text, key.values)
         else:
-            normalized = normalize_text(text) or None
+            normalized = amount_words(normalize_text(text)) or None
         if normalized is not None:
             entry[key.name] = normalized
     return entry

@@ -381,6 +381,13 @@ class PeriodsDisplay(BaseModel):
     see_also: list[SeeAlso] = Field(default_factory=list)
     always: dict[str, str] = Field(default_factory=dict)
     when_stated: dict[str, str] = Field(default_factory=dict)
+    # The text keys that name a day, a visit or the stretch itself, which one
+    # document may word two ways and still give one answer ("Day -1", "Month
+    # 1-Day 1"). Every other key, a length above all, must read the same in
+    # every record of the stretch, whichever document states it, for GATE to
+    # confirm the variable (gate/__init__.py:_periods_agree), and a key that
+    # does not is printed with each of its values under the line.
+    may_word_differently: list[str] = Field(default_factory=list)
 
     @field_validator("always", "when_stated")
     @classmethod
@@ -1223,6 +1230,13 @@ def _validate_registry(groups: list[GroupDef], fields: list[FieldDef]) -> None:
                 errors.append(
                     f"Field {f.id} has periods when_stated for values its order_key does not "
                     f"allow: {', '.join(unknown)}"
+                )
+            not_text = [k for k in d2.may_word_differently
+                        if k not in keys or keys[k].type != "text"]
+            if not_text:
+                errors.append(
+                    f"Field {f.id} has periods may_word_differently naming keys that are not "
+                    f"text keys of its schema: {', '.join(not_text)}"
                 )
             for s in d2.see_also:
                 if s.field not in pre_by_id or s.field == f.id:

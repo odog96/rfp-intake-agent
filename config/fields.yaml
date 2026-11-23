@@ -196,8 +196,9 @@ schedule_table:
     where: Where
     each: "{n} each"
     # A column whose header gives no timing, timed by the header's own footnote
-    # (decision B of Prompt C).
-    footnote: "From the footnote on {pages}: {text}"
+    # (decision B of Prompt C). The footnote's page is in the row's Where column, with the
+    # table's, so no page reference sits in a value (Angus Gray, 29 October 2026).
+    footnote: "From the footnote: {text}"
     # A schedule under a `not_counted_headings` heading. `{name}` is its heading up
     # to the first colon ("Appendix 3").
     not_counted: "Not counted: patients who stop treatment early follow {name}, {pages},
@@ -819,9 +820,13 @@ fields:
     aliases: ["IP", "IMP", "study drug", "investigational product", "test article", "study medication"]
     hint: >
       Multiple forms allowed (e.g. IV loading dose then SC maintenance). Route of administration
-      determines the form for injectables. Use `other` with a note for anything unlisted.
-      Quote the sentence that states the route ("administered by intravenous infusion"), not
-      one that only names the drug.
+      determines the form for injectables. Use `other` with a note only for a form or route the
+      document states that is not in the list. Quote the sentence that states the route
+      ("administered by intravenous infusion"), not one that only names the drug. What the drug
+      is ("an investigational monoclonal antibody", "a small molecule") is not a form: where a
+      passage gives only that, omit the field.
+    # Run r-20261123-oct29-run3 answered `other` from RFP p.3's "NEOD001, an investigational
+    # monoclonal antibody", and the report read "IV infusion; Another route".
     # Fix 11 of the 2026-10-12 brief: run r-20261012-angus read an IV infusion from RFP p.1,
     # which names only an antibody. A record giving infusion_iv with a quote saying none of
     # these words is rejected by EXTRACT (extract/validate.py:answers_field).
@@ -1009,13 +1014,16 @@ fields:
       "no": "No"
     aliases: ["schedule of activities", "schedule of events", "schedule of assessments", "SoA",
               "SoE", "study flow chart", "study calendar", "table of assessments"]
+    # Run r-20261123-oct29-run3 answered "no" from Amendment p.13's "Assessment and visit windows
+    # are described in the Schedule of Events (Table 1)", a reference to a table on p.26.
     hint: >
       Whether a schedule of activities exists in this document and WHERE. "yes_body" when the table
       sits in the numbered body of the document; "yes_appendix" when it sits in an appendix or
       attachment, which is common and is where Angus says to look when the body has none; "no" when
-      the document has no such table at all. A contents-page entry or a cross-reference to a table
-      that is not in this document is not the table: answer "no" and say so in `notes`. The quote
-      must be the table's own heading or caption, not a mention of it elsewhere.
+      the document says it has no such table, or lists what it contains and the list has none. A
+      contents-page entry or a sentence referring to the table ("described in the Schedule of
+      Events (Table 1)") is not the table and does not show the table is missing either: omit
+      the field for that passage. The quote must be the table's own heading or caption.
     plain: >
       Whether the document contains the grid showing what happens at each appointment, and whether
       it is in the main text or tucked into an appendix. It is the single most useful table for
@@ -1096,6 +1104,12 @@ fields:
       when_stated:
         open_label_extension: Open-label extension
         long_term_follow_up: Long-term follow-up
+      # The keys that name a day, a visit or the period itself, which one document may word
+      # two ways and still give one answer ("Day -1", "Month 1-Day 1" for the end of
+      # screening). A length must read the same in every passage stating it, or the timeline
+      # is reviewed and each length is printed under its line with its pages
+      # (pipeline-rules-reviewer, 23 November 2026).
+      may_word_differently: [label, start, end]
       # The first alternative whose keys are all stated, so the longer ones come first.
       lines: ["{duration}, {start} to {end}", "{duration}, from {start}",
               "{duration}, until {end}", "{duration}", "From {start} until {end}",
@@ -1121,9 +1135,13 @@ fields:
       treatment has no fixed length and runs until a number of events has occurred.
     source_priority: rfp
     budget_driver: true
-    # Asked of the RFP only: a protocol's durations are the study's own plan, which the
-    # timeline and the whole-study duration record.
-    only_from: [rfp]
+    # Not asked of a protocol, an amendment or a schedule of activities: their durations are the
+    # study's own plan, which the timeline and the whole-study duration record. Asked of an RFP
+    # and of any other document, which is how CLASSIFY labels an email or a scope of work ("Or
+    # maybe an email", Angus Gray, 29 October 2026). A document CLASSIFY could not label is
+    # asked for every field (extract/__init__.py), so a failed classification never leaves the
+    # window unread (docs/ARCHITECTURE.md §4.2).
+    only_from: [rfp, other]
     shown_under: timeline.periods
     # Where no window is found, the row says to ask the sponsor before the budget is built. It
     # does not say the RFP is silent: "not found" can also mean the tool could not read the
@@ -1228,6 +1246,37 @@ fields:
     source_priority: protocol
     budget_driver: true
 
+  - id: blinding.placebo_matching
+    group: blinding_monitoring
+    label: Placebo matches the study drug
+    type: enum
+    values: [matching_stated, not_matching_stated, no_placebo, not_specified]
+    # Yes, No or N/A, as Angus Gray asked on 29 October 2026; "as supplied" keeps apart a
+    # placebo that differs in the carton from one that only looks the same once prepared.
+    value_words:
+      matching_stated: Yes, matching as supplied
+      not_matching_stated: No, not matching as supplied
+      no_placebo: N/A (open-label, or no placebo)
+    aliases: ["matching placebo", "identical placebo", "placebo", "matched placebo",
+              "placebo comparator", "visually identical"]
+    hint: >
+      MATCHING MEANS MATCHING AS SUPPLIED TO THE SITE, in the vial, bottle or carton the site
+      receives. Text saying the prepared infusion looks identical - "the saline bag will look
+      identical to the drug infusion bag" - describes the drug AFTER unblinded pharmacy staff have
+      made it up, and is NOT matching: answer not_specified for that sentence alone, or
+      not_matching_stated if the document also says the supplies do not match. Use
+      matching_stated only where the document says the placebo as supplied matches or is identical.
+      Use not_matching_stated where it says the placebo does not match or will not be provided.
+      Use no_placebo where the document says the study is open-label or has no placebo arm.
+      Use not_specified where the document is silent. Never infer from the route of
+      administration: the tool does not guess about the placebo.
+    plain: >
+      Whether the dummy treatment arrives at the hospital looking the same as the real drug. If it
+      does not, someone who is allowed to know which is which has to prepare it, and that person has
+      to be paid for separately.
+    source_priority: any
+    budget_driver: true
+
   - id: blinding.unblinded_staff_stated
     group: blinding_monitoring
     label: Unblinded staff stated as required
@@ -1272,37 +1321,6 @@ fields:
     plain: >
       Whether the document says in writing that staff who are allowed to know the treatment are
       needed. A separate question from whether the tool thinks they will be.
-    source_priority: any
-    budget_driver: true
-
-  - id: blinding.placebo_matching
-    group: blinding_monitoring
-    label: Placebo matches the study drug
-    type: enum
-    values: [matching_stated, not_matching_stated, no_placebo, not_specified]
-    # Yes, No or N/A, as Angus Gray asked on 29 October 2026; "as supplied" keeps apart a
-    # placebo that differs in the carton from one that only looks the same once prepared.
-    value_words:
-      matching_stated: Yes, matching as supplied
-      not_matching_stated: No, not matching as supplied
-      no_placebo: N/A (open-label, or no placebo)
-    aliases: ["matching placebo", "identical placebo", "placebo", "matched placebo",
-              "placebo comparator", "visually identical"]
-    hint: >
-      MATCHING MEANS MATCHING AS SUPPLIED TO THE SITE, in the vial, bottle or carton the site
-      receives. Text saying the prepared infusion looks identical - "the saline bag will look
-      identical to the drug infusion bag" - describes the drug AFTER unblinded pharmacy staff have
-      made it up, and is NOT matching: answer not_specified for that sentence alone, or
-      not_matching_stated if the document also says the supplies do not match. Use
-      matching_stated only where the document says the placebo as supplied matches or is identical.
-      Use not_matching_stated where it says the placebo does not match or will not be provided.
-      Use no_placebo where the document says the study is open-label or has no placebo arm.
-      Use not_specified where the document is silent. Never infer from the route of
-      administration: the tool does not guess about the placebo.
-    plain: >
-      Whether the dummy treatment arrives at the hospital looking the same as the real drug. If it
-      does not, someone who is allowed to know which is which has to prepare it, and that person has
-      to be paid for separately.
     source_priority: any
     budget_driver: true
 

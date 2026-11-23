@@ -118,7 +118,15 @@ def _in_visit_table(rows: list[c7.Row]) -> set[int]:
 
 
 def _label_rows(rows: list[c7.Row], label: str) -> list[int]:
-    return [i for i, r in enumerate(rows) if r.label == label and r.scope in ("", "BUDGET")]
+    """The rows that print `label` itself in the Variable column.
+
+    A disagreement's sides sit under its row with an empty Variable cell, so the
+    table reader gives them the label above and no scope; they are not rows of
+    their own.
+    """
+    return [i for i, r in enumerate(rows)
+            if r.label == label and r.scope in ("", "BUDGET")
+            and r.cell("Variable").startswith(label)]
 
 
 def _children(rows: list[c7.Row], start: int) -> list[c7.Row]:

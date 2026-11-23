@@ -389,12 +389,29 @@ class TestABudgetDriverTheDocumentsState:
         ]
         assert self._gate(records, 260).status == "needs_review"
 
-    def test_each_row_is_checked_against_its_own_value(self, fields_yaml_path) -> None:  # type: ignore[no-untyped-def]
-        """With 236 on-topic, ADJUDICATE gives a row per record: both documents
-        state 260, so a 260 row confirms; only the amendment states 236."""
+    def test_a_different_value_on_topic_reviews_every_row(self, fields_yaml_path) -> None:  # type: ignore[no-untyped-def]
+        """With 236 on-topic, ADJUDICATE gives a row per record. Only the
+        model's verdict says 236 and 260 do not disagree, so neither row is
+        confirmed, though both documents state 260 (ARCHITECTURE.md §4.9)."""
         _use_real_registry(fields_yaml_path)
-        assert self._gate(self._subjects(), 260).status == "confirmed"
+        assert self._gate(self._subjects(), 260).status == "needs_review"
         assert self._gate(self._subjects(), 236).status == "needs_review"
+
+    @pytest.mark.parametrize("verdict", ["not_a_conflict", "reconcilable"])
+    def test_one_document_stating_two_numbers_reviews(self, fields_yaml_path, verdict) -> None:  # type: ignore[no-untyped-def]
+        """pipeline-rules-reviewer, 23 November 2026: RFP p.4 and Amendment p.15
+        say 260, Amendment p.43 says 280. Each document has a 260, but the
+        amendment also states 280 on topic."""
+        _use_real_registry(fields_yaml_path)
+        records = [
+            self._record(260, "doc-rfp", 4),
+            self._record(260, "doc-am", 15),
+            self._record(280, "doc-am", 43),
+        ]
+        assert self._gate(records, 260, verdict=verdict).status == "needs_review"
+        assert self._gate(records, 280, verdict=verdict).status == "needs_review"
+        # Called about something else, the 280 no longer counts against the 260.
+        assert self._gate(records, 260, verdict=verdict, off_topic=[3]).status == "confirmed"
 
     def test_a_low_confidence_or_a_review_note_still_reviews(self, fields_yaml_path) -> None:  # type: ignore[no-untyped-def]
         _use_real_registry(fields_yaml_path)
@@ -573,13 +590,46 @@ class TestAPeriodsDisplayIsOneAnswerWhenItsPeriodsAgree:
         ])
         assert out.status == "confirmed"
 
-    def test_one_document_wording_a_period_twice_confirms(self, fields_yaml_path) -> None:  # type: ignore[no-untyped-def]
-        """Text from one document never disagrees with itself."""
+    def test_one_document_wording_a_length_twice_confirms(self, fields_yaml_path) -> None:  # type: ignore[no-untyped-def]
+        """The same length in other words ("a 28-day period"), and a day or a
+        visit named two ways (`may_word_differently`), is one answer."""
         field = self._field(fields_yaml_path, from_schedule=False)
         key = self._key(field)
         out = self._gate(field, [
-            ("doc-am", {key: "screening", "duration": "28 days"}),
-            ("doc-am", {key: "screening", "duration": "28-day"}),
+            ("doc-am", {key: "screening", "label": "Screening", "duration": "28 days",
+                        "start": "Day -28", "end": "Month 1-Day 1"}),
+            ("doc-am", {key: "screening", "label": "Screening period",
+                        "duration": "a 28-day period", "start": "Day -28", "end": "Day -1"}),
+        ])
+        assert out.status == "confirmed"
+
+    @pytest.mark.parametrize(("first", "second"), [
+        ("24 months", "36 months"),
+        ("28 days", "4 weeks"),
+        ("28 days", "28-35 days"),
+    ])
+    def test_one_document_giving_two_lengths_reviews(  # type: ignore[no-untyped-def]
+        self, fields_yaml_path, first: str, second: str,
+    ) -> None:
+        """pipeline-rules-reviewer, 23 November 2026: Amendment p.15 gives the
+        treatment period as 24 months and p.47 as 36 months. Nothing is
+        converted, so 28 days and 4 weeks are two lengths too."""
+        field = self._field(fields_yaml_path, from_schedule=False)
+        key = self._key(field)
+        out = self._gate(field, [
+            ("doc-am", {key: "treatment", "duration": first}),
+            ("doc-am", {key: "treatment", "duration": second}),
+        ])
+        assert out.status == "needs_review"
+
+    def test_two_unlisted_periods_are_not_one_period(self, fields_yaml_path) -> None:  # type: ignore[no-untyped-def]
+        """An enrolment period and an end of treatment visit, neither in the
+        component list, are two stretches as the report prints them
+        (reconcile/entries.py:period_groups), so their lengths do not differ."""
+        field = self._field(fields_yaml_path, from_schedule=False)
+        out = self._gate(field, [
+            ("doc-am", {"label": "Enrolment", "duration": "24 months"}),
+            ("doc-am", {"label": "End of treatment visit", "duration": "28-35 days"}),
         ])
         assert out.status == "confirmed"
 

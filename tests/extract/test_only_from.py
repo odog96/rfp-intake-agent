@@ -47,8 +47,8 @@ def registry(monkeypatch: pytest.MonkeyPatch, fields_yaml_path: Path) -> Registr
 
 
 def _rfp_only(registry: Registry) -> FieldDef:
-    """The registry's field read only from the RFP."""
-    [field] = [f for f in registry.fields if f.only_from == ["rfp"]]
+    """The registry's field read only from the RFP and other requests."""
+    [field] = [f for f in registry.fields if f.only_from == ["rfp", "other"]]
     return field
 
 
@@ -70,14 +70,14 @@ def _fields_section(messages: list[BaseMessage]) -> str:
 class TestTheRegistry:
     def test_the_key_is_read(self, registry: Registry) -> None:
         field = _rfp_only(registry)
-        assert field.only_from == ["rfp"]
+        assert field.only_from == ["rfp", "other"]
         assert not field.derived
         # Every other field is asked of every kind of document.
         assert all(f.only_from == [] for f in registry.fields if f is not field)
 
     def _load(self, fields_yaml_path: Path, tmp_path: Path, **keys: Any) -> Registry:
         data = yaml.safe_load(fields_yaml_path.read_text())
-        rfp_only = next(f for f in data["fields"] if f.get("only_from") == ["rfp"])
+        rfp_only = next(f for f in data["fields"] if f.get("only_from") == ["rfp", "other"])
         rfp_only.update(keys)
         p = tmp_path / "fields.yaml"
         p.write_text(yaml.dump(data, allow_unicode=True))
@@ -121,10 +121,25 @@ class TestThePromptAndTheSchema:
         # With no kind, every field: the behaviour before only_from.
         assert attr in build_extraction_model(field.group, registry).model_fields
 
-    @pytest.mark.parametrize("kind", ["amendment", "soa", "other"])
+    @pytest.mark.parametrize("kind", ["amendment", "soa"])
     def test_absent_for_every_other_kind(self, registry: Registry, kind: str) -> None:
         field = _rfp_only(registry)
         assert field not in fields_to_extract(field.group, registry, kind)
+
+    @pytest.mark.parametrize("kind", ["other", None])
+    def test_asked_of_an_email_and_of_a_document_with_no_label(
+        self, registry: Registry, kind: str | None,
+    ) -> None:
+        """An email is labelled "other"; a document CLASSIFY could not label has
+        no kind, and is asked for every field (docs/ARCHITECTURE.md §4.2)."""
+        field = _rfp_only(registry)
+        assert field in fields_to_extract(field.group, registry, kind)
+        doc = Document(
+            id="doc-x", path="/tmp/x.pdf", kind=kind,  # type: ignore[arg-type]
+            pages=1, page_texts={1: _QUOTE},
+        )
+        task = ExtractionTask(doc_id="doc-x", group=field.group, page_window=(1, 1))
+        assert f"- {field.id} (" in _fields_section(build_extract_prompt(task, doc, registry))
 
 
 class _ScriptedModel:
@@ -163,7 +178,7 @@ class TestExtractGroup:
         assert [r for r in records if r.field_id == field.id] == []
         [error] = errors
         assert error.error == (
-            f"Rejected: {field.id} is read only from rfp documents (only_from), "
+            f"Rejected: {field.id} is read only from rfp, other documents (only_from), "
             "and this document is protocol"
         )
         assert error.kind == "validation"
@@ -190,7 +205,7 @@ class TestExtractGroup:
         import rfp_intake.extract as extract
 
         data = yaml.safe_load(fields_yaml_path.read_text())
-        group = next(f for f in data["fields"] if f.get("only_from") == ["rfp"])["group"]
+        group = next(f for f in data["fields"] if f.get("only_from") == ["rfp", "other"])["group"]
         for f in data["fields"]:
             if f["group"] == group and not f.get("derived"):
                 f["only_from"] = ["rfp"]

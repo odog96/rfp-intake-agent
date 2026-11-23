@@ -158,8 +158,11 @@ def assert_nothing_lost(state: RunState, registry: Registry, model: ReportModel)
             for r in rf.contradiction.records:
                 said = "; ".join(format_value(
                     r.value if r.value is not None else r.raw_value, fd))
+                # Appendix A prints a quote without the spaces around it, so two
+                # passages differing only by a trailing space are one line.
                 assert any(
-                    e.field_id == rf.field_id and e.value == said and e.quote == r.quote
+                    e.field_id == rf.field_id and e.value == said
+                    and e.quote.strip() == r.quote.strip()
                     and _parse_sources(e.sources)
                     == {codes[r.provenance.doc_id]: {r.provenance.page}}
                     for e in model.evidence

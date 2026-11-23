@@ -129,7 +129,10 @@ class TestTheRealProtocol:
         ]
         assert table.rows[9][2] == "1 a month"
         # Decision B: EOT/ETD's header has no timing, so its footnote is printed.
-        assert table.rows[10][1].startswith("From the footnote on Protocol p.28 (printed p.26): ")
+        # Its page is in the Where column with the table's, never in the value.
+        assert table.rows[10][1].startswith("From the footnote: ")
+        assert table.rows[10][5] == (
+            "Protocol p.26 (printed p.24), 27 (printed p.25), 28 (printed p.26)")
 
     def test_the_key_considerations(self, protocol_state: RunState) -> None:
         [table] = _row(get_registry(), protocol_state, TABLE).visit_tables
@@ -150,7 +153,9 @@ class TestTheRealProtocol:
     def test_every_count_cites_its_page(self, protocol_state: RunState) -> None:
         [table] = _row(get_registry(), protocol_state, TABLE).visit_tables
         assert table.sources == "Protocol p.26 (printed p.24), 27 (printed p.25)"
-        assert all(cells[5] == table.sources for cells in table.rows)
+        # The EOT/ETD column, timed by its footnote, also cites the footnote's page.
+        assert all(cells[5] == table.sources for i, cells in enumerate(table.rows) if i != 10)
+        assert table.rows[10][5].startswith(table.sources + ", 28 (printed p.26)")
 
     def test_the_stopped_early_schedule_is_one_line(self, protocol_state: RunState) -> None:
         row = _row(get_registry(), protocol_state, TABLE)

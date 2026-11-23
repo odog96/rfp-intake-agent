@@ -169,3 +169,16 @@ def amount_count(raw: str) -> int:
     "3 years 6 months". A wording is only ever shortened to an amount when it
     holds one (Prompt B item 7). Nothing is added up."""
     return len(_ANY_AMOUNT_PATTERN.findall(raw))
+
+
+def amounts_in(raw: str) -> list[tuple[int | float, str]]:
+    """Every amount (a number and a unit of time) a wording holds, in order, the
+    unit in its plural: [(28, "days")] for "28 days" and for "a 28-day period",
+    [(4, "years")] for "3.5-4 years". Nothing is converted or added up: 4 weeks
+    and 28 days are two different amounts."""
+    out: list[tuple[int | float, str]] = []
+    for number, unit in _ANY_AMOUNT_PATTERN.findall(raw):
+        n = _parse_number(number)
+        if n is not None:
+            out.append((n, _normalize_unit(unit)))
+    return out

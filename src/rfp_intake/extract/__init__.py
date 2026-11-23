@@ -50,7 +50,10 @@ def extract_group(
         registry = get_registry()
 
     doc_kind = doc.kind or "other"
-    if not fields_to_extract(task.group, registry, doc_kind):
+    # A document CLASSIFY could not label is asked for every field: a failed
+    # classification never leaves a field unread (docs/ARCHITECTURE.md §4.2).
+    asked_kind = doc.kind
+    if not fields_to_extract(task.group, registry, asked_kind):
         # Every field of the group is read only from other kinds of document
         # (`only_from`), so there is nothing to ask this one.
         logger.info(
@@ -61,7 +64,7 @@ def extract_group(
     llm = get_llm("extract")
     structured = get_structured_output_for_role(llm, "extract")
 
-    schema = build_extraction_model(task.group, registry, doc_kind)
+    schema = build_extraction_model(task.group, registry, asked_kind)
     messages = build_extract_prompt(task, doc, registry)
     excerpt = build_excerpt(task, doc)
 
@@ -100,7 +103,7 @@ def extract_group(
         if field_def is None:
             valid_records.append(record)
             continue
-        if not asked_in(field_def, doc_kind):
+        if not asked_in(field_def, asked_kind):
             errors.append(_rejected(task, record, _not_asked(field_def, doc_kind)))
             continue
 
@@ -142,7 +145,7 @@ def extract_group(
                 if field_def is None:
                     valid_records.append(record)
                     continue
-                if not asked_in(field_def, doc_kind):
+                if not asked_in(field_def, asked_kind):
                     errors.append(_rejected(task, record, _not_asked(field_def, doc_kind)))
                     continue
 

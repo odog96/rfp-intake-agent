@@ -69,7 +69,8 @@ def build_extract_prompt(
     group = registry.get_group(task.group)
     # A field whose `only_from` leaves out this kind of document is not asked
     # for; the response schema leaves it out the same way (extract/__init__.py).
-    fields = fields_to_extract(task.group, registry, doc.kind or "other")
+    # A document CLASSIFY could not label is asked for every field.
+    fields = fields_to_extract(task.group, registry, doc.kind)
 
     # System message
     fields_section = _render_fields_section(fields)

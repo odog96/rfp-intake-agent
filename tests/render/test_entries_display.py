@@ -540,7 +540,10 @@ class TestTimeline:
             None, AM, 47, "an open-label extension study of up to 2 years",
         )])
         lines = _lines(_row(model, "timeline.periods"))
-        ole = lines.index("Open-label extension: Up to 2 years")
+        # Such a line starts with what the document calls the period, which can
+        # say what the bold heading cannot: "a separate open-label extension
+        # study of NEOD001" (Amendment p.13) is not part of this study's budget.
+        ole = lines.index("Open-label extension: OLE study, up to 2 years")
         assert lines[ole + 1].startswith("Overall patient participation")
         assert not any(line.startswith("Long-term follow-up") for line in lines)
 
@@ -569,10 +572,16 @@ class TestTimeline:
         )]
         _, model = _report(records)
         row = _row(model, "timeline.periods")
-        # `duration` is text: two wordings, not a disagreement, both in
-        # Appendix A. RFP p.3 says 20 months, so it is not cited beside 24.
-        assert ("Enrolment", "24 months", "Review", "Amendment p.15") in _printed(row)
-        assert row.where_notes == ["Other wordings are quoted in Appendix A."]
+        # Two lengths for one period: neither is printed as the answer, each is
+        # printed under the line beside its own page (pipeline-rules-reviewer,
+        # 23 November 2026), and the row is reviewed.
+        printed = _printed(row)
+        assert ("Enrolment", "—", "Review", "Amendment p.15; RFP p.3") in printed
+        enrolment = printed.index(("Enrolment", "—", "Review", "Amendment p.15; RFP p.3"))
+        assert printed[enrolment + 1:enrolment + 3] == [
+            ("", "Duration: documents differ — 24 months", "Review", "Amendment p.15"),
+            ("", "Duration: documents differ — 20 months", "Review", "RFP p.3"),
+        ]
         quotes = {e.quote for e in model.evidence if e.field_id == "timeline.periods"}
         assert "Enrolment 20 months" in quotes
 

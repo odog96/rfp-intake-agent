@@ -6,6 +6,7 @@ import pytest
 
 from rfp_intake.domain.registry import parse_entry_key
 from rfp_intake.normalize.types import (
+    amount_words,
     normalize_bool,
     normalize_entry,
     normalize_enum,
@@ -245,9 +246,35 @@ _ENTRY_KEYS = [
     ("{}", {}),
     ("not json", None),
     ('["a"]', None),
+    # A length written as one hyphenated word reads as a number and a unit.
+    ('{"name": "28-day"}', {"name": "28 days"}),
+    ('{"name": "28-day Screening period"}', {"name": "28-day Screening period"}),
 ])
 def test_normalize_entry(raw: str, expected: dict[str, object] | None) -> None:
     out = normalize_entry(raw, _ENTRY_KEYS)
     assert out == expected
     if out is not None:
         assert list(out) == [k.name for k in _ENTRY_KEYS if k.name in out]
+
+
+@pytest.mark.parametrize(("text", "expected"), [
+    ("28-day", "28 days"),
+    ("28-Day", "28 days"),
+    ("24-month", "24 months"),
+    ("1-week", "1 week"),
+    ("1.5-year", "1.5 years"),
+    ("14-21-day", "14-21 days"),
+    ("14–21-day", "14–21 days"),
+    ("6-hours", "6 hours"),
+    # Anything but a whole hyphenated length is left as it is.
+    ("28 days", "28 days"),
+    ("14-21 days", "14-21 days"),
+    ("a 28-day period", "a 28-day period"),
+    ("28-day Screening period", "28-day Screening period"),
+    ("Day -28", "Day -28"),
+    ("Month 1-Day 1", "Month 1-Day 1"),
+    ("28-dayish", "28-dayish"),
+    ("", ""),
+])
+def test_amount_words(text: str, expected: str) -> None:
+    assert amount_words(text) == expected

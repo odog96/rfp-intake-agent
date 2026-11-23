@@ -56,7 +56,7 @@ import structlog
 from rfp_intake.domain.registry import FieldDef, PeriodsDisplay, get_registry
 from rfp_intake.domain.schemas import Contradiction, ResolvedField, RunState
 from rfp_intake.reconcile import scope_key
-from rfp_intake.reconcile.entries import group_entries, merge_entry
+from rfp_intake.reconcile.entries import merge_entry, period_groups
 
 logger = structlog.get_logger()
 
@@ -242,11 +242,13 @@ def _gate_field(
 
 def _periods_agree(rf: ResolvedField, field_def: FieldDef | None) -> bool:
     """Whether a `periods` display's entries are one answer: every period, as
-    the display groups them (`one_per`, reconcile/entries.py:group_entries),
-    reads the same in each document stating it — no key two or more documents
-    state for the same period reads differently (`differing([])`). A text key
-    one document alone states never differs: one document does not disagree
-    with itself, however it words a period twice.
+    the report groups them (reconcile/entries.py:period_groups),
+    reads the same in every record stating it, whichever document — no key
+    reads two ways (`stated_two_ways`), but the text keys the display says may
+    be worded differently, which name a day, a visit or the period itself
+    ("Day -1" and "Month 1-Day 1" for the end of screening). A length one
+    document gives as 24 months on one page and 36 on another keeps the row in
+    review (pipeline-rules-reviewer, 23 November 2026).
 
     Each entry of such a field is one stretch of the study (screening,
     treatment, …), not a rival answer, so the several-values rule does not
@@ -260,17 +262,26 @@ def _periods_agree(rf: ResolvedField, field_def: FieldDef | None) -> bool:
         or field_def.from_schedule is not None or not rf.statements
     ):
         return False
+    display = field_def.display
     return all(
-        not merge_entry(field_def, group).differing([])
-        for group in group_entries(rf.statements, field_def.display.one_per)
+        not merge_entry(field_def, group).stated_two_ways(display.may_word_differently)
+        for group in period_groups(rf.statements, display)
     )
 
 
 def _documents_state_it(rf: ResolvedField, contradiction: Contradiction) -> bool:
     """Whether the documents themselves state this row's value: the on-topic
     records (those not in `off_topic_record_indexes`) come from at least two
-    documents, and each of those documents has an on-topic record whose
-    normalized value equals the row's value.
+    documents, and every one of them gives the row's value.
+
+    Every on-topic record, not one per document: where an on-topic record gives
+    another value (Amendment p.43's 280 beside the RFP's and p.15's 260), only
+    the adjudicating model's verdict says the two do not disagree, and a number
+    a budget is built from is never confirmed on the strength of that one call
+    (docs/ARCHITECTURE.md §4.9; pipeline-rules-reviewer, 23 November 2026). The
+    model's judgement that a record is about something else (the 236 subjects a
+    power calculation needs) still counts: that record is printed in Appendix A,
+    marked "Not about this variable".
 
     Values are compared with ==, as RECONCILE compares them
     (reconcile/__init__.py:_group_by_canonical_value), so a list or a dict is
@@ -284,7 +295,4 @@ def _documents_state_it(rf: ResolvedField, contradiction: Contradiction) -> bool
     off = set(contradiction.off_topic_record_indexes)
     on_topic = [r for i, r in enumerate(contradiction.records, start=1) if i not in off]
     documents = {r.provenance.doc_id for r in on_topic}
-    return len(documents) >= 2 and all(
-        any(r.value == rf.value for r in on_topic if r.provenance.doc_id == doc)
-        for doc in documents
-    )
+    return len(documents) >= 2 and all(r.value == rf.value for r in on_topic)

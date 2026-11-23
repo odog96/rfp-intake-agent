@@ -26,7 +26,7 @@ candidate record below whose value should be shown as the field's resolved \
 value — "3" for the third candidate in the list. Several candidates often come \
 from the same document and say different things, so naming a document is not \
 enough: name the record. If you cannot choose a single record, leave \
-winning_record unset and the highest-confidence record is used.
+winning_record unset.
 - conflict: the values are genuinely incompatible and cannot both be correct. Two \
 different amounts for the same quantity at the same scope are a conflict even when \
 they are close or one says "approximately" (36 months against 30 months for the whole \
@@ -77,7 +77,7 @@ def build_adjudicate_prompt(
         lines.append(
             f"{i}. doc_id={r.provenance.doc_id} kind={r.provenance.doc_kind} "
             f"date={r.provenance.doc_date or 'unknown'} page={r.provenance.page} "
-            f"scope={r.scope or 'unscoped'} confidence={r.confidence:.2f}\n"
+            f"scope={r.scope or 'unscoped'}\n"
             f"   value: {r.value!r}\n"
             f'   quote: "{r.quote}"'
         )

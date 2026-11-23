@@ -55,7 +55,13 @@ from rfp_intake.domain.schemas import Schedule as ScheduleRead
 from rfp_intake.gate import CONFIDENCE_CONFIRMED, DISMISSED_VERDICTS
 from rfp_intake.normalize.duration import amount_count, normalize_duration
 from rfp_intake.normalize.scope import normalize_scope
-from rfp_intake.reconcile.entries import MergedEntry, group_entries, merge_entry, same_key
+from rfp_intake.reconcile.entries import (
+    MergedEntry,
+    merge_entry,
+    period_groups,
+    record_rank,
+    same_key,
+)
 
 # A variable with more rows than this is a schedule, not a fact: in run
 # r-20260901-172918 visit frequency had 22 rows and timeline components 20,
@@ -2086,24 +2092,60 @@ def _periods_row(
         )
         lines: list[tuple[int, Row]] = []
         stated: set[str] = set()
-        for group in _period_groups([r for _, r in said], display):
+        for group in period_groups([r for _, r in said], display):
             entry = merge_entry(fd, group)
-            unsettled = entry.differing(None)
+            # A key read two ways, but the keys that only name a day, a visit or
+            # the stretch, is printed with each of its values under the line, as
+            # GATE keeps such a row in review (gate/__init__.py:_periods_agree).
+            # A variable the Schedule of Events replaces keeps GATE's older rule,
+            # and so its older lines.
+            unsettled = (
+                entry.stated_two_ways(display.may_word_differently)
+                if fd.from_schedule is None else entry.differing(None)
+            )
             words = _entry_words(entry, None, wording, set(unsettled))
             value = entry.value(display.order_key)
             stated.add(str(value))
-            named = _pick(
-                [w for w in display.heading
-                 if len({_word_key(words.get(k, "")) for k in placeholders(w)})
-                 == len(placeholders(w))],
-                words,
+            template = next(
+                (w for w in line_wordings if all(k in words for k in placeholders(w))), None,
             )
-            heading = display.named(str(value)) or _capital(named or "—", wording)
+            # The line's words, from one passage where one passage gives them
+            # all, so one passage's start is never joined to another's end
+            # (plan-conformance-reviewer, 23 November 2026).
+            shown = _one_passage(fd, entry, group, placeholders(template) if template else [])
+            if shown is not None and isinstance(shown.value, dict):
+                chosen = shown.value
+                words.update({
+                    k: _key_text(entry.keys[k].key, chosen[k], False, wording)
+                    for k in placeholders(template or "")
+                })
+            heading_wordings = [
+                w for w in display.heading
+                if len({_word_key(words.get(k, "")) for k in placeholders(w)})
+                == len(placeholders(w))
+            ]
+            named = _pick(heading_wordings, words)
+            fixed = display.named(str(value))
+            heading = fixed or _capital(named or "—", wording)
+            printed: list[str] = list(placeholders(template)) if template else []
             # No line wording applies: the document's own name for the stretch,
             # where the heading is not already that name.
-            text = _pick(line_wordings, words) or (
-                named if named and _word_key(named) != _word_key(heading) else "—"
-            )
+            text = _pick([template], words) if template else None
+            if text is None:
+                text = named if named and _word_key(named) != _word_key(heading) else "—"
+                printed += [k for w in heading_wordings[:1] for k in placeholders(w)]
+            elif (
+                str(value) in display.when_stated and named
+                and _word_key(named) != _word_key(heading)
+            ):
+                # A period printed only where a document states one says what
+                # the document calls it: "a separate open-label extension study
+                # of NEOD001" is not a stretch of this study's own budget.
+                rest = text if (template or "").startswith("{") else text[:1].lower() + text[1:]
+                text = f"{named}, {rest}"
+                printed += [k for w in heading_wordings[:1] for k in placeholders(w)]
+            elif not fixed:
+                printed += [k for w in heading_wordings[:1] for k in placeholders(w)]
             text = _capital(text, wording)
             note = display.notes.get(str(value))
             text = f"{text} {note}" if note else text
@@ -2111,8 +2153,8 @@ def _periods_row(
             status = min((rf.status for rf in rfs), key=lambda st: _STATUS_RANK.get(st, 0))
             line = _line_row(
                 fd, heading, text, status,
-                docs.pages([r.provenance for r in _period_stating(entry, group, display)]), rfs,
-                scope, docs.name_ids,
+                docs.pages([r.provenance for r in _period_stating(entry, group, printed, shown)]),
+                rfs, scope, docs.name_ids,
             )
             line.below = _differ_rows(fd, entry, unsettled, group, {}, docs, wording)
             lines.append((place(value), line))
@@ -2149,49 +2191,73 @@ def _periods_row(
         [wording.other_wordings] if reworded else [],
     )
     row.below = below
+    # Flagged for review lists the variable as one row, in its lines' words, not
+    # as its entries' raw keys (plan-conformance-reviewer, 23 November 2026):
+    # the periods stated more than one way where there are any, else every
+    # period a document gives.
+    questioned = [b for b in below if b.heading and b.below]
+    given = questioned or [b for b in below if b.heading and b.status != "not_found"]
+    row.review_as_one = True
+    row.review_text = "; ".join(
+        f"{b.heading}: " + (
+            "; ".join(d.values[0].text for d in b.below) if b.below else b.values[0].text
+        )
+        for b in given
+    ) or None
     return row
 
 
 def _period_stating(
-    entry: MergedEntry, group: list[FieldRecord], display: PeriodsDisplay,
+    entry: MergedEntry, group: list[FieldRecord], printed: list[str],
+    shown: FieldRecord | None,
 ) -> list[FieldRecord]:
     """The records of one stretch whose words are the ones its line prints:
-    every key of the line and heading wordings a record states reads as the
-    line shows it. A record wording the stretch otherwise (RFP p.3's "20
-    months" beside the amendment's "24 months") is quoted in Appendix A, not
-    cited beside a value it does not state (rule 2). With none such, every
-    record of the stretch."""
-    names = {k for w in display.lines + display.heading for k in placeholders(w)}
+    every key the line prints (`printed`) that a record states reads as the
+    line shows it, from `shown` where the line's words come from one passage,
+    else as the documents' merged value. A key the line does not print, such as
+    the document's own name for a stretch printed under a fixed heading, is not
+    compared, so a passage stating every printed word is never left uncited
+    (plan-conformance-reviewer, 23 November 2026). A record wording the stretch
+    otherwise (RFP p.3's "20 months" beside the amendment's "24 months") is
+    quoted in Appendix A, not cited beside a value it does not state (rule 2).
+    With none such, every record of the stretch."""
+
+    def line_value(k: str) -> Any:
+        if shown is not None and isinstance(shown.value, dict) and k in shown.value:
+            return shown.value[k]
+        return entry.value(k)
+
     stating = [
         r for r in group
-        if isinstance(r.value, dict) and all(
-            same_key(r.value[k]) == same_key(entry.value(k))
-            for k in names if r.value.get(k) not in (None, "")
+        if isinstance(r.value, dict) and any(r.value.get(k) not in (None, "") for k in printed)
+        and all(
+            same_key(r.value[k]) == same_key(line_value(k))
+            for k in printed if r.value.get(k) not in (None, "")
         )
     ]
     return stating or group
 
 
-def _period_groups(records: list[FieldRecord], display: PeriodsDisplay) -> list[list[FieldRecord]]:
-    """`records` grouped one per stretch, by the `one_per` keys. Where the
-    display lists the stretches it `always` prints, a stretch it names in
-    neither `always` nor `when_stated` (`other`) is also told apart by the keys
-    its heading names: two stretches
-    the documents name differently, such as an enrolment period and an end of
-    treatment visit, are two rows, each with its own pages, not one row
-    citing the other's page."""
-    groups = group_entries(records, display.one_per)
-    if not display.always:
-        return groups
-    named = [k for w in display.heading for k in placeholders(w) if k not in display.one_per]
-    out: list[list[FieldRecord]] = []
-    for group in groups:
-        value = group[0].value.get(display.order_key) if isinstance(group[0].value, dict) else None
-        if named and display.named(str(value)) is None:
-            out += group_entries(group, display.one_per + list(dict.fromkeys(named)))
-        else:
-            out.append(group)
-    return out
+def _one_passage(
+    fd: FieldDef, entry: MergedEntry, group: list[FieldRecord], keys: list[str],
+) -> FieldRecord | None:
+    """The record a period's line takes all its words from: of the records
+    stating every key in `keys`, the best one (`record_rank`: the schedule
+    table first, then the more confident) of the document the merged value of
+    the first key comes from, or of any document where that one states none.
+    None when no record states them all, or there are no keys."""
+    if not keys:
+        return None
+    whole = [
+        r for r in group
+        if isinstance(r.value, dict) and all(r.value.get(k) not in (None, "") for k in keys)
+    ]
+    if not whole:
+        return None
+    first = entry.keys.get(keys[0])
+    doc = first.shown.provenance.doc_id if first is not None else None
+    own = [r for r in whole if r.provenance.doc_id == doc] or whole
+    return max(own, key=lambda r: record_rank(fd, r))
 
 
 # A line wording's `{heading}`, and what separates it from the rest of the
@@ -2364,12 +2430,14 @@ def _visit_table(
     rows: list[list[str]] = []
     for c in s.columns:
         timing = c.timing
+        pages = list(c.pages or s.pages)
         if not timing and c.timing_footnote and c.timing_footnote_page is not None:
-            note = Provenance(
-                doc_id=s.doc_id, doc_kind="other", page=c.timing_footnote_page,
-                printed_page=c.timing_footnote_printed_page,
-            )
-            timing = fill(w.footnote, pages=docs.pages([note]), text=c.timing_footnote)
+            # The footnote's page goes in the Where column with the table's
+            # (plan-conformance-reviewer, 23 November 2026).
+            timing = fill(w.footnote, text=c.timing_footnote)
+            printed.setdefault(c.timing_footnote_page, c.timing_footnote_printed_page)
+            if c.timing_footnote_page not in pages:
+                pages.append(c.timing_footnote_page)
         n = c.marks_all if config.count_non_assessments else c.marks_assessments
         rows.append([
             c.period or "—",
@@ -2377,7 +2445,7 @@ def _visit_table(
             str(c.visits) if c.visits is not None else c.visits_says or "—",
             str(n) if c.visits == 1 else fill(w.each, n=n),
             ", ".join(labels[i] for i in c.considerations if i in labels) or "—",
-            where(c.pages or s.pages),
+            where(sorted(pages)),
         ])
     left = [] if config.count_non_assessments else [
         _lower_first(c.label) for c in config.considerations if not c.assessment
@@ -2633,7 +2701,10 @@ def _fold_rewordings(fd: FieldDef, row: Row) -> Row:
 # keys that paragraph explains: changing one means changing that paragraph too.
 REASON_DERIVED = "Worked out by the tool, not read from a document."
 REASON_DISAGREE = "The documents disagree"  # "— see Disagreement 3." is appended
-REASON_DISMISSED_DISAGREEMENT = "Budget driver; the documents word it differently."
+REASON_DISMISSED_DISAGREEMENT = (
+    "Budget driver; the documents answer differently, and the reviewer found no "
+    "contradiction."
+)
 REASON_MANY_VALUES = "Budget driver holding more than one value."
 # Not "Confidence below 80%" since 29 October 2026: the report prints no
 # confidence figure (Angus Gray: "it doesn't add much").

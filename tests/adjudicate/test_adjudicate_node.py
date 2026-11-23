@@ -665,6 +665,28 @@ class TestThePromptsWordingAfterOpus5:
         ) in conflict
         assert 'one says "approximately"' in conflict
 
+    def test_no_confidence_figure_reaches_the_model(self, fields_yaml_path) -> None:  # type: ignore[no-untyped-def]
+        """Angus Gray, 29 October 2026: no confidence figure anywhere in the
+        report. Run r-20261123-oct29-run3's Appendix B quoted the model's
+        "highest-confidence (0.95) records", read off the candidate list."""
+        from rfp_intake.adjudicate.prompt import build_adjudicate_prompt
+        from rfp_intake.domain.registry import get_registry
+
+        _use_real_registry(fields_yaml_path)
+        get_registry.cache_clear()
+        field = get_registry().get_field("ops.subjects_total")
+        c = Contradiction(field_id=field.id, records=[
+            _record(260, "doc-am", "amendment", confidence=0.95),
+            _record(236, "doc-am", "amendment", confidence=0.85),
+        ])
+        from rfp_intake.domain.precedence import get_precedence_policy
+
+        text = " ".join(
+            str(m.content) for m in build_adjudicate_prompt(c, field, get_precedence_policy())
+        )
+        assert "confidence" not in text.casefold()
+        assert "0.95" not in text and "0.85" not in text
+
     def test_the_same_answer_in_other_words_is_reconcilable(self) -> None:
         """Run r-20261123-oct29-run2 called the two documents' primary objectives
         not_a_conflict, which keeps one row per document."""

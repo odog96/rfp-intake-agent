@@ -555,8 +555,9 @@ def _flagged(model: ReportModel, styles: dict) -> list:  # type: ignore[type-arg
         "tool never clears one by itself. What the reasons mean: "
         "<b>budget driver holding more than one value</b> — which of them belongs in a budget is a "
         "person's judgement, so the tool will not pick; "
-        "<b>budget driver, the documents word it differently</b> — the reviewer judged the "
-        "wordings not to disagree, and a person still confirms that; "
+        "<b>budget driver, the documents answer differently, and the reviewer found no "
+        "contradiction</b> — Appendix B gives the reviewer's reasoning, and a person still "
+        "confirms which answer belongs in the budget; "
         "<b>the document does not state it clearly</b> — read the quoted passage in Appendix A "
         "before using it.",
         styles["body"],

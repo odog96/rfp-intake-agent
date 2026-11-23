@@ -38,7 +38,7 @@ from rfp_intake.render.report_model import build_report_model  # noqa: E402
 REASON_PHRASE = {
     "derived": "Worked out by the tool",
     "disagree": "The documents disagree",
-    "dismissed": "the documents word it differently",
+    "dismissed": "the documents answer differently",
     "many_values": "more than one value",
     "low_confidence": "Confidence below",
 }

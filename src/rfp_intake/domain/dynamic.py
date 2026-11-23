@@ -76,10 +76,13 @@ def _build_field_description(field_def: FieldDef) -> str:
     return " | ".join(parts)
 
 
-def asked_in(field_def: FieldDef, doc_kind: str) -> bool:
+def asked_in(field_def: FieldDef, doc_kind: str | None) -> bool:
     """Whether EXTRACT asks for this field in a document of `doc_kind`: its
-    `only_from` in config/fields.yaml lists the kind, or is empty."""
-    return not field_def.only_from or doc_kind in field_def.only_from
+    `only_from` in config/fields.yaml lists the kind, or is empty. A document
+    CLASSIFY could not label (no kind) is asked for every field, so a failed
+    classification never leaves a field unread (docs/ARCHITECTURE.md §4.2;
+    pipeline-rules-reviewer, 23 November 2026)."""
+    return doc_kind is None or not field_def.only_from or doc_kind in field_def.only_from
 
 
 def fields_to_extract(
@@ -91,7 +94,7 @@ def fields_to_extract(
     schema are both built from this list, so the two always agree."""
     return [
         f for f in registry.get_fields_for_group(group_id)
-        if not f.derived and (doc_kind is None or asked_in(f, doc_kind))
+        if not f.derived and asked_in(f, doc_kind)
     ]
 
 
