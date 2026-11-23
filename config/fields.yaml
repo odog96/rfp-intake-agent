@@ -1298,7 +1298,7 @@ fields:
     type: enum
     values: [yes, likely, no, not_specified]
     # Quoted: YAML reads unquoted yes and no as booleans, and the registry stores the
-    # values above as "true" and "false". The block on this group prints these.
+    # values above as "true" and "false". The report prints these.
     value_words:
       "true": Needed
       likely: Likely needed
@@ -1330,6 +1330,17 @@ fields:
     group: blinding_monitoring
     label: Reason / trigger for unblinded monitoring
     type: text
+    # Angus Gray, 29 October 2026, on the unblinded section: the RFP's pharmacy monitoring
+    # request belongs at the top, and drug details shown elsewhere "just [don't] need to be
+    # repeated here". Live run r-20261123-oct29-run2 wrote this row for the RFP from its
+    # "Pharmacy Monitoring Frequency" line, repeating "4 per site, 300 total".
+    hint: >
+      The reason the document itself gives for needing unblinded staff or unblinded monitoring,
+      in a sentence or two: for example, that only unblinded pharmacy staff may prepare the study
+      drug, or that the placebo does not look like the study drug as supplied. Record only a
+      reason the document states. Never repeat here the number or frequency of pharmacy
+      monitoring visits, or the drug's form and route: those have rows of their own. A document
+      that lists pharmacy visits but gives no reason: omit the field.
     source_priority: any
 
 # --- Group 8: Operational Metrics and Volumes -------------------------------
