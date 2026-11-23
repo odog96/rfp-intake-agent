@@ -574,7 +574,14 @@ fields:
     label: Multi-part study
     type: bool
     aliases: ["single-part", "multi-part", "study parts", "Part A / Part B", "stages"]
-    hint: True if the study is explicitly divided into parts, stages, or phases of conduct.
+    # Angus Gray's variable list (section 1) asks whether the study has parts. Live run
+    # r-20261123-oct29-run2 left this out for a two-arm study, because the hint asked only
+    # when to answer True.
+    hint: >
+      True if the document divides the study into parts or stages of conduct (Part A and
+      Part B, a dose-escalation stage then an expansion stage). False where the design
+      describes one study with no parts, such as a two-arm parallel-group study: quote the
+      sentence describing the design. Arms or cohorts that run side by side are not parts.
     source_priority: protocol
     budget_driver: true
 
