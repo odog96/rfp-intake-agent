@@ -807,7 +807,13 @@ def build_report_model(state: RunState, registry: Registry) -> ReportModel:
                 )
             continue
         entries = by_field.get(fd.id, [])
-        if not any(rf.statements for rf in entries):
+        # A periods display that always prints some periods prints them, each
+        # reading "Not found in the documents", when no document gives any.
+        always = (
+            isinstance(fd.display, PeriodsDisplay) and bool(fd.display.always)
+            and all(rf.status == "not_found" for rf in entries)
+        )
+        if not any(rf.statements for rf in entries) and not always:
             continue
         if isinstance(fd.display, EntriesDisplay):
             shown_as[fd.id] = _entries_row(
