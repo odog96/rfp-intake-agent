@@ -1,5 +1,8 @@
 import pytest
 
+# The list[enum] field these tests merge, and its group in config/fields.yaml.
+_FACTORS = ("monitoring.unblinded_factors", "blinding_monitoring")
+
 
 class TestCollectionFieldsDoNotContradict:
     """Members of a list field are parts of one answer, not rival answers."""
@@ -29,9 +32,9 @@ class TestCollectionFieldsDoNotContradict:
         registry = get_registry()
         field_def = registry.get_field("monitoring.unblinded_factors")
         records = [
-            self._record("monitoring.unblinded_factors", "blinding_monitoring", ["ip_accountability"], 1),
-            self._record("monitoring.unblinded_factors", "blinding_monitoring", ["pharmacy_manual_requirements"], 2),
-            self._record("monitoring.unblinded_factors", "blinding_monitoring", ["drug_preparation_requirements"], 3),
+            self._record(*_FACTORS, ["ip_accountability"], 1),
+            self._record(*_FACTORS, ["pharmacy_manual_requirements"], 2),
+            self._record(*_FACTORS, ["drug_preparation_requirements"], 3),
         ]
         resolved, contradictions = _reconcile_field(field_def, records)
 
@@ -50,8 +53,8 @@ class TestCollectionFieldsDoNotContradict:
 
         field_def = get_registry().get_field("monitoring.unblinded_factors")
         records = [
-            self._record("monitoring.unblinded_factors", "blinding_monitoring", ["ip_accountability"], 1),
-            self._record("monitoring.unblinded_factors", "blinding_monitoring", ["ip_accountability"], 7),
+            self._record(*_FACTORS, ["ip_accountability"], 1),
+            self._record(*_FACTORS, ["ip_accountability"], 7),
         ]
         resolved, _ = _reconcile_field(field_def, records)
         assert resolved[0].value == ["ip_accountability"]
@@ -62,8 +65,8 @@ class TestCollectionFieldsDoNotContradict:
 
         field_def = get_registry().get_field("monitoring.unblinded_factors")
         records = [
-            self._record("monitoring.unblinded_factors", "blinding_monitoring", ["blinded_vs_open_design"], 1),
-            self._record("monitoring.unblinded_factors", "blinding_monitoring", ["ip_accountability"], 2),
+            self._record(*_FACTORS, ["blinded_vs_open_design"], 1),
+            self._record(*_FACTORS, ["ip_accountability"], 2),
         ]
         resolved, _ = _reconcile_field(field_def, records)
         assert resolved[0].value == ["blinded_vs_open_design", "ip_accountability"]
@@ -167,8 +170,8 @@ class TestARecordsOwnNoteStaysOnTheRecord:
 
         field_def = get_registry().get_field("monitoring.unblinded_factors")
         records = [
-            self._record("monitoring.unblinded_factors", "blinding_monitoring", ["ip_accountability"], 1),
-            self._record("monitoring.unblinded_factors", "blinding_monitoring", ["drug_preparation_requirements"], 2),
+            self._record(*_FACTORS, ["ip_accountability"], 1),
+            self._record(*_FACTORS, ["drug_preparation_requirements"], 2),
         ]
         for record in records:
             record.notes = self._NOTE
