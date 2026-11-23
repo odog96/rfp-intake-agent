@@ -88,6 +88,13 @@ def assert_nothing_lost(state: RunState, registry: Registry, model: ReportModel)
         if any(rf is k for k in model.kept_out):
             continue
         fd = field_by_id.get(rf.field_id)
+        if fd is None:
+            # A variable config/fields.yaml no longer defines (visit intensity,
+            # the placebo assumption, since 29 October 2026): a saved run's
+            # rows for it are left out of the report, which prints only the
+            # registry's variables.
+            assert rf.field_id not in {r.field_id for r in rows}, rf.field_id
+            continue
         if rf.status == "not_found":
             want = "—"
         elif rf.status == "not_applicable":
@@ -249,8 +256,11 @@ def assert_nothing_lost(state: RunState, registry: Registry, model: ReportModel)
     # except one of a variable whose every entry is kept out above (2026-10-19).
     printed = {rf.field_id for rf in state.resolved if not any(rf is k for k in model.kept_out)}
     hidden = {k.field_id for k in model.kept_out} - printed
+    # A disagreement about a variable the registry no longer defines is left
+    # out with that variable's rows.
     adjudicated = [
-        c for c in state.contradictions if c.verdict is not None and c.field_id not in hidden
+        c for c in state.contradictions
+        if c.verdict is not None and c.field_id not in hidden and c.field_id in field_by_id
     ]
     decided = {d.field_id for d in model.decisions}
     dismissed = {d.field_id for d in model.dismissed}
@@ -643,10 +653,23 @@ class TestNothingLost:
         pointer = [r for r in section.rows if r.field_id == "timeline.periods"]
         assert len(pointer) == 1 and "see Schedules" in pointer[0].values[0].text
 
-    def test_a_field_no_longer_in_the_registry_is_still_printed(self) -> None:
-        state = RunState(run_id="r-1", resolved=[_rf("retired.field", "kept")])
+    def test_a_field_no_longer_in_the_registry_is_left_out(self) -> None:
+        # 29 October 2026: the visit intensity and placebo assumption rows are
+        # gone from config/fields.yaml, and a saved run's extraction.json still
+        # holds them. The report prints the registry's variables only, and a
+        # re-render of such a run does not fail.
+        c = _contradiction("retired.field", "conflict", [
+            ("a", 3, "d-prot"), ("b", 4, "d-rfp"),
+        ])
+        state = RunState(run_id="r-1", resolved=[
+            _rf("retired.field", "kept"), _rf("ops.sites_total", 75, pages=(5,)),
+        ], contradictions=[c])
         model = build_report_model(state, get_registry())
-        assert any(r.field_id == "retired.field" for r in model.all_rows())
+        assert_nothing_lost(state, get_registry(), model)
+        assert not any(r.field_id == "retired.field" for r in model.all_rows())
+        assert not any(e.field_id == "retired.field" for e in model.evidence)
+        assert model.decisions == []
+        assert model.variables_total == len(get_registry().fields)
 
 
 class TestThePageNumberPrintedOnThePage:
@@ -723,25 +746,25 @@ class TestThePageNumberPrintedOnThePage:
 
     def test_a_disagreements_positions_cite_both_numbers(self) -> None:
         c = Contradiction(
-            field_id="study.duration_months", verdict="conflict", severity="high",
+            field_id="ops.sites_total", verdict="conflict", severity="high",
             explanation="The documents disagree.",
             records=[
                 FieldRecord(
-                    field_id="study.duration_months", group="study_design", raw_value="42",
-                    value=42, quote="42 months", confidence=0.9,
+                    field_id="ops.sites_total", group="operational_metrics", raw_value="42",
+                    value=42, quote="42 sites", confidence=0.9,
                     provenance=Provenance(doc_id="d-prot", doc_kind="protocol",
                                           page=11, printed_page="9"),
                 ),
                 FieldRecord(
-                    field_id="study.duration_months", group="study_design", raw_value="40",
-                    value=40, quote="40 months", confidence=0.9,
+                    field_id="ops.sites_total", group="operational_metrics", raw_value="40",
+                    value=40, quote="40 sites", confidence=0.9,
                     provenance=Provenance(doc_id="d-rfp", doc_kind="rfp", page=2),
                 ),
             ],
         )
         state = RunState(
             run_id="r-1",
-            resolved=[_rf("study.duration_months", 42, status="needs_review",
+            resolved=[_rf("ops.sites_total", 42, status="needs_review",
                           pages=(11,), contradiction=c)],
             contradictions=[c],
         )
@@ -875,8 +898,10 @@ class TestValueWords:
         assert format_value(False, None) == ["No"]
         assert format_value({"n": 28, "unit": "days"}, reg["dosing.frequency"]) == ["Every 28 days"]
         # Prompt B item 8: "Every" comes from `amount_wording`, not the field id.
+        # The requested monitoring frequency has none since 29 October 2026: it
+        # is given in the document's own words.
         assert format_value({"n": 8, "unit": "weeks"}, reg["monitoring.frequency_spec"]) == [
-            "Every 8 weeks"
+            "8 weeks"
         ]
         assert format_value({"n": 42, "unit": "months"}, reg["timeline.total_duration"]) == [
             "42 months"
@@ -1166,7 +1191,10 @@ class TestANotAConflictWrittenAsOneRow:
             for r in c.records
         ]
         model = build_report_model(state, get_registry())
-        assert not any(r.where_notes for r in model.all_rows())
+        # No note on this variable's rows (a not-found variable's own note, in
+        # its Where cell since 29 October 2026, is another matter).
+        assert not any(r.where_notes for r in model.all_rows()
+                       if r.field_id == "visits.schedule_present")
 
 
 class TestBothSidesOnTheRow:
@@ -1213,8 +1241,11 @@ class TestBothSidesOnTheRow:
         c = state.contradictions[0].model_copy(update={"precedence_rule": "specificity"})
         state.contradictions[0] = c
         state.resolved[0].contradiction = c
+        # main's config/fields.yaml words `specificity` without "confidence"
+        # (29 October 2026); this branch's copy still has the older wording, so
+        # this test passes once the two are merged.
         assert self._row(state).decision_line == (
-            "Shown provisionally: 0 (the protocol's passage had the highest confidence). "
+            "Shown provisionally: 0 (the protocol states it most clearly). "
             "See Disagreement 1."
         )
 
@@ -1261,7 +1292,8 @@ class TestBothSidesOnTheRow:
             ],
         ))
         assert [(s.text, s.quote) for s in row.sides] == [
-            ("Not matching", "not_matching_stated"), ("Matching", "matching_stated"),
+            ("No, not matching as supplied", "not_matching_stated"),
+            ("Yes, matching as supplied", "matching_stated"),
         ]
 
     def test_a_long_quote_is_cut_to_its_first_sentence(self) -> None:
@@ -1307,10 +1339,16 @@ class TestARowFollowingAnotherDisagreement:
     def test_only_one_side_gives_a_timing(self) -> None:
         row = self._row(self._state("d-rfp"))
         assert row.depends_on == "Depends on Disagreement 1"
+        # The pages are in the Where cell, not in the sentence (29 October 2026).
         assert row.follow_lines == [
-            "Only the RFP gives a timing: after 156 events (RFP p.4).",
+            "Only the RFP gives a timing: after 156 events.",
             "If the protocol is right, there is no interim analysis to time.",
         ]
+        assert row.follow_pages == "RFP p.4"
+        [printed] = row.table
+        assert (printed.values, printed.alert, printed.status, printed.where) == (
+            row.follow_lines, "Depends on Disagreement 1", "Review", "RFP p.4",
+        )
         # The row's sides are the count's, so it has none of its own.
         assert row.sides == []
 
@@ -1326,7 +1364,7 @@ class TestARowFollowingAnotherDisagreement:
         state.contradictions = [c]
         state.resolved[0].value = "2"
         assert self._row(state).follow_lines == [
-            "Only the RFP gives a timing: after 156 events (RFP p.4).",
+            "Only the RFP gives a timing: after 156 events.",
         ]
 
     def test_the_wording_comes_from_the_registry(self) -> None:
@@ -1348,8 +1386,18 @@ class TestARowFollowingAnotherDisagreement:
         assert row.follow_lines == ["RFP: after 156 events", "not protocol"]
 
 
+def _whole_study_parts(model: ReportModel) -> list[Row]:
+    """The whole study duration's rows: printed under the patient timeline
+    (`shown_under`) since 29 October 2026, so not rows of a group of their own."""
+    assert not [r for g in model.groups for r in g.rows
+                if r.field_id == "timeline.total_duration"]
+    return [u for g in model.groups for r in g.rows for u in r.under
+            if u.field_id == "timeline.total_duration"]
+
+
 class TestScopesDisplay:
-    """Fix 6 of the 2026-10-12 brief: Overall study duration as one row."""
+    """Fix 6 of the 2026-10-12 brief: Overall study duration as one row, its
+    parts printed under the patient timeline since 29 October 2026."""
 
     def test_the_whole_study_comes_first_under_its_heading(self) -> None:
         state = RunState(run_id="r-1", resolved=[
@@ -1358,16 +1406,21 @@ class TestScopesDisplay:
         ])
         model = build_report_model(state, get_registry())
         assert_nothing_lost(state, get_registry(), model)
-        [row] = [r for g in model.groups for r in g.rows
-                 if r.field_id == "timeline.total_duration"]
-        assert [(p.heading, p.values[0].text) for p in row.parts] == [
+        parts = _whole_study_parts(model)
+        assert [(p.heading, p.values[0].text) for p in parts] == [
             ("Whole study", "42 months"),
             ("Time each patient spends in the study", "about 4 years"),
         ]
         # The parts are the rows; the row holding them is not counted twice.
         # Capitalised as every label the documents word is (stage 6, 2026-10-12).
-        assert [r.scope for r in model.all_rows() if r.field_id == row.field_id] == [
-            "Study", "Subject",
+        assert [r.scope for r in model.all_rows()
+                if r.field_id == "timeline.total_duration"] == ["Study", "Subject"]
+        # Printed as rows under the patient timeline's, each with its page.
+        [timeline] = [r for g in model.groups for r in g.rows
+                      if r.field_id == "timeline.periods"]
+        assert [(t.variable, t.values, t.where) for t in timeline.table[-2:]] == [
+            ("Whole study", ["42 months"], "Protocol p.15"),
+            ("Time each patient spends in the study", ["about 4 years"], "Protocol p.47"),
         ]
 
     def test_a_scope_no_heading_names_comes_last_under_its_own_words(self) -> None:
@@ -1376,9 +1429,7 @@ class TestScopesDisplay:
             _rf("timeline.total_duration", "42 months", scope="study", pages=(15,)),
         ])
         model = build_report_model(state, get_registry())
-        [row] = [r for g in model.groups for r in g.rows
-                 if r.field_id == "timeline.total_duration"]
-        assert [p.heading for p in row.parts] == ["Whole study", "Part B"]
+        assert [p.heading for p in _whole_study_parts(model)] == ["Whole study", "Part B"]
 
     def test_the_row_takes_its_disagreement(self) -> None:
         c = _contradiction("timeline.total_duration", "conflict",
@@ -1391,83 +1442,60 @@ class TestScopesDisplay:
         ])
         model = build_report_model(state, get_registry())
         assert_nothing_lost(state, get_registry(), model)
-        [row] = [r for g in model.groups for r in g.rows
-                 if r.field_id == "timeline.total_duration"]
-        assert row.decision_no == 1
-        assert row.status == "needs_review"
-        assert row.parts[0].decision_line == "No value chosen. See Disagreement 1."
+        whole, _ = _whole_study_parts(model)
+        assert whole.decision_no == 1
+        assert whole.status == "needs_review"
+        assert whole.decision_line == "No value chosen. See Disagreement 1."
+        # The disagreement keeps its number, under the variable's own label.
+        [d] = model.decisions
+        assert (d.no, d.label) == (1, "Whole study duration")
 
 
-class TestADerivedRow:
-    """Fix 8 of the 2026-10-12 brief, CLAUDE.md open item 5: a derived row says it
-    was worked out, why in plain words, and from which pages, with no field id."""
+@pytest.fixture
+def _with_the_blinding_block(fields_yaml_path: Path, tmp_path: Path):  # type: ignore[no-untyped-def]
+    """config/fields.yaml with the blinding group's block of the 2026-10-12
+    brief put back. No group in config uses `block` since 29 October 2026
+    (Angus Gray), and the code path stays working for a registry that does
+    (layout rule 15), so these tests give it one. The block is as it was less
+    blinding.placebo_assumption, which is gone from the registry."""
+    import yaml
 
-    def _model(self) -> tuple[RunState, ReportModel]:
-        from rfp_intake.derive import derive_node
-
-        state = RunState(run_id="r-1", resolved=[
-            _rf("visits.intensity_evidence",
-                ["frequent_early_visits", "infusion_observation_period", "imaging"],
-                status="needs_review", pages=(13, 26)),
-            _rf("ip.form", ["infusion_iv"], status="needs_review", pages=(54,),
-                quote="Study drug consists of IV NEOD001 or placebo."),
-            _rf("blinding.design", "double_blind", status="needs_review", pages=(11,)),
-        ])
-        state.resolved = derive_node(state)["resolved"]
-        return state, build_report_model(state, get_registry())
-
-    def _row(self, model: ReportModel, field_id: str) -> Row:
-        [row] = [r for r in model.all_rows() if r.field_id == field_id]
-        return row
-
-    def test_the_intensity_row_says_why_and_where(self) -> None:
-        state, model = self._model()
-        row = self._row(model, "visits.intensity_rating")
-        assert row.derived_status == "Worked out by the tool — confirm"
-        assert row.why == (
-            "Why: frequent visits early in the study; IV infusion with an observation period; "
-            "imaging."
-        )
-        assert row.evidence_pages == "Evidence pages: Protocol p.13, 26."
-        assert_nothing_lost(state, get_registry(), model)
-
-    def test_the_placebo_row_says_why_in_plain_words(self) -> None:
-        _, model = self._model()
-        row = self._row(model, "blinding.placebo_assumption")
-        assert row.why == (
-            "Why: The drug is given by IV infusion, so the placebo is likely prepared by "
-            "unblinded pharmacy staff."
-        )
-        assert row.evidence_pages == "Evidence pages: Protocol p.54."
-
-    def test_an_extracted_row_has_none_of_it(self) -> None:
-        _, model = self._model()
-        row = self._row(model, "ip.form")
-        assert (row.derived_status, row.why, row.evidence_pages) == (None, None, None)
-
-    def test_appendix_a_names_the_inputs_by_label(self) -> None:
-        _, model = self._model()
-        [e] = [e for e in model.evidence if e.field_id == "visits.intensity_rating"]
-        assert e.derived_from == [
-            "Evidence of visit intensity", "Visit frequency by study period",
-            "Total number of subject visits",
-        ]
-        assert e.notes is not None and "Scored 6 points" in e.notes
+    data = yaml.safe_load(fields_yaml_path.read_text())
+    group = next(g for g in data["groups"] if g["id"] == "blinding_monitoring")
+    group["block"] = {
+        "label": "Unblinded staff and monitoring",
+        "headline": "monitoring.unblinded_required",
+        "replaces": ["blinding.placebo_matching", "blinding.unblinded_staff_stated",
+                     "monitoring.unblinded_required", "monitoring.unblinded_factors",
+                     "monitoring.unblinded_rationale"],
+        "lines": [
+            {"field": "blinding.unblinded_staff_stated", "label": "Stated in the documents"},
+            {"field": "blinding.placebo_matching"},
+            {"field": "ops.visits_pharmacy_monitoring",
+             "wording": "{doc} asks for pharmacy monitoring visits: {value} ({pages})."},
+        ],
+    }
+    path = tmp_path / "fields_with_block.yaml"
+    path.write_text(yaml.dump(data, allow_unicode=True, sort_keys=False))
+    os.environ["RFP_INTAKE_FIELDS_YAML_PATH"] = str(path)
+    get_registry.cache_clear()
+    yield
+    os.environ["RFP_INTAKE_FIELDS_YAML_PATH"] = str(fields_yaml_path)
+    get_registry.cache_clear()
 
 
+@pytest.mark.usefixtures("_with_the_blinding_block")
 class TestTheBlindingBlock:
-    """Fix 9 of the 2026-10-12 brief: the six blinding rows are one row, with the
-    six variables kept as its members for the counts and in Appendix A."""
+    """Fix 9 of the 2026-10-12 brief: the blinding rows are one row, with the
+    variables kept as its members for the counts and in Appendix A."""
 
-    SIX = {
+    FIVE = {
         "blinding.placebo_matching", "blinding.unblinded_staff_stated",
         "monitoring.unblinded_required", "monitoring.unblinded_factors",
-        "monitoring.unblinded_rationale", "blinding.placebo_assumption",
+        "monitoring.unblinded_rationale",
     }
 
     def _model(self) -> tuple[RunState, ReportModel]:
-        from rfp_intake.derive import derive_node
-
         c = _contradiction("blinding.placebo_matching", "conflict", [
             ("not_matching_stated", 53, "d-prot"), ("matching_stated", 3, "d-rfp"),
         ])
@@ -1486,7 +1514,6 @@ class TestTheBlindingBlock:
                 quote="Study drug consists of IV NEOD001 or placebo."),
             _rf("blinding.design", "double_blind", status="needs_review", pages=(11,)),
         ], contradictions=[c])
-        state.resolved = derive_node(state)["resolved"]
         model = build_report_model(state, get_registry())
         assert_nothing_lost(state, get_registry(), model)
         return state, model
@@ -1501,9 +1528,10 @@ class TestTheBlindingBlock:
         _, model = self._model()
         [group] = [g for g in model.groups if g.group.id == "blinding_monitoring"]
         assert [r.label for r in group.rows] == [
-            "Blinding design", "Unblinded staff and monitoring",
+            "Pharmacy monitoring visits", "Pharmacy monitoring frequency", "Blinding design",
+            "Unblinded staff and monitoring",
         ]
-        assert {m.field_id for m in self._block(model).members} == self.SIX
+        assert {m.field_id for m in self._block(model).members} == self.FIVE
 
     def test_the_headline_is_the_monitoring_answer_in_words(self) -> None:
         _, model = self._model()
@@ -1522,8 +1550,7 @@ class TestTheBlindingBlock:
             (1, 'Protocol p.53: "not_matching_stated"'),
             (1, 'RFP p.3: "matching_stated"'),
         ]
-        assert lines[4][1].startswith("The drug is given by IV infusion")
-        assert lines[5] == (
+        assert lines[4] == (
             0, "RFP asks for pharmacy monitoring visits: 4 visits per site (RFP p.4).",
         )
 
@@ -1544,9 +1571,20 @@ class TestTheBlindingBlock:
         _, model = self._model()
         kept = {e.field_id for e in model.evidence}
         assert {"blinding.placebo_matching", "blinding.unblinded_staff_stated",
-                "monitoring.unblinded_required", "blinding.placebo_assumption"} <= kept
+                "monitoring.unblinded_required"} <= kept
+
+    def test_the_block_prints_as_its_label_row_with_its_lines(self) -> None:
+        """The 29 October 2026 table: the block's label in bold, its headline
+        as the value, its lines under it in the Value cell."""
+        _, model = self._model()
+        [label, *_] = self._block(model).table
+        assert (label.variable, label.values, label.status) == (
+            "Unblinded staff and monitoring", ["Likely needed"], "Review",
+        )
+        assert label.lines[0].text.startswith("Stated in the documents: Yes")
 
 
+@pytest.mark.usefixtures("_with_the_blinding_block")
 class TestABlockDescribesEveryDisagreementItNames:
     """A block member with no line of its own, the headline included, still
     gives both sides of its numbered disagreement (fix 2), and a scoped row read
@@ -1674,3 +1712,75 @@ class TestScopeWords:
         assert [r.scope for r in model.all_rows() if r.field_id == fid] == [None, "Cohort: Part A"]
         # As stored, with a capital (addition 3 to stage 6 of the 2026-10-12 plan).
         assert "Cohort:Part A" in {e.scope for e in model.evidence if e.field_id == fid}
+
+
+class TestTheTwoStatusWords:
+    """Angus Gray, 29 October 2026: the Status column says Confirmed or Review,
+    nothing else. Rule 3 stays in the value, not in the status."""
+
+    @pytest.mark.parametrize(("status", "word"), [
+        ("confirmed", "Confirmed"),
+        ("not_specified", "Confirmed"),
+        ("not_applicable", "Confirmed"),
+        ("needs_review", "Review"),
+        ("not_found", "Review"),
+    ])
+    def test_each_status_is_one_of_two_words(self, status: str, word: str) -> None:
+        from rfp_intake.render.report_model import status_word
+
+        assert status_word(status) == word
+
+    def test_the_three_terminal_states_stay_apart_in_the_value(self) -> None:
+        state = RunState(run_id="r-1", resolved=[
+            _rf("ops.sites_total", None, status="not_specified", pages=(5,)),
+            _rf("interim.count", 0, pages=(98,)),
+        ])
+        model = build_report_model(state, get_registry())
+        assert_nothing_lost(state, get_registry(), model)
+        printed = {r.field_id: r.table[0] for g in model.groups for r in g.rows}
+        assert (printed["ops.sites_total"].values, printed["ops.sites_total"].status) == (
+            ["Not specified"], "Confirmed",
+        )
+        assert (printed["interim.count"].values, printed["interim.count"].status) == (
+            ["0"], "Confirmed",
+        )
+        assert (printed["ops.crf_pages"].values, printed["ops.crf_pages"].status) == (
+            ["Not found in the documents"], "Review",
+        )
+
+    def test_no_other_word_is_printed_in_the_status_column(self) -> None:
+        state = _status_mix_state()
+        model = build_report_model(state, get_registry())
+        assert_nothing_lost(state, get_registry(), model)
+        words = {t.status for g in model.groups for r in g.rows for t in r.table}
+        words |= {t.status for g in model.groups for s in g.schedules for r in s.rows
+                  for t in r.table}
+        assert words <= {"", "Confirmed", "Review"}
+        assert {"Confirmed", "Review"} <= words
+
+    def test_no_value_cell_holds_a_page_reference(self) -> None:
+        state = _status_mix_state()
+        model = build_report_model(state, get_registry())
+        for g in model.groups:
+            for r in g.rows:
+                for t in r.table:
+                    cell = " ".join(t.values + [b.text for b in t.lines] + t.grey)
+                    assert not re.search(r"\b(Protocol|RFP|Amendment) p\.\d", cell), cell
+                    assert "%" not in cell
+
+
+def _status_mix_state() -> RunState:
+    """A disagreement, a row following it, a value for review, a confirmed
+    one, a not-specified one and a whole-study duration under the timeline."""
+    c = _contradiction("interim.count", "conflict", [("0", 98, "d-prot"), ("1", 4, "d-rfp")])
+    count = _rf("interim.count", None, status="needs_review", contradiction=c, quote=None)
+    count.sources = [r.provenance for r in c.records]
+    timing = _rf("interim.timing", ["after 156 events"], status="needs_review",
+                 contradiction=c, pages=(4,), doc="d-rfp", kind="rfp")
+    return RunState(run_id="r-1", contradictions=[c], resolved=[
+        count, timing,
+        _rf("ops.sites_total", 75, pages=(5,)),
+        _rf("ops.crf_pages", 20800, status="needs_review", confidence=0.5, pages=(4,)),
+        _rf("study.phase", None, status="not_specified", pages=(1,)),
+        _rf("timeline.total_duration", "42 months", scope="study", pages=(15,)),
+    ])

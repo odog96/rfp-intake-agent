@@ -89,12 +89,20 @@ class TestSubjects:
         records[-4] = _rec(N, "250", "total", RFP, 4, "Total subjects: 250")
         _, model = _report(records)
         row = _row(model, N)
-        lines = _lines(row)
         assert row.decision_no is not None
-        assert f"Total: documents disagree (Disagreement {row.decision_no})" in lines
-        assert any("Amendment p.43" in line for line in lines)
-        assert any("RFP p.4" in line for line in lines)
         assert row.status == "needs_review"
+        # 29 October 2026: the total is its own row under the variable's, in
+        # bold, saying the documents disagree; each side is a row under it with
+        # its own pages in the Where column.
+        total, *sides = [t for t in row.table if t.kind in ("part", "side")]
+        assert (total.kind, total.variable, total.status) == ("part", "Total", "Review")
+        assert total.alert == f"Documents disagree — see Disagreement {row.decision_no}"
+        assert total.where == ""
+        assert [(t.kind, t.values, t.where) for t in sides] == [
+            ("side", ['Amendment: 260 — "A total of 260 subjects will be randomized"'],
+             "Amendment p.43"),
+            ("side", ['RFP: 250 — "Total subjects: 250"'], "RFP p.4"),
+        ]
 
     def test_no_total_is_worked_out_from_the_arms(self) -> None:
         records = [r for r in _arms() + _subjects() if r.scope != "total"]

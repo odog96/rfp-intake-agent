@@ -43,8 +43,9 @@ class TestBuildReportXlsx:
         xlsx = build_report_xlsx(RunState(run_id="r-1"), _registry())
         wb = load_workbook(io.BytesIO(xlsx))
         header = [c.value for c in wb["Fields"][1]]
+        # No Confidence column (Angus Gray, 29 October 2026).
         assert header == [
-            "Group", "Variable", "Value", "Status", "Confidence",
+            "Group", "Variable", "Value", "Status",
             "Source Doc", "Page", "Quote", "Contradiction",
         ]
 
@@ -61,11 +62,11 @@ class TestBuildReportXlsx:
         assert row[0] == "operational_metrics"
         assert row[1] == "Total number of sites"
         assert row[2] == 75
-        assert row[3] == "confirmed"
-        assert row[4] == 0.92
-        assert row[5] == "rfp1"
-        assert row[6] == 5
-        assert row[7] == "75 sites"
+        assert row[3] == "Confirmed"
+        assert row[4] == "rfp1"
+        assert row[5] == 5
+        assert row[6] == "75 sites"
+        assert 0.92 not in row
 
         fill = wb["Fields"][2][0].fill
         assert fill.fgColor.rgb == "00C8E6C9"  # green
@@ -89,7 +90,8 @@ class TestBuildReportXlsx:
 
         fill = wb["Fields"][2][0].fill
         assert fill.fgColor.rgb == "00FFCDD2"  # red
-        assert "conflict" in wb["Fields"][2][8].value
+        assert "conflict" in wb["Fields"][2][7].value
+        assert wb["Fields"][2][3].value == "Review"
 
     def test_not_found_row_gets_grey_fill(self, fields_yaml_path) -> None:  # type: ignore[no-untyped-def]
         _use_real_registry(fields_yaml_path)
@@ -100,6 +102,9 @@ class TestBuildReportXlsx:
         wb = load_workbook(io.BytesIO(xlsx))
         fill = wb["Fields"][2][0].fill
         assert fill.fgColor.rgb == "00E0E0E0"  # grey
+        # Rule 3 in the value; the status is one of the two words.
+        assert wb["Fields"][2][2].value == "Not found in the documents"
+        assert wb["Fields"][2][3].value == "Review"
 
     def test_review_queue_excludes_confirmed(self, fields_yaml_path) -> None:  # type: ignore[no-untyped-def]
         _use_real_registry(fields_yaml_path)

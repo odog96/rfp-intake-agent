@@ -178,7 +178,9 @@ class TestAQuestionThatDoesNotArise:
         pdf = build_report_pdf(state, get_registry(), generated_at="2026-10-16")
         import pymupdf
         text = " ".join(pymupdf.open(stream=pdf, filetype="pdf")[0].get_text().split())  # type: ignore[no-untyped-call]
-        assert "Which cohort/part includes healthy volunteers N/A Not applicable" in text
+        # Status reads Confirmed or Review only since 29 October 2026 (Angus Gray);
+        # a question that does not arise is Confirmed, and the value says N/A.
+        assert "Which cohort/part includes healthy volunteers N/A Confirmed" in text
 
     def test_a_rule_gives_a_value_or_a_status_not_both(self) -> None:
         from pydantic import ValidationError
@@ -216,5 +218,5 @@ class TestAQuestionThatDoesNotArise:
         wb = load_workbook(io.BytesIO(build_report_xlsx(state, get_registry())))
         label = get_registry().get_field(HV_SCOPE).label
         [row] = [r for r in wb["Fields"].iter_rows(values_only=True) if r[1] == label]
-        assert (row[2], row[3]) == ("N/A", "not_applicable")
+        assert (row[2], row[3]) == ("N/A", "Confirmed")
         assert all(r[1] != label for r in wb["Review Queue"].iter_rows(values_only=True))

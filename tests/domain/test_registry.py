@@ -44,7 +44,7 @@ def test_registry_version_stable(fields_yaml_path: Path) -> None:
 def test_get_group(fields_yaml_path: Path) -> None:
     registry = load_registry(fields_yaml_path)
     group = registry.get_group("visits")
-    # "and Intensity" went with the visit-intensity fields on 2026-11-23.
+    # "and Intensity" went with the visit intensity rows (Angus Gray, 29 October 2026).
     assert group.label == "Subject Visit Schedule"
 
 
@@ -68,6 +68,9 @@ def test_get_fields_for_group(fields_yaml_path: Path) -> None:
     ids = [f.id for f in visit_fields]
     assert "visits.total_count" in ids
     assert "visits.schedule_present" in ids
+    # Removed on 29 October 2026 (Angus Gray): the visit intensity was not needed.
+    assert "visits.intensity_rating" not in ids
+    assert "visits.intensity_evidence" not in ids
 
 
 class TestTheStageFiveFields:
@@ -90,6 +93,7 @@ class TestTheStageFiveFields:
             "visits.schedule_present",
         ):
             assert field_id in ids, f"{field_id} did not load"
+        assert "blinding.placebo_assumption" not in ids
 
     def test_the_primary_objective_is_copied_from_the_protocol(
         self, fields_yaml_path: Path
@@ -109,6 +113,7 @@ class TestTheStageFiveFields:
             # reads them as booleans and the registry hands the model `false`
             # beside two string values. These assertions are what keeps the
             # quoting from being removed as noise.
+            # `no_placebo` since 29 October 2026: Angus Gray asked for Yes, No or N/A.
             (
                 "blinding.placebo_matching",
                 ["matching_stated", "not_matching_stated", "no_placebo", "not_specified"],
@@ -147,8 +152,9 @@ class TestTheStageFiveFields:
         """
         from rfp_intake.derive import DERIVE_RUBRICS
 
-        # No field is derived since 2026-11-23, so this holds with nothing to
-        # check until one is added.
+        # Since 29 October 2026 the shipped registry may have no derived field at
+        # all (the visit intensity and the placebo assumption went); any it has
+        # needs its rubric.
         derived = [f.id for f in load_registry(fields_yaml_path).fields if f.derived]
         missing = [field_id for field_id in derived if field_id not in DERIVE_RUBRICS]
         assert not missing, f"derived fields with no rubric in DERIVE_RUBRICS: {missing}"
@@ -546,7 +552,9 @@ class TestTheMonitoringVisitRowsAfterThe20261007Review:
     did not say which visit type it described.
     """
 
-    # The order the review asked for, which is the order a reader sees.
+    # The order the review asked for, which is the order a reader sees. The
+    # pharmacy visits moved to the head of Blinding and Unblinded Monitoring on
+    # 29 October 2026 (Angus Gray); the other four stay here.
     FIVE = (
         ("ops.visits_site_selection", "Site selection visits"),
         ("ops.visits_site_initiation", "Site initiation visits"),
@@ -829,6 +837,12 @@ class TestAGroupBlock:
             ("g1.b", "Bee", None), ("g2.c", None, "{doc} says {value} ({pages})"),
         ]
 
+    def test_the_real_blinding_group_has_no_block(self, fields_yaml_path: Path) -> None:
+        """Each variable its own row since 29 October 2026 (Angus Gray): the block
+        that held six of them, with references in the middle, is gone from
+        config/fields.yaml. The block code path stays for other registries."""
+        assert load_registry(fields_yaml_path).get_group("blinding_monitoring").block is None
+
     @pytest.mark.parametrize(("block", "match"), [
         ({"replaces": ["g1.a", "g1.z"]}, "replacing an unknown field"),
         ({"replaces": ["g1.a", "g2.c"]}, "of another group"),
@@ -958,6 +972,9 @@ class TestEntryKeysAndTheirDisplays:
          "periods display naming key colour"),
         ({"display": dict(_PERIODS, notes={"dose_level": "(x)"})},
          "values its order_key does not allow: dose_level"),
+        # 29 October 2026: `always` names values of the order_key, like `notes`.
+        ({"display": dict(_PERIODS, always={"arm": "Arms", "dose_level": "Dose"})},
+         "periods always for values its order_key does not allow: dose_level"),
         ({"display": dict(_PERIODS, see_also=[{"field": "g1.none", "wording": "{label}",
                                                "disagree": "{n}"}])},
          "see_also on a field it cannot use"),
@@ -980,6 +997,31 @@ class TestEntryKeysAndTheirDisplays:
     ) -> None:
         with pytest.raises(RegistryValidationError, match="must contain"):
             load_registry(self._write(tmp_path, {key: phrase}))
+
+    def test_periods_always_is_read(self, tmp_path: Path) -> None:
+        from rfp_intake.domain.registry import PeriodsDisplay
+
+        registry = load_registry(self._write(
+            tmp_path, display=dict(self._PERIODS, always={"cohort": "Cohorts", "arm": "Arms"}),
+        ))
+        display = registry.get_field("g1.parts").display
+        assert isinstance(display, PeriodsDisplay)
+        assert display.always == {"cohort": "Cohorts", "arm": "Arms"}
+
+    def test_periods_always_defaults_to_nothing(self, tmp_path: Path) -> None:
+        from rfp_intake.domain.registry import PeriodsDisplay
+
+        display = load_registry(self._write(tmp_path, display=self._PERIODS)).get_field(
+            "g1.parts").display
+        assert isinstance(display, PeriodsDisplay)
+        assert display.always == {}
+
+    def test_a_periods_always_heading_needs_words(self, tmp_path: Path) -> None:
+        """A line with no heading would print an empty bold Variable cell."""
+        with pytest.raises(ValidationError, match="every value in always needs a heading"):
+            load_registry(self._write(
+                tmp_path, display=dict(self._PERIODS, always={"arm": " "}),
+            ))
 
     def test_a_headline_wording_names_the_value(self, tmp_path: Path) -> None:
         with pytest.raises(ValidationError, match="must contain"):
@@ -1155,3 +1197,105 @@ def test_because_scopes_need_a_scoped_field(tmp_path: Path) -> None:
     p.write_text(yaml.dump(data))
     with pytest.raises(RegistryValidationError, match="has because_scopes but is not scoped"):
         load_registry(p)
+
+
+class TestTheKeysOfThe29October2026Layout:
+    """Angus Gray, 29 October 2026: a variable printed under another
+    (`shown_under`), a periods display's `always` lines, and a schedule
+    consideration kept out of the visit table (`show`)."""
+
+    def _write(self, tmp_path: Path, **shown_under: str) -> Path:
+        """Three fields in one group; `shown_under` maps a field id to the id
+        it is printed under."""
+        fields: list[dict[str, object]] = [
+            {"id": f"g1.{name}", "group": "g1", "label": name.title(), "type": "text"}
+            for name in ("a", "b", "c")
+        ]
+        for f in fields:
+            if f["id"] in shown_under:
+                f["shown_under"] = shown_under[str(f["id"])]
+        data = {
+            "version": 1,
+            "groups": [{"id": "g1", "label": "Group 1"}],
+            "fields": fields,
+            "report_wording": _WORDING,
+        }
+        p = tmp_path / "fields.yaml"
+        p.write_text(yaml.dump(data))
+        return p
+
+    def test_shown_under_is_read(self, tmp_path: Path) -> None:
+        registry = load_registry(self._write(tmp_path, **{"g1.b": "g1.a", "g1.c": "g1.a"}))
+        assert registry.get_field("g1.b").shown_under == "g1.a"
+        assert registry.get_field("g1.c").shown_under == "g1.a"
+        assert registry.get_field("g1.a").shown_under is None
+
+    @pytest.mark.parametrize(("shown_under", "message"), [
+        ({"g1.b": "g1.b"}, "Field g1.b is shown under itself"),
+        ({"g1.b": "g1.nothing"}, "Field g1.b is shown under an unknown field: g1.nothing"),
+        ({"g1.b": "g1.a", "g1.c": "g1.b"},
+         "Field g1.c is shown under g1.b, which is itself shown under another field"),
+    ])
+    def test_a_wrong_shown_under_does_not_load(
+        self, tmp_path: Path, shown_under: dict[str, str], message: str
+    ) -> None:
+        with pytest.raises(RegistryValidationError, match=re.escape(message)):
+            load_registry(self._write(tmp_path, **shown_under))
+
+    def test_the_real_registry_prints_two_variables_under_the_patient_timeline(
+        self, fields_yaml_path: Path
+    ) -> None:
+        registry = load_registry(fields_yaml_path)
+        under = [f.id for f in registry.fields if f.shown_under is not None]
+        assert sorted(under) == ["timeline.budget_window", "timeline.total_duration"]
+        assert {registry.get_field(i).shown_under for i in under} == {"timeline.periods"}
+
+    def test_the_real_patient_timeline_lists_its_periods_always(
+        self, fields_yaml_path: Path
+    ) -> None:
+        from rfp_intake.domain.registry import PeriodsDisplay
+
+        registry = load_registry(fields_yaml_path)
+        field = registry.get_field("timeline.periods")
+        display = field.display
+        assert isinstance(display, PeriodsDisplay)
+        assert display.always["screening"] == "Screening"
+        assert "other" not in display.always
+        [order] = [k for k in field.entry_keys() if k.name == display.order_key]
+        assert set(display.always) <= set(order.values)
+
+    def test_a_consideration_is_shown_unless_it_says_not(
+        self, fields_yaml_path: Path
+    ) -> None:
+        registry = load_registry(fields_yaml_path)
+        assert registry.schedule_table is not None
+        hidden = [c.id for c in registry.schedule_table.considerations if not c.show]
+        assert hidden == ["premedication", "concomitant_chemotherapy"]
+        # Still not assessments: the must-hold facts 10 and 11 count without them.
+        assert not any(c.assessment for c in registry.schedule_table.considerations
+                       if not c.show)
+
+    def test_the_new_phrases_have_their_defaults(self, tmp_path: Path) -> None:
+        wording = load_registry(self._write(tmp_path)).report_wording
+        assert wording.not_found == "Not found in the documents"
+        assert wording.row_disagree == "Documents disagree — see Disagreement {n}"
+        assert wording.row_provisional == "Shown provisionally: {value} ({why})"
+        assert wording.counted_note == (
+            "Worked out by the tool from {heading}, not read from a document."
+        )
+
+    @pytest.mark.parametrize(("key", "phrase"), [
+        ("row_disagree", "Documents disagree"),
+        ("row_provisional", "Shown provisionally ({why})"),
+        ("row_provisional", "Shown provisionally: {value}"),
+        ("counted_note", "Worked out by the tool."),
+    ])
+    def test_a_new_phrase_must_have_its_slots(
+        self, tmp_path: Path, key: str, phrase: str
+    ) -> None:
+        p = self._write(tmp_path)
+        data = yaml.safe_load(p.read_text())
+        data["report_wording"][key] = phrase
+        p.write_text(yaml.dump(data))
+        with pytest.raises(Exception, match="must contain"):
+            load_registry(p)
