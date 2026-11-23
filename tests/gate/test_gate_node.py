@@ -5,6 +5,8 @@ from __future__ import annotations
 import os
 from typing import Literal
 
+import pytest
+
 from rfp_intake.domain.schemas import (
     Contradiction,
     FieldRecord,
@@ -272,3 +274,147 @@ class TestAFieldThatSharesAnotherFieldsDisagreement:
         )
         [gated] = gate_node(RunState(run_id="t", resolved=[timing]))["resolved"]
         assert gated.status == "confirmed"
+
+
+class TestABudgetDriverTheDocumentsState:
+    """Angus Gray, 29 October 2026: why was 260 subjects, a value both documents
+    state, in Review? A budget driver with a dismissed verdict is confirmed where
+    the on-topic records come from two or more documents and each of those
+    documents has an on-topic record giving the row's value."""
+
+    @staticmethod
+    def _record(value: object, doc: str, page: int, field_id: str = "ops.subjects_total",
+                scope: str | None = "total") -> FieldRecord:
+        kind: Literal["rfp", "amendment"] = "rfp" if doc == "doc-rfp" else "amendment"
+        r = FieldRecord(
+            field_id=field_id, group="operational_metrics", raw_value=str(value),
+            quote=f"q p.{page}", provenance=Provenance(doc_id=doc, doc_kind=kind, page=page),
+            confidence=0.9, scope=scope,
+        )
+        r.value = value
+        return r
+
+    def _subjects(self) -> list[FieldRecord]:
+        """Run r-20261123-opus5-base's four records for the subject count."""
+        return [
+            self._record(260, "doc-am", 15),
+            self._record(236, "doc-am", 24),
+            self._record(260, "doc-am", 43),
+            self._record(260, "doc-rfp", 4),
+        ]
+
+    @staticmethod
+    def _gate(
+        records: list[FieldRecord], value: object, *,
+        verdict: Literal["conflict", "reconcilable", "not_a_conflict"] = "not_a_conflict",
+        off_topic: list[int] | None = None, confidence: float = 0.95,
+        review_note: str | None = None, field_id: str = "ops.subjects_total",
+    ) -> ResolvedField:
+        c = Contradiction(
+            field_id=field_id, records=records, verdict=verdict,
+            off_topic_record_indexes=off_topic or [],
+        )
+        rf = ResolvedField(
+            field_id=field_id, value=value, status="needs_review", confidence=confidence,
+            sources=[r.provenance for r in records], scope=records[0].scope,
+            contradiction=c, review_note=review_note,
+        )
+        [out] = gate_node(RunState(run_id="t", resolved=[rf], contradictions=[c]))["resolved"]
+        return out
+
+    def test_260_beside_an_off_topic_236_is_confirmed(self, fields_yaml_path) -> None:  # type: ignore[no-untyped-def]
+        _use_real_registry(fields_yaml_path)
+        out = self._gate(self._subjects(), 260, off_topic=[2])
+        assert out.status == "confirmed"
+        assert out.contradiction is not None  # the verdict stays on the row
+
+    @pytest.mark.parametrize("verdict", ["not_a_conflict", "reconcilable"])
+    def test_either_dismissed_verdict(self, fields_yaml_path, verdict) -> None:  # type: ignore[no-untyped-def]
+        _use_real_registry(fields_yaml_path)
+        records = [self._record(260, "doc-am", 15), self._record(260, "doc-rfp", 4)]
+        assert self._gate(records, 260, verdict=verdict).status == "confirmed"
+
+    def test_a_conflict_is_still_reviewed(self, fields_yaml_path) -> None:  # type: ignore[no-untyped-def]
+        _use_real_registry(fields_yaml_path)
+        records = [self._record(260, "doc-am", 15), self._record(260, "doc-rfp", 4)]
+        assert self._gate(records, 260, verdict="conflict").status == "needs_review"
+
+    def test_42_months_against_40_dismissed_is_still_reviewed(self, fields_yaml_path) -> None:  # type: ignore[no-untyped-def]
+        """The RFP states only a different value, so a person must choose."""
+        _use_real_registry(fields_yaml_path)
+        field_id = "timeline.total_duration"
+        records = [
+            self._record({"n": 42, "unit": "months"}, "doc-am", 15, field_id, "study"),
+            self._record({"n": 40, "unit": "months"}, "doc-rfp", 3, field_id, "study"),
+        ]
+        for verdict in ("not_a_conflict", "reconcilable"):
+            out = self._gate(
+                records, {"n": 42, "unit": "months"}, verdict=verdict,  # type: ignore[arg-type]
+                field_id=field_id,
+            )
+            assert out.status == "needs_review"
+
+    def test_equal_amounts_in_two_documents_are_stated(self, fields_yaml_path) -> None:  # type: ignore[no-untyped-def]
+        _use_real_registry(fields_yaml_path)
+        field_id = "timeline.total_duration"
+        records = [
+            self._record({"n": 42, "unit": "months"}, "doc-am", 15, field_id, "study"),
+            self._record({"n": 42, "unit": "months"}, "doc-rfp", 3, field_id, "study"),
+        ]
+        out = self._gate(records, {"n": 42, "unit": "months"}, field_id=field_id)
+        assert out.status == "confirmed"
+        # A dict is the same value only if it is equal.
+        records[1].value = {"n": 42, "unit": "weeks"}
+        out = self._gate(records, {"n": 42, "unit": "months"}, field_id=field_id)
+        assert out.status == "needs_review"
+
+    def test_one_document_is_not_enough(self, fields_yaml_path) -> None:  # type: ignore[no-untyped-def]
+        _use_real_registry(fields_yaml_path)
+        records = [self._record(260, "doc-am", 15), self._record(260, "doc-am", 43)]
+        assert self._gate(records, 260).status == "needs_review"
+
+    def test_an_off_topic_record_does_not_count_as_a_document(self, fields_yaml_path) -> None:  # type: ignore[no-untyped-def]
+        _use_real_registry(fields_yaml_path)
+        records = [self._record(260, "doc-am", 15), self._record(260, "doc-rfp", 4)]
+        assert self._gate(records, 260, off_topic=[2]).status == "needs_review"
+
+    def test_a_document_stating_only_another_value_reviews(self, fields_yaml_path) -> None:  # type: ignore[no-untyped-def]
+        _use_real_registry(fields_yaml_path)
+        records = [
+            self._record(260, "doc-am", 15),
+            self._record(260, "doc-rfp", 4),
+            self._record(236, "doc-third", 9),
+        ]
+        assert self._gate(records, 260).status == "needs_review"
+
+    def test_each_row_is_checked_against_its_own_value(self, fields_yaml_path) -> None:  # type: ignore[no-untyped-def]
+        """With 236 on-topic, ADJUDICATE gives a row per record: both documents
+        state 260, so a 260 row confirms; only the amendment states 236."""
+        _use_real_registry(fields_yaml_path)
+        assert self._gate(self._subjects(), 260).status == "confirmed"
+        assert self._gate(self._subjects(), 236).status == "needs_review"
+
+    def test_a_low_confidence_or_a_review_note_still_reviews(self, fields_yaml_path) -> None:  # type: ignore[no-untyped-def]
+        _use_real_registry(fields_yaml_path)
+        records = [self._record(260, "doc-am", 15), self._record(260, "doc-rfp", 4)]
+        assert self._gate(records, 260, confidence=0.5).status == "needs_review"
+        assert self._gate(records, 260, review_note="an arm").status == "needs_review"
+
+    def test_a_number_and_words_are_not_the_same_value(self, fields_yaml_path) -> None:  # type: ignore[no-untyped-def]
+        _use_real_registry(fields_yaml_path)
+        records = [self._record(260, "doc-am", 15), self._record("260 in all", "doc-rfp", 4)]
+        assert self._gate(records, 260).status == "needs_review"
+
+    def test_a_row_following_another_fields_disagreement_is_not_stated(self) -> None:
+        """A `follows_conflict_of` row's value is not what the leader's records give."""
+        from rfp_intake.gate import _gate_field
+
+        records = [self._record(260, "doc-am", 15), self._record(260, "doc-rfp", 4)]
+        leader = Contradiction(
+            field_id="ops.subjects_total", records=records, verdict="not_a_conflict",
+        )
+        follower = ResolvedField(
+            field_id="ops.sites_total", value=260, status="needs_review", confidence=0.95,
+        )
+        assert _gate_field(follower, leader, is_budget_driver=True).status == "needs_review"
+

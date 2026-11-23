@@ -7,6 +7,9 @@ Pure Python, no LLM. See ARCHITECTURE.md §4.9.
 | derived field                                                         | needs_review   |
 | any contradiction whose verdict is not in DISMISSED_VERDICTS          | needs_review   |
 | budget_driver field with ANY contradiction, dismissed verdict or not  | needs_review   |
+|   … unless the verdict is dismissed and the documents state the row's |                |
+|     value: on-topic records from two or more documents, and each of   |                |
+|     those documents has an on-topic record giving the row's value     | (rule skipped) |
 | field whose `follows_conflict_of` field has such a contradiction      | needs_review   |
 | budget_driver list field holding more than one value                  | needs_review   |
 |   … unless `one_answer_when_documents_agree` and the documents agree  | (rule skipped) |
@@ -24,6 +27,15 @@ wrong: a wrong "these don't really disagree" on a site count or subject
 count changes the number DSB submits. Forcing review here doesn't fix a
 wrong verdict, but it guarantees a human sees it before it becomes a
 number in the report, rather than the disagreement being silently cleared.
+
+The one exception (`_documents_state_it`, asked for by Angus Gray on 29
+October 2026) needs no trust in the verdict: where two or more documents
+each give the row's value, checked in code against the records themselves,
+there is nothing for a person to settle about that value. The records the
+model called off-topic are left out of that check, so a statistical sample
+size of 236 beside an enrolment figure of 260 stated by both documents does
+not keep the 260 in review; but a document that states only a different value
+does, and so does any `conflict`.
 
 Quote validation ("quote validated" in the table) is already enforced by
 EXTRACT's post-call validation (ARCHITECTURE.md §4.4) before a record ever
@@ -66,8 +78,10 @@ _TERMINAL_STATUSES = {"not_specified", "not_found", "not_applicable"}
 # A budget driver still goes to review (the rule below), so a wrong
 # "reconcilable" on a number the budget depends on is still seen by a person —
 # it moves from the Disagreements table to Flagged for review rather than being
-# cleared. A verdict of None means ADJUDICATE has not run or failed, which is
-# not a dismissal, so it is deliberately absent from this tuple.
+# cleared — unless the documents themselves state the row's value
+# (_documents_state_it; Angus Gray, 29 October 2026). A verdict of None means
+# ADJUDICATE has not run or failed, which is not a dismissal, so it is
+# deliberately absent from this tuple.
 DISMISSED_VERDICTS = ("not_a_conflict", "reconcilable")
 
 
@@ -157,8 +171,14 @@ def _gate_field(
     if rf.derived_from:
         return rf.model_copy(update={"status": "needs_review"})
 
+    # Angus Gray, 29 October 2026, on report r-20261029-140643: why was 260
+    # subjects, a value both documents state, in Review? A budget driver's
+    # dismissed verdict no longer forces review where the documents themselves
+    # state the row's value (_documents_state_it). Review_note and the
+    # confidence threshold below still apply.
     disagreement = contradiction is not None and (
-        contradiction.verdict not in DISMISSED_VERDICTS or is_budget_driver
+        contradiction.verdict not in DISMISSED_VERDICTS
+        or (is_budget_driver and not _documents_state_it(rf, contradiction))
     )
     if disagreement:
         return rf.model_copy(update={"status": "needs_review", "contradiction": contradiction})
@@ -200,3 +220,27 @@ def _gate_field(
         return rf.model_copy(update={"status": "confirmed"})
 
     return rf.model_copy(update={"status": "needs_review"})
+
+
+def _documents_state_it(rf: ResolvedField, contradiction: Contradiction) -> bool:
+    """Whether the documents themselves state this row's value: the on-topic
+    records (those not in `off_topic_record_indexes`) come from at least two
+    documents, and each of those documents has an on-topic record whose
+    normalized value equals the row's value.
+
+    Values are compared with ==, as RECONCILE compares them
+    (reconcile/__init__.py:_group_by_canonical_value), so a list or a dict is
+    the same value only if it is equal. Only the row's own disagreement
+    counts: a row following another field's disagreement (`follows_conflict_of`)
+    holds a value that field's records do not give. A row with no value is
+    never stated. Asked for by Angus Gray on 29 October 2026.
+    """
+    if contradiction.field_id != rf.field_id or rf.value is None:
+        return False
+    off = set(contradiction.off_topic_record_indexes)
+    on_topic = [r for i, r in enumerate(contradiction.records, start=1) if i not in off]
+    documents = {r.provenance.doc_id for r in on_topic}
+    return len(documents) >= 2 and all(
+        any(r.value == rf.value for r in on_topic if r.provenance.doc_id == doc)
+        for doc in documents
+    )
